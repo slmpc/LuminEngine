@@ -1,0 +1,17 @@
+out/
+build/
+.vs/
+.vscode/
+CMakeUserPresets.json
+compile_commands.json
+
+*.user
+*.suo
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+
+assets/generated/
