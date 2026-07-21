@@ -47,6 +47,7 @@ namespace lumin::render {
         [[nodiscard]] bool initialized() const noexcept;
 
     private:
+        platform::Window* window_ = nullptr;
         VkDevice device_ = VK_NULL_HANDLE;
         VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
         bool initialized_ = false;

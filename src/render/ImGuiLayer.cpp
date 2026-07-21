@@ -6,7 +6,7 @@
 #include <stdexcept>
 
 #include <imgui.h>
-#include <imgui_impl_glfw.h>
+#include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
 
 namespace lumin::render {
@@ -28,6 +28,7 @@ namespace lumin::render {
         shutdown();
 
         device_ = config.device;
+        window_ = &window;
 
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
@@ -57,10 +58,23 @@ namespace lumin::render {
         poolInfo.pPoolSizes = poolSizes;
 
         if (vkCreateDescriptorPool(device_, &poolInfo, nullptr, &descriptorPool_) != VK_SUCCESS) {
+            ImGui::DestroyContext();
+            device_ = VK_NULL_HANDLE;
+            window_ = nullptr;
             throw std::runtime_error("Failed to create ImGui descriptor pool.");
         }
 
-        ImGui_ImplGlfw_InitForVulkan(window.nativeHandle(), true);
+        if (!ImGui_ImplSDL3_InitForVulkan(window.nativeHandle())) {
+            vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
+            descriptorPool_ = VK_NULL_HANDLE;
+            ImGui::DestroyContext();
+            device_ = VK_NULL_HANDLE;
+            window_ = nullptr;
+            throw std::runtime_error("Failed to initialize Dear ImGui SDL backend.");
+        }
+        window.setEventCallback([](const SDL_Event& event) {
+            ImGui_ImplSDL3_ProcessEvent(&event);
+        });
 
         VkPipelineRenderingCreateInfo renderingInfo{};
         renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
@@ -84,6 +98,13 @@ namespace lumin::render {
         initInfo.CheckVkResultFn = checkVk;
 
         if (!ImGui_ImplVulkan_Init(&initInfo)) {
+            window.setEventCallback({});
+            ImGui_ImplSDL3_Shutdown();
+            vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
+            descriptorPool_ = VK_NULL_HANDLE;
+            ImGui::DestroyContext();
+            device_ = VK_NULL_HANDLE;
+            window_ = nullptr;
             throw std::runtime_error("Failed to initialize Dear ImGui Vulkan backend.");
         }
 
@@ -95,8 +116,9 @@ namespace lumin::render {
             return;
         }
 
+        window_->setEventCallback({});
         ImGui_ImplVulkan_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
+        ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
         initialized_ = false;
 
@@ -105,11 +127,12 @@ namespace lumin::render {
             descriptorPool_ = VK_NULL_HANDLE;
         }
         device_ = VK_NULL_HANDLE;
+        window_ = nullptr;
     }
 
     void ImGuiLayer::newFrame() {
         ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
     }
 

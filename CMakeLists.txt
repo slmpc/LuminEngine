@@ -28,7 +28,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Vulkan REQUIRED)
-find_package(glfw3 CONFIG REQUIRED)
+find_package(SDL3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
@@ -118,7 +118,7 @@ target_compile_features(lumin_engine PUBLIC cxx_std_20)
 target_link_libraries(lumin_engine
     PUBLIC
         Vulkan::Vulkan
-        glfw
+        SDL3::SDL3
         glm::glm
         imgui::imgui
         tinyobjloader::tinyobjloader

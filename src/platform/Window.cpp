@@ -1,52 +1,64 @@
 #include "lumin/platform/Window.hpp"
 
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
 
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace lumin::platform {
 
     int Window::windowCount_ = 0;
 
     Window::Window(const WindowDesc& desc) {
-        initializeGlfw();
+        initializeSdl();
 
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-
-        window_ = glfwCreateWindow(desc.width, desc.height, desc.title.c_str(), nullptr, nullptr);
+        window_ = SDL_CreateWindow(desc.title.c_str(), desc.width, desc.height,
+                                   SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
         if (window_ == nullptr) {
-            terminateGlfw();
-            throw std::runtime_error("Failed to create GLFW window.");
+            const std::string error = SDL_GetError();
+            terminateSdl();
+            throw std::runtime_error("Failed to create SDL window: " + error);
         }
-
-        glfwSetWindowUserPointer(window_, this);
-        glfwSetFramebufferSizeCallback(window_, framebufferResizeCallback);
 
         ++windowCount_;
     }
 
     Window::~Window() {
         if (window_ != nullptr) {
-            glfwDestroyWindow(window_);
+            SDL_DestroyWindow(window_);
             window_ = nullptr;
             --windowCount_;
         }
 
-        terminateGlfw();
+        terminateSdl();
     }
 
-    void Window::pollEvents() const {
-        glfwPollEvents();
+    void Window::pollEvents() {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            processEvent(event);
+        }
     }
 
-    void Window::waitEvents() const {
-        glfwWaitEvents();
+    void Window::waitEvents() {
+        SDL_Event event;
+        if (SDL_WaitEvent(&event)) {
+            processEvent(event);
+        }
+
+        while (SDL_PollEvent(&event)) {
+            processEvent(event);
+        }
+    }
+
+    void Window::setEventCallback(EventCallback callback) {
+        eventCallback_ = std::move(callback);
     }
 
     bool Window::shouldClose() const {
-        return glfwWindowShouldClose(window_) == GLFW_TRUE;
+        return shouldClose_;
     }
 
     bool Window::framebufferResized() const noexcept {
@@ -56,7 +68,9 @@ namespace lumin::platform {
     VkExtent2D Window::framebufferExtent() const {
         int width = 0;
         int height = 0;
-        glfwGetFramebufferSize(window_, &width, &height);
+        if (!SDL_GetWindowSizeInPixels(window_, &width, &height)) {
+            throw std::runtime_error("Failed to query SDL window pixel size: " + std::string(SDL_GetError()));
+        }
 
         VkExtent2D extent;
         extent.width = static_cast<std::uint32_t>(width > 0 ? width : 1);
@@ -66,9 +80,9 @@ namespace lumin::platform {
 
     std::vector<const char*> Window::requiredInstanceExtensions() const {
         std::uint32_t extensionCount = 0;
-        const char** extensions = glfwGetRequiredInstanceExtensions(&extensionCount);
+        const char* const* extensions = SDL_Vulkan_GetInstanceExtensions(&extensionCount);
         if (extensions == nullptr || extensionCount == 0) {
-            throw std::runtime_error("GLFW did not provide Vulkan instance extensions.");
+            throw std::runtime_error("SDL did not provide Vulkan instance extensions: " + std::string(SDL_GetError()));
         }
 
         return {extensions, extensions + extensionCount};
@@ -76,15 +90,14 @@ namespace lumin::platform {
 
     VkSurfaceKHR Window::createSurface(VkInstance instance) const {
         VkSurfaceKHR surface = VK_NULL_HANDLE;
-        const VkResult result = glfwCreateWindowSurface(instance, window_, nullptr, &surface);
-        if (result != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create Vulkan window surface.");
+        if (!SDL_Vulkan_CreateSurface(window_, instance, nullptr, &surface)) {
+            throw std::runtime_error("Failed to create Vulkan window surface: " + std::string(SDL_GetError()));
         }
 
         return surface;
     }
 
-    GLFWwindow* Window::nativeHandle() const noexcept {
+    SDL_Window* Window::nativeHandle() const noexcept {
         return window_;
     }
 
@@ -92,24 +105,36 @@ namespace lumin::platform {
         framebufferResized_ = false;
     }
 
-    void Window::framebufferResizeCallback(GLFWwindow* window, int, int) {
-        auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
-        if (self != nullptr) {
-            self->framebufferResized_ = true;
+    void Window::processEvent(const SDL_Event& event) {
+        if (eventCallback_) {
+            eventCallback_(event);
+        }
+
+        if (event.type == SDL_EVENT_QUIT) {
+            shouldClose_ = true;
+            return;
+        }
+
+        if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(window_)) {
+            shouldClose_ = true;
+        }
+
+        if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED && event.window.windowID == SDL_GetWindowID(window_)) {
+            framebufferResized_ = true;
         }
     }
 
-    void Window::initializeGlfw() {
+    void Window::initializeSdl() {
         if (windowCount_ == 0) {
-            if (glfwInit() != GLFW_TRUE) {
-                throw std::runtime_error("Failed to initialize GLFW.");
+            if (!SDL_Init(SDL_INIT_VIDEO)) {
+                throw std::runtime_error("Failed to initialize SDL: " + std::string(SDL_GetError()));
             }
         }
     }
 
-    void Window::terminateGlfw() {
+    void Window::terminateSdl() {
         if (windowCount_ == 0) {
-            glfwTerminate();
+            SDL_Quit();
         }
     }
 

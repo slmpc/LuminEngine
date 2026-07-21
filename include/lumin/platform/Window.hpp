@@ -1,12 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
 #include <vulkan/vulkan.h>
 
-struct GLFWwindow;
+struct SDL_Window;
+union SDL_Event;
 
 namespace lumin::platform {
 
@@ -18,30 +20,35 @@ namespace lumin::platform {
 
     class Window {
     public:
+        using EventCallback = std::function<void(const SDL_Event&)>;
+
         explicit Window(const WindowDesc& desc);
         ~Window();
 
         Window(const Window&) = delete;
         Window& operator=(const Window&) = delete;
 
-        void pollEvents() const;
-        void waitEvents() const;
+        void pollEvents();
+        void waitEvents();
+        void setEventCallback(EventCallback callback);
 
         [[nodiscard]] bool shouldClose() const;
         [[nodiscard]] bool framebufferResized() const noexcept;
         [[nodiscard]] VkExtent2D framebufferExtent() const;
         [[nodiscard]] std::vector<const char*> requiredInstanceExtensions() const;
         [[nodiscard]] VkSurfaceKHR createSurface(VkInstance instance) const;
-        [[nodiscard]] GLFWwindow* nativeHandle() const noexcept;
+        [[nodiscard]] SDL_Window* nativeHandle() const noexcept;
 
         void resetFramebufferResized() noexcept;
 
     private:
-        static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
-        static void initializeGlfw();
-        static void terminateGlfw();
+        void processEvent(const SDL_Event& event);
+        static void initializeSdl();
+        static void terminateSdl();
 
-        GLFWwindow* window_ = nullptr;
+        SDL_Window* window_ = nullptr;
+        EventCallback eventCallback_;
+        bool shouldClose_ = false;
         bool framebufferResized_ = false;
         static int windowCount_;
     };

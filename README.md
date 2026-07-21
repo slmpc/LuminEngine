@@ -16,7 +16,7 @@ Lumin Engine is a small Vulkan renderer scaffold using CMake and vcpkg manifest 
 
 The project uses `vcpkg.json` to declare:
 
-- GLFW for window creation and Vulkan surface integration.
+- SDL3 for window creation, event handling, and Vulkan surface integration.
 - GLM for math types.
 - Dear ImGui for the renderer overlay.
 - tinyobjloader for OBJ parsing.
@@ -28,14 +28,20 @@ The Vulkan SDK must provide `slangc` so CMake can compile `shaders/blinn_phong.s
 ## Build
 
 ```powershell
-cmake --preset windows-debug
-cmake --build --preset windows-debug
+cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build out/build/debug
 ```
 
 Run the sandbox:
 
 ```powershell
-.\out\build\windows-debug\Debug\LuminEngine.exe .\assets\models\your_model.obj
+.\out\build\debug\LuminEngine.exe .\assets\models\your_model.obj
+```
+
+The Debug configure step also generates `out/build/debug/compile_commands.json`. The local VS Code settings pass that directory to clangd automatically. Refresh it after changing CMake files or dependencies with:
+
+```powershell
+cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
 The sandbox renders OBJ geometry with a Slang-authored Blinn-Phong shader and shows an ImGui overlay for camera, light, material, and smooth-shading controls. If no OBJ path is supplied, it renders a built-in cube.
