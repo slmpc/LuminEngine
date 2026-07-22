@@ -1,5 +1,6 @@
 #include "lumin/render/ModelRenderer.hpp"
 
+#include "lumin/assets/ImageLoader.hpp"
 #include "lumin/render/PipelineFactory.hpp"
 #include "lumin/render/ShaderLibrary.hpp"
 #include "lumin/render/VulkanContext.hpp"
@@ -7,8 +8,11 @@
 #include "lumin/scene/Camera.hpp"
 #include "lumin/scene/Level.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -48,12 +52,85 @@ namespace lumin::render {
             }
         }
 
-        std::array<VkVertexInputAttributeDescription, 2> vertexAttributes() {
+        std::vector<scene::PbrTextureSet> collectTextureSets(const scene::Level& level) {
+            std::vector<scene::PbrTextureSet> textureSets;
+            for (const scene::ModelInstance& model : level.models()) {
+                if (!model.material.textures.has_value()) {
+                    continue;
+                }
+                const auto existing = std::find_if(textureSets.begin(), textureSets.end(), [&](const auto& candidate) {
+                    return candidate.referencesSameImages(*model.material.textures);
+                });
+                if (existing == textureSets.end()) {
+                    textureSets.push_back(*model.material.textures);
+                }
+            }
+            return textureSets;
+        }
+
+        std::uint32_t textureLayerFor(const scene::Material& material,
+                                      const std::vector<scene::PbrTextureSet>& textureSets) {
+            if (!material.textures.has_value()) {
+                return 0;
+            }
+            const auto iterator = std::find_if(textureSets.begin(), textureSets.end(), [&](const auto& candidate) {
+                return candidate.referencesSameImages(*material.textures);
+            });
+            if (iterator == textureSets.end()) {
+                throw std::logic_error("A model references a PBR texture set that was not loaded.");
+            }
+            return checkedU32(static_cast<std::size_t>(std::distance(textureSets.begin(), iterator)) + 1,
+                              "Material texture layer exceeds Vulkan's uint32 range.");
+        }
+
+        ObjectData makeObjectData(const scene::ModelInstance& model, const glm::mat4& currentModel,
+                                  const glm::mat4& previousModel,
+                                  const std::vector<scene::PbrTextureSet>& textureSets) {
+            const float normalYSign =
+                model.material.textures.has_value() && model.material.textures->flipNormalY ? -1.0f : 1.0f;
+            return ObjectData{
+                .model = currentModel,
+                .previousModel = previousModel,
+                .normalMatrix = glm::inverseTranspose(currentModel),
+                .baseColorMetallic = glm::vec4{model.material.albedo, model.material.metallic},
+                .materialParameters =
+                    glm::vec4{model.material.roughness, model.material.textureScale,
+                              static_cast<float>(textureLayerFor(model.material, textureSets)), normalYSign},
+            };
+        }
+
+        struct LoadedPbrTextureSet {
+            assets::ImageData baseColor;
+            assets::ImageData normal;
+            assets::ImageData roughness;
+        };
+
+        LoadedPbrTextureSet loadTextureSet(const scene::PbrTextureSet& paths) {
+            if (paths.baseColor.empty() || paths.normal.empty() || paths.roughness.empty()) {
+                throw std::invalid_argument("PBR texture sets require base-color, normal, and roughness images.");
+            }
+
+            LoadedPbrTextureSet result{
+                assets::ImageLoader::load(paths.baseColor),
+                assets::ImageLoader::load(paths.normal),
+                assets::ImageLoader::load(paths.roughness),
+            };
+            if (result.normal.width != result.baseColor.width || result.normal.height != result.baseColor.height ||
+                result.roughness.width != result.baseColor.width ||
+                result.roughness.height != result.baseColor.height) {
+                throw std::invalid_argument("Images in a PBR texture set must have matching dimensions.");
+            }
+            return result;
+        }
+
+        std::array<VkVertexInputAttributeDescription, 3> vertexAttributes() {
             return {
                 VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT,
                                                   static_cast<std::uint32_t>(offsetof(assets::Vertex, position))},
                 VkVertexInputAttributeDescription{1, 0, VK_FORMAT_R32G32B32_SFLOAT,
                                                   static_cast<std::uint32_t>(offsetof(assets::Vertex, normal))},
+                VkVertexInputAttributeDescription{2, 0, VK_FORMAT_R32G32_SFLOAT,
+                                                  static_cast<std::uint32_t>(offsetof(assets::Vertex, texCoord))},
             };
         }
 
@@ -73,6 +150,7 @@ namespace lumin::render {
         VulkanResourceManager resources;
         ShaderLibrary shaders;
         PipelineFactory pipelineFactory;
+        std::vector<scene::PbrTextureSet> textureSets;
         ModelBatch batch;
         std::uint32_t frameCount = 0;
 
@@ -88,6 +166,9 @@ namespace lumin::render {
         std::vector<VulkanBuffer> objectBuffers;
         std::vector<VulkanBuffer> uniformBuffers;
         std::vector<VulkanBuffer> shadowUniformBuffers;
+        VulkanImage baseColorTextures;
+        VulkanImage normalRoughnessTextures;
+        VkSampler materialSampler = VK_NULL_HANDLE;
         std::vector<glm::mat4> previousModels;
         bool hasPreviousModels = false;
 
@@ -96,7 +177,8 @@ namespace lumin::render {
              std::uint32_t frameCountValue)
             : context(contextValue), resources(contextValue),
               shaders(contextValue.device(), std::move(shaderDirectory)), pipelineFactory(contextValue.device()),
-              batch(ModelRenderer::buildBatch(level)), frameCount(frameCountValue) {
+              textureSets(collectTextureSets(level)), batch(ModelRenderer::buildBatch(level)),
+              frameCount(frameCountValue) {
             try {
                 if (batch.commands.empty()) {
                     throw std::invalid_argument("ModelRenderer requires at least one model.");
@@ -116,6 +198,7 @@ namespace lumin::render {
                     previousModels.push_back(object.model);
                 }
                 createBuffers();
+                createMaterialTextures();
                 createDescriptors();
                 createPipelines(colorFormats, depthFormat, shadowDepthFormat);
             } catch (...) {
@@ -163,12 +246,100 @@ namespace lumin::render {
             }
         }
 
+        void createMaterialTextures() {
+            std::vector<LoadedPbrTextureSet> loadedSets;
+            loadedSets.reserve(textureSets.size());
+            for (const scene::PbrTextureSet& textureSet : textureSets) {
+                loadedSets.push_back(loadTextureSet(textureSet));
+            }
+
+            const std::uint32_t width = loadedSets.empty() ? 1 : loadedSets.front().baseColor.width;
+            const std::uint32_t height = loadedSets.empty() ? 1 : loadedSets.front().baseColor.height;
+            for (const LoadedPbrTextureSet& textureSet : loadedSets) {
+                if (textureSet.baseColor.width != width || textureSet.baseColor.height != height) {
+                    throw std::invalid_argument("All PBR texture sets in a level must have matching dimensions.");
+                }
+            }
+
+            const std::uint32_t layerCount =
+                checkedU32(textureSets.size() + 1, "Material texture array exceeds Vulkan's uint32 range.");
+            VkPhysicalDeviceProperties properties{};
+            vkGetPhysicalDeviceProperties(context.physicalDevice(), &properties);
+            if (width > properties.limits.maxImageDimension2D || height > properties.limits.maxImageDimension2D ||
+                layerCount > properties.limits.maxImageArrayLayers) {
+                throw std::length_error("PBR texture dimensions or layer count exceed the Vulkan device limits.");
+            }
+
+            constexpr std::size_t bytesPerPixel = 4;
+            const std::uint64_t layerBytes64 =
+                static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) * bytesPerPixel;
+            if (layerBytes64 > std::numeric_limits<std::size_t>::max() ||
+                layerBytes64 > std::numeric_limits<std::size_t>::max() / layerCount) {
+                throw std::overflow_error("PBR texture array is too large to stage in host memory.");
+            }
+            const std::size_t layerBytes = static_cast<std::size_t>(layerBytes64);
+            const std::size_t totalBytes = layerBytes * layerCount;
+
+            std::vector<std::uint8_t> baseColorPixels(totalBytes, 255);
+            std::vector<std::uint8_t> normalRoughnessPixels(totalBytes);
+            for (std::size_t pixel = 0; pixel < totalBytes / bytesPerPixel; ++pixel) {
+                const std::size_t offset = pixel * bytesPerPixel;
+                normalRoughnessPixels[offset + 0] = 128;
+                normalRoughnessPixels[offset + 1] = 128;
+                normalRoughnessPixels[offset + 2] = 255;
+                normalRoughnessPixels[offset + 3] = 255;
+            }
+
+            for (std::size_t setIndex = 0; setIndex < loadedSets.size(); ++setIndex) {
+                const LoadedPbrTextureSet& source = loadedSets[setIndex];
+                const std::size_t destinationOffset = (setIndex + 1) * layerBytes;
+                std::copy(source.baseColor.pixels.begin(), source.baseColor.pixels.end(),
+                          baseColorPixels.data() + destinationOffset);
+                for (std::size_t pixel = 0; pixel < layerBytes / bytesPerPixel; ++pixel) {
+                    const std::size_t sourceOffset = pixel * bytesPerPixel;
+                    const std::size_t destination = destinationOffset + sourceOffset;
+                    normalRoughnessPixels[destination + 0] = source.normal.pixels[sourceOffset + 0];
+                    normalRoughnessPixels[destination + 1] = source.normal.pixels[sourceOffset + 1];
+                    normalRoughnessPixels[destination + 2] = source.normal.pixels[sourceOffset + 2];
+                    normalRoughnessPixels[destination + 3] = source.roughness.pixels[sourceOffset + 0];
+                }
+            }
+
+            const VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            baseColorTextures =
+                resources.createImage(width, height, VK_FORMAT_R8G8B8A8_SRGB, usage, VK_IMAGE_ASPECT_COLOR_BIT, 1,
+                                      layerCount, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+            normalRoughnessTextures =
+                resources.createImage(width, height, VK_FORMAT_R8G8B8A8_UNORM, usage, VK_IMAGE_ASPECT_COLOR_BIT, 1,
+                                      layerCount, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+            resources.uploadImage(baseColorTextures, baseColorPixels.data(), layerBytes);
+            resources.uploadImage(normalRoughnessTextures, normalRoughnessPixels.data(), layerBytes);
+
+            VkSamplerCreateInfo samplerInfo{};
+            samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerInfo.magFilter = VK_FILTER_LINEAR;
+            samplerInfo.minFilter = VK_FILTER_LINEAR;
+            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.minLod = 0.0f;
+            samplerInfo.maxLod = 0.0f;
+            checkVk(vkCreateSampler(context.device(), &samplerInfo, nullptr, &materialSampler),
+                    "Failed to create the material texture sampler.");
+        }
+
         void createDescriptors() {
-            const std::array<VkDescriptorSetLayoutBinding, 2> bindings = {
+            const std::array<VkDescriptorSetLayoutBinding, 5> bindings = {
                 VkDescriptorSetLayoutBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT,
                                              nullptr},
                 VkDescriptorSetLayoutBinding{1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT,
                                              nullptr},
+                VkDescriptorSetLayoutBinding{2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
+                                             nullptr},
+                VkDescriptorSetLayoutBinding{3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
+                                             nullptr},
+                VkDescriptorSetLayoutBinding{4, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             };
             VkDescriptorSetLayoutCreateInfo layoutInfo{};
             layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -178,9 +349,11 @@ namespace lumin::render {
                     "Failed to create model descriptor set layout.");
 
             const std::uint32_t setCount = frameCount * (1 + cascadeCount);
-            const std::array<VkDescriptorPoolSize, 2> poolSizes = {
+            const std::array<VkDescriptorPoolSize, 4> poolSizes = {
                 VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, setCount},
                 VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, setCount},
+                VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, setCount * 2},
+                VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, setCount},
             };
             VkDescriptorPoolCreateInfo poolInfo{};
             poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -207,11 +380,22 @@ namespace lumin::render {
                                  VkDeviceSize uniformSize) {
                 const VkDescriptorBufferInfo uniformInfo{uniform.buffer, 0, uniformSize};
                 const VkDescriptorBufferInfo objectInfo{objects.buffer, 0, objects.size};
-                const std::array<VkWriteDescriptorSet, 2> writes = {
+                const VkDescriptorImageInfo baseColorInfo{VK_NULL_HANDLE, baseColorTextures.view,
+                                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                const VkDescriptorImageInfo normalRoughnessInfo{VK_NULL_HANDLE, normalRoughnessTextures.view,
+                                                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                const VkDescriptorImageInfo samplerInfo{materialSampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+                const std::array<VkWriteDescriptorSet, 5> writes = {
                     VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 0, 0, 1,
                                          VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &uniformInfo, nullptr},
                     VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 1, 0, 1,
                                          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &objectInfo, nullptr},
+                    VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 2, 0, 1,
+                                         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &baseColorInfo, nullptr, nullptr},
+                    VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 3, 0, 1,
+                                         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &normalRoughnessInfo, nullptr, nullptr},
+                    VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 4, 0, 1,
+                                         VK_DESCRIPTOR_TYPE_SAMPLER, &samplerInfo, nullptr, nullptr},
                 };
                 vkUpdateDescriptorSets(context.device(), static_cast<std::uint32_t>(writes.size()), writes.data(), 0,
                                        nullptr);
@@ -315,6 +499,12 @@ namespace lumin::render {
                 vkDestroyDescriptorSetLayout(context.device(), descriptorSetLayout, nullptr);
                 descriptorSetLayout = VK_NULL_HANDLE;
             }
+            if (materialSampler != VK_NULL_HANDLE) {
+                vkDestroySampler(context.device(), materialSampler, nullptr);
+                materialSampler = VK_NULL_HANDLE;
+            }
+            resources.destroyImage(normalRoughnessTextures);
+            resources.destroyImage(baseColorTextures);
             for (VulkanBuffer& buffer : shadowUniformBuffers) {
                 resources.destroyBuffer(buffer);
             }
@@ -332,6 +522,7 @@ namespace lumin::render {
 
     ModelBatch ModelRenderer::buildBatch(const scene::Level& level) {
         ModelBatch batch;
+        const std::vector<scene::PbrTextureSet> textureSets = collectTextureSets(level);
         std::vector<MeshRange> meshRanges;
         meshRanges.reserve(level.meshes().size());
 
@@ -362,12 +553,7 @@ namespace lumin::render {
                 .firstInstance = 0,
             });
             const glm::mat4 modelMatrix = model.transform.matrix();
-            batch.objects.push_back(ObjectData{
-                .model = modelMatrix,
-                .previousModel = modelMatrix,
-                .normalMatrix = glm::inverseTranspose(modelMatrix),
-                .albedoRoughness = glm::vec4{model.material.albedo, model.material.roughness},
-            });
+            batch.objects.push_back(makeObjectData(model, modelMatrix, modelMatrix, textureSets));
         }
 
         if (batch.commands.size() != batch.objects.size()) {
@@ -398,12 +584,7 @@ namespace lumin::render {
             const glm::mat4 currentModel = model.transform.matrix();
             const glm::mat4 previousModel =
                 resetMotion || !impl_->hasPreviousModels ? currentModel : impl_->previousModels[index];
-            impl_->batch.objects[index] = ObjectData{
-                .model = currentModel,
-                .previousModel = previousModel,
-                .normalMatrix = glm::inverseTranspose(currentModel),
-                .albedoRoughness = glm::vec4{model.material.albedo, model.material.roughness},
-            };
+            impl_->batch.objects[index] = makeObjectData(model, currentModel, previousModel, impl_->textureSets);
             impl_->previousModels[index] = currentModel;
         }
         impl_->hasPreviousModels = true;

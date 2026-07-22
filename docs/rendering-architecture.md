@@ -6,8 +6,9 @@
 在 `tick`、`onSpawn` 或 `onDestroy` 中发起的生成与销毁请求会延迟处理，直到当前回调遍历可以安全提交变更。
 
 `Application` 更新相机输入，调用 `Level::tick(deltaSeconds)`，然后执行渲染。模型变换和材质变化会递增
-`modelRevision`；网格或模型成员变化会递增 `topologyRevision`。`LevelRenderer` 每帧上传对象记录，仅在拓扑修订号
-发生变化时重新构建打包后的几何数据。
+`modelRevision`；网格或模型成员变化会递增 `topologyRevision`。PBR 纹理路径变化也会递增 `topologyRevision`，
+因为材质纹理数组和 descriptor 需要重建；纯标量材质变化只更新对象 buffer。`LevelRenderer` 每帧上传对象记录，
+仅在拓扑修订号发生变化时重新构建打包后的几何数据和材质资源。
 
 `Terrain` 生成带索引的高度场网格，通过累积三角形法线得到归一化法线，并支持双线性高度查询。`TerrainActor`
 拥有地形数据，将生成的网格附加到 `Level`，并在地形编辑后替换 `Level` 中的网格。
@@ -17,7 +18,7 @@
 每一帧通过 `FrameGraph` 按以下顺序记录：
 
 1. 四个 CSM 纯深度通道，每个级联使用一张独立的二维深度图像。
-2. G-buffer 通道：世界空间位置、世界空间法线与粗糙度、反照率、运动矢量和深度。
+2. G-buffer 通道：世界空间位置、世界空间法线与粗糙度、线性反照率与金属度、运动矢量和深度。
 3. SSAO 全屏通道，读取世界空间位置和法线。
 4. 程序化天空盒全屏通道，写入 HDR 光照目标。
 5. 延迟光照通道，加载该目标，并结合 SSAO 和 CSM 对几何体进行着色。
@@ -28,6 +29,17 @@
 
 所有图形通道均使用 Vulkan 1.3 动态渲染。`PipelineFactory` 支持 MRT 流水线和仅含顶点阶段的深度流水线；
 项目不会创建 `VkRenderPass` 或 framebuffer 对象。
+
+## PBR 材质
+
+`Material` 可以引用 base color、normal 和 roughness 三张贴图。`ModelRenderer` 对场景中的唯一贴图组合去重，
+将其上传为二维数组纹理；第 0 层是白色 base color、平法线和单位粗糙度，未绑定贴图的材质因此沿用相同 shader
+与批处理。对象记录保存数组层、UV 缩放、粗糙度/金属度因子和 normal Y 符号，MDI 绘制无需逐模型切换 descriptor。
+
+base color 图像使用 `VK_FORMAT_R8G8B8A8_SRGB`，normal RGB 与 roughness 被打包到线性
+`VK_FORMAT_R8G8B8A8_UNORM`。G-buffer 将世界空间 normal/roughness 写入一个附件，将线性
+albedo/metallic 写入另一个附件。延迟光照使用 GGX 法线分布、Smith 几何遮蔽和 Schlick Fresnel；材质缺少
+metallic/AO 贴图时分别使用介电常量和 SSAO。OBJ 没有 `vt` 时，加载器生成带接缝修正的柱面 UV。
 
 ## 级联阴影
 
@@ -52,8 +64,10 @@
 ## 资源所有权
 
 `TextureManager` 拥有两个帧槽。每个槽位都有自己的 G-buffer、SSAO、HDR 光照、TAA 解析/历史、四张阴影图、
-后处理 uniform buffer 和 descriptor set。`ModelRenderer` 同样拥有逐帧对象及相机 buffer，以及四个逐帧阴影矩阵
-buffer。只有在 `VulkanContext::beginFrame` 等待相应 fence 后，才能更新帧槽。
+后处理 uniform buffer 和 descriptor set。`ModelRenderer` 同样拥有逐帧对象及相机 buffer、四个逐帧阴影矩阵
+buffer，以及只读材质数组纹理和采样器。材质纹理在创建时通过 staging buffer 上传并转换到
+`VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL`，之后跨帧保持该布局。只有在 `VulkanContext::beginFrame` 等待相应
+fence 后，才能更新帧槽。
 
 交换链重建时，系统会等待设备空闲、关闭 ImGui、先于 descriptor layout 和图像销毁流水线、重新创建与尺寸相关的
 资源、使时序历史失效，然后再次初始化 ImGui。

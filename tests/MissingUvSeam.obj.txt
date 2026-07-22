@@ -1,0 +1,9 @@
+# First triangle crosses the cylindrical U seam. The second establishes symmetric bounds.
+v -0.1 -1.0 -1.0
+v 0.1 0.0 -1.0
+v 0.0 1.0 -0.9
+v 0.0 -10.0 1.0
+v 0.1 10.0 1.0
+v -0.1 9.0 0.9
+f 1 2 3
+f 4 5 6

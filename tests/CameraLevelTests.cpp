@@ -1,3 +1,4 @@
+#include "lumin/assets/ImageLoader.hpp"
 #include "lumin/render/ModelRenderer.hpp"
 #include "lumin/scene/Camera.hpp"
 #include "lumin/scene/CameraController.hpp"
@@ -8,10 +9,14 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <type_traits>
 
 #include <glm/geometric.hpp>
@@ -102,6 +107,120 @@ namespace {
                 "Second indirect command has incorrect offsets.");
         require(third.indexCount == 3 && third.firstIndex == 0 && third.vertexOffset == 0 && third.firstInstance == 0,
                 "Repeated meshes must reuse packed geometry.");
+    }
+
+    void testPbrAssetsAndMaterialBatch() {
+#if defined(LUMIN_TEST_ASSET_DIR)
+        const std::filesystem::path assetDirectory = LUMIN_TEST_ASSET_DIR;
+#else
+        const std::filesystem::path assetDirectory = "assets";
+#endif
+        const std::filesystem::path materialDirectory = assetDirectory / "materials" / "aerial_asphalt_01";
+        const lumin::scene::PbrTextureSet asphaltTextures{
+            .baseColor = materialDirectory / "aerial_asphalt_01_diff_1k.jpg",
+            .normal = materialDirectory / "aerial_asphalt_01_nor_gl_1k.png",
+            .roughness = materialDirectory / "aerial_asphalt_01_rough_1k.jpg",
+            .flipNormalY = true,
+        };
+
+        const std::filesystem::path unicodeImagePath =
+            std::filesystem::temp_directory_path() / L"lumin_image_loader_\U0001F680.ppm";
+        {
+            std::ofstream imageFile(unicodeImagePath, std::ios::binary);
+            require(static_cast<bool>(imageFile), "The image decoder fixture could not be created.");
+            imageFile << "P6\n1 1\n255\n\x20\x80\xff";
+        }
+        lumin::assets::ImageData unicodePathImage;
+        try {
+            unicodePathImage = lumin::assets::ImageLoader::load(unicodeImagePath);
+        } catch (...) {
+            std::error_code cleanupError;
+            std::filesystem::remove(unicodeImagePath, cleanupError);
+            throw;
+        }
+        std::error_code cleanupError;
+        std::filesystem::remove(unicodeImagePath, cleanupError);
+        require(unicodePathImage.width == 1 && unicodePathImage.height == 1 && unicodePathImage.pixels.size() == 4,
+                "Image loading must decode RGBA8 data from paths outside the active Windows code page.");
+
+        const lumin::assets::Mesh bunny =
+            lumin::assets::ObjLoader::load(assetDirectory / "models" / "stanford-bunny.obj");
+        glm::vec2 uvMinimum{std::numeric_limits<float>::max()};
+        glm::vec2 uvMaximum{std::numeric_limits<float>::lowest()};
+        const bool allBunnyUvsFinite =
+            std::all_of(bunny.vertices.begin(), bunny.vertices.end(), [&](const lumin::assets::Vertex& vertex) {
+                uvMinimum.x = std::min(uvMinimum.x, vertex.texCoord.x);
+                uvMinimum.y = std::min(uvMinimum.y, vertex.texCoord.y);
+                uvMaximum.x = std::max(uvMaximum.x, vertex.texCoord.x);
+                uvMaximum.y = std::max(uvMaximum.y, vertex.texCoord.y);
+                return std::isfinite(vertex.texCoord.x) && std::isfinite(vertex.texCoord.y);
+            });
+        require(allBunnyUvsFinite && uvMaximum.x - uvMinimum.x > 0.5f && uvMaximum.y - uvMinimum.y > 0.5f,
+                "OBJ meshes without vt records must receive finite, non-degenerate texture coordinates.");
+
+#if defined(LUMIN_TEST_SOURCE_DIR)
+        const std::filesystem::path testSourceDirectory = LUMIN_TEST_SOURCE_DIR;
+#else
+        const std::filesystem::path testSourceDirectory = ".";
+#endif
+        const std::filesystem::path objFixtureDirectory = testSourceDirectory / "tests";
+        const lumin::assets::Mesh seamMesh =
+            lumin::assets::ObjLoader::load(objFixtureDirectory / "MissingUvSeam.obj.txt");
+        float seamMinimum = std::numeric_limits<float>::max();
+        float seamMaximum = std::numeric_limits<float>::lowest();
+        bool seamUvsFinite = true;
+        for (std::size_t index = 0; index < 3; ++index) {
+            seamUvsFinite = seamUvsFinite && std::isfinite(seamMesh.vertices[index].texCoord.x) &&
+                            std::isfinite(seamMesh.vertices[index].texCoord.y);
+            seamMinimum = std::min(seamMinimum, seamMesh.vertices[index].texCoord.x);
+            seamMaximum = std::max(seamMaximum, seamMesh.vertices[index].texCoord.x);
+        }
+        require(seamUvsFinite && seamMaximum - seamMinimum < 0.1f,
+                "Generated cylindrical UVs must unwrap triangles that cross the periodic U seam.");
+
+        const lumin::assets::Mesh degenerateMesh =
+            lumin::assets::ObjLoader::load(objFixtureDirectory / "MissingUvDegenerate.obj.txt");
+        require(std::all_of(degenerateMesh.vertices.begin(), degenerateMesh.vertices.end(),
+                            [](const lumin::assets::Vertex& vertex) {
+                                return std::isfinite(vertex.texCoord.x) && std::isfinite(vertex.texCoord.y);
+                            }),
+                "Degenerate OBJ bounds must still produce finite texture coordinates.");
+
+        lumin::scene::Level level;
+        const auto mesh = level.addMesh(makeTriangle("pbr-material"));
+        lumin::scene::Material asphalt;
+        asphalt.albedo = {0.8f, 0.9f, 1.0f};
+        asphalt.roughness = 0.75f;
+        asphalt.metallic = 0.2f;
+        asphalt.textureScale = 3.0f;
+        asphalt.textures = asphaltTextures;
+        const auto first = level.addModel(mesh, {}, asphalt);
+        level.addModel(mesh, {}, asphalt);
+        level.addModel(mesh);
+
+        const lumin::render::ModelBatch batch = lumin::render::ModelRenderer::buildBatch(level);
+        require(nearlyEqual(batch.objects[0].baseColorMetallic.w, 0.2f) &&
+                    nearlyEqual(batch.objects[0].materialParameters.x, 0.75f) &&
+                    nearlyEqual(batch.objects[0].materialParameters.y, 3.0f) &&
+                    nearlyEqual(batch.objects[0].materialParameters.z, 1.0f) &&
+                    nearlyEqual(batch.objects[0].materialParameters.w, -1.0f),
+                "PBR material factors and texture layer must be packed into GPU object data.");
+        require(nearlyEqual(batch.objects[1].materialParameters.z, 1.0f) &&
+                    nearlyEqual(batch.objects[2].materialParameters.z, 0.0f),
+                "Matching PBR materials must share a texture-array layer and defaults must use layer zero.");
+
+        const std::uint64_t scalarTopologyRevision = level.topologyRevision();
+        asphalt.metallic = 0.4f;
+        require(level.setModelMaterial(first, asphalt) && level.topologyRevision() == scalarTopologyRevision,
+                "Scalar PBR changes must not rebuild model topology.");
+        const std::uint64_t normalConventionTopologyRevision = level.topologyRevision();
+        asphalt.textures->flipNormalY = false;
+        require(level.setModelMaterial(first, asphalt) && level.topologyRevision() == normalConventionTopologyRevision,
+                "Normal-map convention changes must update object data without rebuilding texture images.");
+        const std::uint64_t textureTopologyRevision = level.topologyRevision();
+        asphalt.textures->roughness = asphaltTextures.normal;
+        require(level.setModelMaterial(first, asphalt) && level.topologyRevision() > textureTopologyRevision,
+                "Changing PBR texture paths must rebuild texture-array resources.");
     }
 
     struct ActorCounters {
@@ -585,6 +704,7 @@ int main() {
     try {
         testCameraMovement();
         testLevelAndIndirectBatch();
+        testPbrAssetsAndMaterialBatch();
         testActorLifecycleAndDeferredChanges();
         testNestedDestroyCallbacks();
         testLevelDestructorSpawnCleanup();

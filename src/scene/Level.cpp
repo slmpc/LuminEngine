@@ -17,7 +17,16 @@ namespace lumin::scene {
         }
 
         bool sameMaterial(const Material& left, const Material& right) noexcept {
-            return left.albedo == right.albedo && left.roughness == right.roughness;
+            return left.albedo == right.albedo && left.roughness == right.roughness &&
+                   left.metallic == right.metallic && left.textureScale == right.textureScale &&
+                   left.textures == right.textures;
+        }
+
+        bool referencesSameTextureImages(const Material& left, const Material& right) noexcept {
+            if (left.textures.has_value() != right.textures.has_value()) {
+                return false;
+            }
+            return !left.textures.has_value() || left.textures->referencesSameImages(*right.textures);
         }
 
         std::uint32_t nextGeneration(std::uint32_t generation) noexcept {
@@ -619,8 +628,9 @@ namespace lumin::scene {
         if (sameMaterial(modelValue.material, material)) {
             return true;
         }
+        const bool textureSetChanged = !referencesSameTextureImages(modelValue.material, material);
         modelValue.material = material;
-        touchRevision(false, true);
+        touchRevision(textureSetChanged, true);
         return true;
     }
 

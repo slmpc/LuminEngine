@@ -25,10 +25,12 @@ namespace lumin::render {
         glm::mat4 model{1.0f};
         glm::mat4 previousModel{1.0f};
         glm::mat4 normalMatrix{1.0f};
-        glm::vec4 albedoRoughness{1.0f};
+        glm::vec4 baseColorMetallic{1.0f};
+        // roughness factor, UV scale, texture-array layer, normal-map Y sign
+        glm::vec4 materialParameters{1.0f, 1.0f, 0.0f, 1.0f};
     };
 
-    static_assert(sizeof(ObjectData) == 208);
+    static_assert(sizeof(ObjectData) == 224);
     static_assert(alignof(ObjectData) == 16);
 
     struct ModelBatch {

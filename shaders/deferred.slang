@@ -72,6 +72,33 @@ float calculateShadow(float3 worldPosition, float3 normal, uint cascadeIndex) {
     return visibility / 9.0;
 }
 
+static const float pi = 3.14159265359;
+
+float distributionGgx(float3 normal, float3 halfVector, float roughness) {
+    float alpha = roughness * roughness;
+    float alphaSquared = alpha * alpha;
+    float normalDotHalf = max(dot(normal, halfVector), 0.0);
+    float normalDotHalfSquared = normalDotHalf * normalDotHalf;
+    float denominator = normalDotHalfSquared * (alphaSquared - 1.0) + 1.0;
+    return alphaSquared / max(pi * denominator * denominator, 1e-5);
+}
+
+float geometrySchlickGgx(float normalDotDirection, float roughness) {
+    float adjustedRoughness = roughness + 1.0;
+    float k = adjustedRoughness * adjustedRoughness / 8.0;
+    return normalDotDirection / max(normalDotDirection * (1.0 - k) + k, 1e-5);
+}
+
+float geometrySmith(float3 normal, float3 viewDirection, float3 lightDirection, float roughness) {
+    float normalDotView = max(dot(normal, viewDirection), 0.0);
+    float normalDotLight = max(dot(normal, lightDirection), 0.0);
+    return geometrySchlickGgx(normalDotView, roughness) * geometrySchlickGgx(normalDotLight, roughness);
+}
+
+float3 fresnelSchlick(float cosineTheta, float3 reflectanceAtNormal) {
+    return reflectanceAtNormal + (1.0 - reflectanceAtNormal) * pow(saturate(1.0 - cosineTheta), 5.0);
+}
+
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target {
     float4 worldPositionSample = positionTexture.SampleLevel(renderSampler, input.uv, 0.0);
@@ -83,7 +110,9 @@ float4 fragmentMain(VertexOutput input) : SV_Target {
     float4 normalRoughness = normalTexture.SampleLevel(renderSampler, input.uv, 0.0);
     float3 normal = normalize(normalRoughness.xyz);
     float roughness = saturate(normalRoughness.w);
-    float3 albedo = albedoTexture.SampleLevel(renderSampler, input.uv, 0.0).rgb;
+    float4 albedoMetallic = albedoTexture.SampleLevel(renderSampler, input.uv, 0.0);
+    float3 albedo = albedoMetallic.rgb;
+    float metallic = saturate(albedoMetallic.a);
     float ao = ambientOcclusionTexture.SampleLevel(renderSampler, input.uv, 0.0);
 
     float viewDepth = max(dot(worldPosition - frame.cameraPosition.xyz, frame.cameraForward.xyz), 0.0);
@@ -94,12 +123,18 @@ float4 fragmentMain(VertexOutput input) : SV_Target {
 
     float3 toLight = normalize(-frame.lightDirection.xyz);
     float3 toView = normalize(frame.cameraPosition.xyz - worldPosition);
-    float3 halfVector = normalize(toLight + toView);
-    float diffuse = max(dot(normal, toLight), 0.0);
-    float specularPower = lerp(96.0, 8.0, roughness);
-    float specular = pow(max(dot(normal, halfVector), 0.0), specularPower) * (1.0 - roughness) * 0.35;
+    float3 lightViewSum = toLight + toView;
+    float3 halfVector = dot(lightViewSum, lightViewSum) > 1e-8 ? normalize(lightViewSum) : normal;
+    float normalDotLight = max(dot(normal, toLight), 0.0);
+    float normalDotView = max(dot(normal, toView), 0.0);
+    float3 baseReflectance = lerp(0.04.xxx, albedo, metallic);
+    float3 fresnel = fresnelSchlick(max(dot(halfVector, toView), 0.0), baseReflectance);
+    float distribution = distributionGgx(normal, halfVector, roughness);
+    float geometry = geometrySmith(normal, toView, toLight, roughness);
+    float3 specular = distribution * geometry * fresnel / max(4.0 * normalDotView * normalDotLight, 1e-4);
+    float3 diffuseWeight = (1.0 - fresnel) * (1.0 - metallic);
     float3 sunColor = float3(1.0, 0.94, 0.82) * 3.2;
-    float3 ambient = albedo * (0.035 + 0.12 * ao);
-    float3 direct = (albedo * diffuse + specular.xxx) * sunColor * visibility;
+    float3 ambient = (albedo * (1.0 - metallic) * 0.12 + baseReflectance * 0.04) * ao;
+    float3 direct = (diffuseWeight * albedo / pi + specular) * sunColor * normalDotLight * visibility;
     return float4(ambient + direct, 1.0);
 }

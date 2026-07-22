@@ -6,7 +6,8 @@ Lumin Engine 是一个使用 C++20、SDL3、Slang 和动态渲染构建的紧凑
 
 - 由 `Level` 管理、支持延迟生成与销毁及逐帧 `Tick` 的 Actor 系统。
 - 可生成法线并支持高度查询的程序化高度场地形。
-- 包含位置、法线、反照率和运动矢量 G-buffer 的延迟渲染器。
+- 包含位置、法线与粗糙度、反照率与金属度、运动矢量的 G-buffer 延迟渲染器。
+- 支持 sRGB base color、切线空间 normal 和 roughness 贴图，以及 GGX/Cook-Torrance PBR 光照。
 - 四级联方向光阴影、SSAO 和程序化天空盒。
 - 使用 Halton 抖动，并结合上一帧相机与模型运动矢量的 TAA。
 - ACES 色调映射，以及用于运行时调整渲染设置的 ImGui 面板。
@@ -17,6 +18,8 @@ Lumin Engine 是一个使用 C++20、SDL3、Slang 和动态渲染构建的紧凑
 - `include/lumin`：引擎公共头文件。
 - `src`：引擎实现。
 - `assets/models`：实验时放置 OBJ 文件的目录。
+- `assets/materials`：本地 PBR 材质贴图目录，由下载脚本生成且不纳入版本控制。
+- `scripts`：资源下载等项目辅助脚本。
 - `shaders`：着色器源码。
 - `cmake`：项目的 CMake 辅助模块。
 - `docs`：简要架构说明。
@@ -29,6 +32,7 @@ Lumin Engine 是一个使用 C++20、SDL3、Slang 和动态渲染构建的紧凑
 - GLM：数学类型。
 - Dear ImGui：渲染器界面。
 - tinyobjloader：OBJ 文件解析。
+- stb_image：JPEG/PNG 材质贴图解码。
 - Vulkan headers 和 loader。
 
 如果 vcpkg 不在 `CMakeLists.txt` 检查的常用路径中，请设置 `VCPKG_ROOT`。Vulkan SDK 必须提供
@@ -75,12 +79,28 @@ cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 如果未提供 OBJ 路径，沙盒会优先加载 `assets/models/stanford-bunny.obj`；该文件不可用时则使用内置立方体。
 场景还会创建一个程序化地形 Actor 和第二个内置网格。
 
+默认主模型使用 `assets/materials/aerial_asphalt_01` 下的沥青材质。base color 按 sRGB 解码，OpenGL normal
+贴图在采样时修正 Y 方向，roughness 写入 G-buffer 的法线附件 alpha，metallic 写入反照率附件 alpha。
+该材质没有 metallic 或 AO 贴图，因此使用 `metallic=0`，环境遮蔽由 SSAO 提供。缺少 `vt` 的 OBJ 会在加载时
+生成柱面 UV。当前材质路径不执行几何位移或视差映射。
+
+材质贴图不纳入版本控制。首次运行沙盒前，请使用 Python 3 下载清单中的全部材质：
+
+```powershell
+python scripts/download_materials.py
+```
+
+脚本会校验每个文件的 SHA-256，并跳过已经完整下载的文件。可使用
+`python scripts/download_materials.py --check` 进行离线完整性检查，或使用 `--force` 重新下载全部文件。
+当前清单中的 Aerial Asphalt 01 来自 [Poly Haven](https://polyhaven.com/a/aerial_asphalt_01)，采用 CC0 许可。
+
 ## 测试
 
 ```powershell
 ctest --test-dir out\build\debug --output-on-failure
 ```
 
-测试覆盖相机移动、`Level`/模型修订号、Actor 生命周期与延迟变更、地形生成与高度采样，以及渲染器批次构建。
+测试覆盖相机移动、`Level`/模型修订号、Actor 生命周期与延迟变更、地形生成与高度采样、PBR 图像解码、
+缺失 UV 生成和渲染器材质批次构建。
 
 有关渲染通道顺序、时序历史约定和资源所有权模型，请参阅 `docs/rendering-architecture.md`。

@@ -36,6 +36,7 @@ find_package(SDL3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
+find_package(Stb REQUIRED)
 
 set(LUMIN_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(LUMIN_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
@@ -98,6 +99,7 @@ add_library(Lumin::Engine ALIAS lumin_engine)
 
 target_sources(lumin_engine
     PRIVATE
+        src/assets/ImageLoader.cpp
         src/assets/ObjLoader.cpp
         src/core/Application.cpp
         src/platform/RenderDocAttachment.cpp
@@ -123,6 +125,8 @@ target_include_directories(lumin_engine
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${Stb_INCLUDE_DIR}
 )
 
 target_compile_features(lumin_engine PUBLIC cxx_std_20)
@@ -165,5 +169,9 @@ if(LUMIN_BUILD_TESTS)
     enable_testing()
     add_executable(lumin_tests tests/CameraLevelTests.cpp)
     target_link_libraries(lumin_tests PRIVATE Lumin::Engine)
+    target_compile_definitions(lumin_tests PRIVATE
+        LUMIN_TEST_ASSET_DIR="${LUMIN_ASSET_DIR_CMAKE}"
+        LUMIN_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     add_test(NAME CameraLevel COMMAND lumin_tests)
 endif()

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -68,9 +69,25 @@ namespace lumin::scene {
         [[nodiscard]] glm::mat4 matrix() const;
     };
 
+    struct PbrTextureSet {
+        std::filesystem::path baseColor;
+        std::filesystem::path normal;
+        std::filesystem::path roughness;
+        bool flipNormalY = true;
+
+        [[nodiscard]] bool referencesSameImages(const PbrTextureSet& other) const noexcept {
+            return baseColor == other.baseColor && normal == other.normal && roughness == other.roughness;
+        }
+
+        friend bool operator==(const PbrTextureSet&, const PbrTextureSet&) = default;
+    };
+
     struct Material {
         glm::vec3 albedo{0.82f, 0.68f, 0.48f};
         float roughness = 0.45f;
+        float metallic = 0.0f;
+        float textureScale = 1.0f;
+        std::optional<PbrTextureSet> textures;
     };
 
     struct ModelInstance {

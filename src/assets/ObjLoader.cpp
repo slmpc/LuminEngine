@@ -1,6 +1,10 @@
 #include "lumin/assets/ObjLoader.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 
 #include <glm/geometric.hpp>
@@ -62,6 +66,121 @@ namespace lumin::assets {
             }
         }
 
+        void generateMissingTexcoords(Mesh& mesh, const std::vector<bool>& missingTexcoordVertices) {
+            if (mesh.vertices.empty()) {
+                return;
+            }
+
+            glm::vec3 boundsMin{std::numeric_limits<float>::max()};
+            glm::vec3 boundsMax{std::numeric_limits<float>::lowest()};
+            for (const Vertex& vertex : mesh.vertices) {
+                boundsMin = glm::min(boundsMin, vertex.position);
+                boundsMax = glm::max(boundsMax, vertex.position);
+            }
+
+            const glm::vec3 boundsExtent = boundsMax - boundsMin;
+            int axis = 0;
+            if (boundsExtent.y > boundsExtent[axis]) {
+                axis = 1;
+            }
+            if (boundsExtent.z > boundsExtent[axis]) {
+                axis = 2;
+            }
+
+            const int radialAxisA = (axis + 1) % 3;
+            const int radialAxisB = (axis + 2) % 3;
+            const glm::vec3 boundsCenter = (boundsMin + boundsMax) * 0.5f;
+            constexpr float epsilon = 0.000001f;
+            constexpr float twoPi = 6.28318530717958647692f;
+            const bool cylindricalProjection =
+                boundsExtent[radialAxisA] > epsilon && boundsExtent[radialAxisB] > epsilon;
+
+            for (std::size_t i = 0; i < mesh.vertices.size(); ++i) {
+                if (!missingTexcoordVertices[i]) {
+                    continue;
+                }
+
+                Vertex& vertex = mesh.vertices[i];
+                float u = 0.0f;
+                if (cylindricalProjection) {
+                    const float radialA = vertex.position[radialAxisA] - boundsCenter[radialAxisA];
+                    const float radialB = vertex.position[radialAxisB] - boundsCenter[radialAxisB];
+                    const float angle = std::atan2(radialB, radialA);
+                    u = (angle + 3.14159265358979323846f) / twoPi;
+                } else {
+                    const int planarUAxis =
+                        boundsExtent[radialAxisA] > boundsExtent[radialAxisB] ? radialAxisA : radialAxisB;
+                    const float planarURange = boundsExtent[planarUAxis];
+                    if (planarURange > epsilon) {
+                        u = (vertex.position[planarUAxis] - boundsMin[planarUAxis]) / planarURange;
+                    }
+                }
+
+                const float axisRange = boundsExtent[axis];
+                const float normalizedV =
+                    axisRange > epsilon ? (vertex.position[axis] - boundsMin[axis]) / axisRange : 0.0f;
+                vertex.texCoord = {u, 1.0f - normalizedV};
+            }
+
+            // Keep each triangle's U values close together when it crosses the cylindrical seam.
+            if (!cylindricalProjection) {
+                return;
+            }
+
+            for (std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                const std::uint32_t firstIndex = mesh.indices[i + 0];
+                const std::uint32_t secondIndex = mesh.indices[i + 1];
+                const std::uint32_t thirdIndex = mesh.indices[i + 2];
+                if (!missingTexcoordVertices[firstIndex] || !missingTexcoordVertices[secondIndex] ||
+                    !missingTexcoordVertices[thirdIndex]) {
+                    continue;
+                }
+
+                Vertex& first = mesh.vertices[firstIndex];
+                Vertex& second = mesh.vertices[secondIndex];
+                Vertex& third = mesh.vertices[thirdIndex];
+
+                const std::array<float, 3> values = {
+                    first.texCoord.x,
+                    second.texCoord.x,
+                    third.texCoord.x,
+                };
+                std::array<int, 3> sortedIndices = {0, 1, 2};
+                std::sort(sortedIndices.begin(), sortedIndices.end(), [&values](int lhs, int rhs) {
+                    return values[lhs] < values[rhs];
+                });
+
+                float largestGap = 0.0f;
+                int largestGapIndex = 0;
+                for (int gapIndex = 0; gapIndex < 3; ++gapIndex) {
+                    const float current = values[sortedIndices[gapIndex]];
+                    const float next = values[sortedIndices[(gapIndex + 1) % 3]];
+                    const float gap = gapIndex == 2 ? next + 1.0f - current : next - current;
+                    if (gap > largestGap) {
+                        largestGap = gap;
+                        largestGapIndex = gapIndex;
+                    }
+                }
+
+                if (largestGap > 0.5f) {
+                    const int anchorIndex = sortedIndices[(largestGapIndex + 1) % 3];
+                    const float anchor = values[anchorIndex];
+                    const auto unwrap = [anchor](float value) {
+                        while (value < anchor - 0.5f) {
+                            value += 1.0f;
+                        }
+                        while (value > anchor + 0.5f) {
+                            value -= 1.0f;
+                        }
+                        return value;
+                    };
+                    first.texCoord.x = unwrap(first.texCoord.x);
+                    second.texCoord.x = unwrap(second.texCoord.x);
+                    third.texCoord.x = unwrap(third.texCoord.x);
+                }
+            }
+        }
+
     } // namespace
 
     bool Mesh::empty() const noexcept {
@@ -96,7 +215,9 @@ namespace lumin::assets {
         mesh.name = path.stem().string();
 
         bool missingNormals = false;
+        bool missingTexcoords = false;
         std::vector<int> sourceVertexIndices;
+        std::vector<bool> missingTexcoordVertices;
 
         for (const tinyobj::shape_t& shape : shapes) {
             std::size_t indexOffset = 0;
@@ -140,10 +261,13 @@ namespace lumin::assets {
                             attributes.texcoords[base + 0],
                             1.0f - attributes.texcoords[base + 1],
                         };
+                    } else {
+                        missingTexcoords = true;
                     }
 
                     mesh.indices.push_back(static_cast<std::uint32_t>(mesh.vertices.size()));
                     sourceVertexIndices.push_back(index.vertex_index);
+                    missingTexcoordVertices.push_back(index.texcoord_index < 0);
                     mesh.vertices.push_back(vertex);
                 }
 
@@ -157,6 +281,10 @@ namespace lumin::assets {
 
         if (missingNormals) {
             generateMissingNormals(mesh, sourceVertexIndices, attributes.vertices.size() / 3);
+        }
+
+        if (missingTexcoords) {
+            generateMissingTexcoords(mesh, missingTexcoordVertices);
         }
 
         return mesh;

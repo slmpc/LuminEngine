@@ -6,7 +6,8 @@ struct ObjectData {
     float4x4 model;
     float4x4 previousModel;
     float4x4 normalMatrix;
-    float4 albedoRoughness;
+    float4 baseColorMetallic;
+    float4 materialParameters;
 };
 
 [[vk::binding(0, 0)]]

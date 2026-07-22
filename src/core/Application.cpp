@@ -107,6 +107,21 @@ namespace lumin::core {
             return std::nullopt;
         }
 
+        scene::PbrTextureSet defaultAsphaltTextures() {
+#if defined(LUMIN_ASSET_DIR)
+            const std::filesystem::path directory =
+                std::filesystem::path{LUMIN_ASSET_DIR} / "materials" / "aerial_asphalt_01";
+#else
+            const std::filesystem::path directory = std::filesystem::path{"assets"} / "materials" / "aerial_asphalt_01";
+#endif
+            return scene::PbrTextureSet{
+                .baseColor = directory / "aerial_asphalt_01_diff_1k.jpg",
+                .normal = directory / "aerial_asphalt_01_nor_gl_1k.png",
+                .roughness = directory / "aerial_asphalt_01_rough_1k.jpg",
+                .flipNormalY = true,
+            };
+        }
+
         platform::RenderDocAttachment attachRenderDoc(const ApplicationConfig& config) {
             if (!config.enableRenderDoc) {
                 return {};
@@ -148,7 +163,7 @@ namespace lumin::core {
         renderer_ = std::make_unique<render::LevelRenderer>(window_, vulkan_, level_, shaderDirectory);
         std::cout << "Level renderer ready: models=" << renderer_->modelCount()
                   << " mdiDraws=" << renderer_->mdiDrawCount()
-                  << " gbuffer=position+normal+albedo+motion csm=4 ssao=on taa=on\n";
+                  << " gbuffer=position+normalRoughness+albedoMetallic+motion csm=4 ssao=on taa=on\n";
 
         auto previousTime = std::chrono::steady_clock::now();
         while (!window_.shouldClose()) {
@@ -202,19 +217,19 @@ namespace lumin::core {
         const scene::MeshHandle primary = level_.addMesh(std::move(primaryMesh));
         const scene::MeshHandle secondary = level_.addMesh(std::move(secondaryMesh));
 
-        scene::Material bronze;
-        bronze.albedo = {0.82f, 0.55f, 0.24f};
-        bronze.roughness = 0.42f;
-        scene::Material blue;
-        blue.albedo = {0.24f, 0.48f, 0.86f};
-        blue.roughness = 0.32f;
+        scene::Material asphalt;
+        asphalt.albedo = {1.0f, 1.0f, 1.0f};
+        asphalt.roughness = 1.0f;
+        asphalt.metallic = 0.0f;
+        asphalt.textureScale = 2.5f;
+        asphalt.textures = defaultAsphaltTextures();
         scene::Material green;
         green.albedo = {0.25f, 0.76f, 0.46f};
         green.roughness = 0.58f;
 
-        level_.addModel(primary, leftTransform, bronze);
+        level_.addModel(primary, leftTransform, asphalt);
         level_.addModel(secondary, centerTransform, green);
-        level_.addModel(primary, rightTransform, blue);
+        level_.addModel(primary, rightTransform, asphalt);
         scene::TerrainDesc terrainDescription;
         terrainDescription.resolutionX = 48;
         terrainDescription.resolutionZ = 48;
