@@ -122,12 +122,14 @@ namespace lumin::render {
             throw std::runtime_error("Lumin Engine requires Vulkan 1.3 for Dynamic Rendering.");
         }
         validationEnabled_ = desc_.enableValidation && validationLayersAvailable();
+        debugUtilsEnabled_ = instanceExtensionAvailable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
         createInstance();
         createDebugMessenger();
         createSurface();
         pickPhysicalDevice();
         createDevice();
+        loadDebugUtilsFunctions();
         createCommandPool();
         createSwapchainResources();
         createCommandBuffers();
@@ -240,6 +242,14 @@ namespace lumin::render {
         return swapchainGeneration_;
     }
 
+    PFN_vkCmdBeginDebugUtilsLabelEXT VulkanContext::cmdBeginDebugUtilsLabel() const noexcept {
+        return cmdBeginDebugUtilsLabel_;
+    }
+
+    PFN_vkCmdEndDebugUtilsLabelEXT VulkanContext::cmdEndDebugUtilsLabel() const noexcept {
+        return cmdEndDebugUtilsLabel_;
+    }
+
     std::optional<VulkanFrame> VulkanContext::beginFrame() {
         checkVk(vkWaitForFences(device_, 1, &inFlightFences_[currentFrame_], VK_TRUE, UINT64_MAX),
                 "Failed to wait for the current frame fence.");
@@ -325,7 +335,7 @@ namespace lumin::render {
 
         VkInstanceCreateInfo createInfo;
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-        createInfo.pNext = validationEnabled_ ? &debugCreateInfo : nullptr;
+        createInfo.pNext = validationEnabled_ && debugUtilsEnabled_ ? &debugCreateInfo : nullptr;
         createInfo.flags = 0;
         createInfo.pApplicationInfo = &appInfo;
         createInfo.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
@@ -345,7 +355,7 @@ namespace lumin::render {
     }
 
     void VulkanContext::createDebugMessenger() {
-        if (!validationEnabled_) {
+        if (!validationEnabled_ || !debugUtilsEnabled_) {
             return;
         }
 
@@ -442,6 +452,22 @@ namespace lumin::render {
 
         vkGetDeviceQueue(device_, queueFamilies_.graphics.value(), 0, &graphicsQueue_);
         vkGetDeviceQueue(device_, queueFamilies_.present.value(), 0, &presentQueue_);
+    }
+
+    void VulkanContext::loadDebugUtilsFunctions() {
+        if (!debugUtilsEnabled_) {
+            return;
+        }
+
+        cmdBeginDebugUtilsLabel_ = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
+            vkGetDeviceProcAddr(device_, "vkCmdBeginDebugUtilsLabelEXT"));
+        cmdEndDebugUtilsLabel_ = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(
+            vkGetDeviceProcAddr(device_, "vkCmdEndDebugUtilsLabelEXT"));
+
+        if (cmdBeginDebugUtilsLabel_ == nullptr || cmdEndDebugUtilsLabel_ == nullptr) {
+            cmdBeginDebugUtilsLabel_ = nullptr;
+            cmdEndDebugUtilsLabel_ = nullptr;
+        }
     }
 
     void VulkanContext::createCommandPool() {
@@ -645,10 +671,22 @@ namespace lumin::render {
         return true;
     }
 
+    bool VulkanContext::instanceExtensionAvailable(const char* extensionName) const {
+        std::uint32_t extensionCount = 0;
+        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+
+        std::vector<VkExtensionProperties> extensions(extensionCount);
+        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
+        return std::any_of(extensions.begin(), extensions.end(), [extensionName](const VkExtensionProperties& item) {
+            return std::strcmp(extensionName, item.extensionName) == 0;
+        });
+    }
+
     std::vector<const char*> VulkanContext::requiredExtensions() const {
         std::vector<const char*> extensions = window_.requiredInstanceExtensions();
 
-        if (validationEnabled_) {
+        if (debugUtilsEnabled_ &&
+            std::find(extensions.begin(), extensions.end(), VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == extensions.end()) {
             extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         }
 

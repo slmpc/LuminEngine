@@ -541,6 +541,8 @@ namespace lumin::render {
         FrameGraphContext graphContext;
         graphContext.device = context_.device();
         graphContext.commandBuffer = commandBuffer;
+        graphContext.cmdBeginDebugUtilsLabel = context_.cmdBeginDebugUtilsLabel();
+        graphContext.cmdEndDebugUtilsLabel = context_.cmdEndDebugUtilsLabel();
         graphContext.frameIndex = frameIndex;
         frameGraph_.execute(graphContext);
         checkVk(vkEndCommandBuffer(commandBuffer), "Failed to end LevelRenderer command buffer.");

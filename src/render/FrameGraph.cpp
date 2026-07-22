@@ -299,6 +299,20 @@ namespace lumin::render {
                 *context.log << "[framegraph] " << pass.name << "\n";
             }
 
+            const bool hasDebugLabel = context.commandBuffer != VK_NULL_HANDLE &&
+                                       context.cmdBeginDebugUtilsLabel != nullptr &&
+                                       context.cmdEndDebugUtilsLabel != nullptr;
+            if (hasDebugLabel) {
+                VkDebugUtilsLabelEXT label{};
+                label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+                label.pLabelName = pass.name.c_str();
+                label.color[0] = 0.20F;
+                label.color[1] = 0.55F;
+                label.color[2] = 0.90F;
+                label.color[3] = 1.00F;
+                context.cmdBeginDebugUtilsLabel(context.commandBuffer, &label);
+            }
+
             for (const ResourceUsage& usage : pass.usages) {
                 const ResourceNode& resource = resources_[usage.resource.id];
                 if (resource.kind == FrameGraphResourceKind::Texture) {
@@ -310,6 +324,9 @@ namespace lumin::render {
 
             if (pass.execute) {
                 pass.execute(context);
+            }
+            if (hasDebugLabel) {
+                context.cmdEndDebugUtilsLabel(context.commandBuffer);
             }
         }
 

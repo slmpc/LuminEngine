@@ -51,6 +51,8 @@ namespace lumin::render {
         [[nodiscard]] const std::vector<VkImage>& swapchainImages() const noexcept;
         [[nodiscard]] const std::vector<VkImageView>& swapchainImageViews() const noexcept;
         [[nodiscard]] std::uint64_t swapchainGeneration() const noexcept;
+        [[nodiscard]] PFN_vkCmdBeginDebugUtilsLabelEXT cmdBeginDebugUtilsLabel() const noexcept;
+        [[nodiscard]] PFN_vkCmdEndDebugUtilsLabelEXT cmdEndDebugUtilsLabel() const noexcept;
 
         // 帧同步、交换链获取和提交统一由 Context 管理，renderer 只记录命令。
         [[nodiscard]] std::optional<VulkanFrame> beginFrame();
@@ -70,6 +72,7 @@ namespace lumin::render {
         void createSurface();
         void pickPhysicalDevice();
         void createDevice();
+        void loadDebugUtilsFunctions();
         void createCommandPool();
         void createSwapchainResources();
         void cleanupSwapchainResources();
@@ -81,6 +84,7 @@ namespace lumin::render {
         void createRenderFinishedSemaphores();
 
         [[nodiscard]] bool validationLayersAvailable() const;
+        [[nodiscard]] bool instanceExtensionAvailable(const char* extensionName) const;
         [[nodiscard]] std::vector<const char*> requiredExtensions() const;
         [[nodiscard]] QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) const;
         [[nodiscard]] bool deviceExtensionsAvailable(VkPhysicalDevice device) const;
@@ -99,10 +103,13 @@ namespace lumin::render {
         platform::Window& window_;
         VulkanContextDesc desc_;
         bool validationEnabled_ = false;
+        bool debugUtilsEnabled_ = false;
         std::uint32_t apiVersion_ = VK_API_VERSION_1_0;
 
         VkInstance instance_ = VK_NULL_HANDLE;
         VkDebugUtilsMessengerEXT debugMessenger_ = VK_NULL_HANDLE;
+        PFN_vkCmdBeginDebugUtilsLabelEXT cmdBeginDebugUtilsLabel_ = nullptr;
+        PFN_vkCmdEndDebugUtilsLabelEXT cmdEndDebugUtilsLabel_ = nullptr;
         VkSurfaceKHR surface_ = VK_NULL_HANDLE;
         VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
         VkDevice device_ = VK_NULL_HANDLE;

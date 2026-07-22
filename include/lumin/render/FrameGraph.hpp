@@ -76,6 +76,8 @@ namespace lumin::render {
     struct FrameGraphContext {
         VkDevice device = VK_NULL_HANDLE;
         VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+        PFN_vkCmdBeginDebugUtilsLabelEXT cmdBeginDebugUtilsLabel = nullptr;
+        PFN_vkCmdEndDebugUtilsLabelEXT cmdEndDebugUtilsLabel = nullptr;
         std::uint32_t frameIndex = 0;
         std::ostream* log = nullptr;
     };
