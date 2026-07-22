@@ -1,82 +1,86 @@
 # Lumin Engine
 
-Lumin Engine is a compact Vulkan 1.3 renderer and scene sandbox built with C++20, SDL3, Slang, and dynamic rendering.
+Lumin Engine 是一个使用 C++20、SDL3、Slang 和动态渲染构建的紧凑型 Vulkan 1.3 渲染器与场景沙盒。
 
-The current sandbox includes:
+当前沙盒包含：
 
-- A Level-owned Actor system with deferred spawn/destroy and per-frame Tick.
-- Procedural height-field terrain with generated normals and height queries.
-- A deferred renderer with a position/normal/albedo/motion G-buffer.
-- Four-cascade directional shadow maps, SSAO, and a procedural skybox.
-- Halton-jittered TAA with previous-camera and previous-model motion vectors.
-- ACES tonemapping and an ImGui panel for runtime render settings.
+- 由 `Level` 管理、支持延迟生成与销毁及逐帧 `Tick` 的 Actor 系统。
+- 可生成法线并支持高度查询的程序化高度场地形。
+- 包含位置、法线、反照率和运动矢量 G-buffer 的延迟渲染器。
+- 四级联方向光阴影、SSAO 和程序化天空盒。
+- 使用 Halton 抖动，并结合上一帧相机与模型运动矢量的 TAA。
+- ACES 色调映射，以及用于运行时调整渲染设置的 ImGui 面板。
 
-## Layout
+## 目录结构
 
-- `apps/sandbox`: runnable sample application.
-- `include/lumin`: public engine headers.
-- `src`: engine implementation.
-- `assets/models`: place OBJ files here while experimenting.
-- `shaders`: shader sources.
-- `cmake`: project CMake helpers.
-- `docs`: short architecture notes.
+- `apps/sandbox`：可运行的示例程序。
+- `include/lumin`：引擎公共头文件。
+- `src`：引擎实现。
+- `assets/models`：实验时放置 OBJ 文件的目录。
+- `shaders`：着色器源码。
+- `cmake`：项目的 CMake 辅助模块。
+- `docs`：简要架构说明。
 
-## Dependencies
+## 依赖项
 
-The project uses `vcpkg.json` to declare:
+项目通过 `vcpkg.json` 声明以下依赖：
 
-- SDL3 for window creation, event handling, and Vulkan surface integration.
-- GLM for math types.
-- Dear ImGui for the renderer overlay.
-- tinyobjloader for OBJ parsing.
-- Vulkan headers and loader.
+- SDL3：窗口创建、事件处理和 Vulkan surface 集成。
+- GLM：数学类型。
+- Dear ImGui：渲染器界面。
+- tinyobjloader：OBJ 文件解析。
+- Vulkan headers 和 loader。
 
-Set `VCPKG_ROOT` if vcpkg is not installed in one of the common paths checked by `CMakeLists.txt`.
-The Vulkan SDK must provide `slangc` so CMake can compile the files under `shaders` to SPIR-V.
+如果 vcpkg 不在 `CMakeLists.txt` 检查的常用路径中，请设置 `VCPKG_ROOT`。Vulkan SDK 必须提供
+`slangc`，以便 CMake 将 `shaders` 下的文件编译为 SPIR-V。
 
-## Build
+## 构建
 
 ```powershell
 cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build out/build/debug
 ```
 
-Run the sandbox:
+运行沙盒：
 
 ```powershell
 .\out\build\debug\LuminEngine.exe
 ```
 
-Optionally replace the default model with an OBJ:
+也可以使用 OBJ 文件替换默认模型：
 
 ```powershell
 .\out\build\debug\LuminEngine.exe .\assets\models\your_model.obj
 ```
 
-Attach RenderDoc before SDL and Vulkan are initialized by passing both the enable flag and the RenderDoc library path:
+如需在 SDL 和 Vulkan 初始化前挂载 RenderDoc，请同时传入启用参数和 RenderDoc 动态库路径：
 
 ```powershell
 .\out\build\debug\LuminEngine.exe --renderdoc=true --renderdoc-path "C:\Program Files\RenderDoc\renderdoc.dll"
 ```
 
-`--renderdoc` is shorthand for `--renderdoc=true`; accepted explicit values are `true`, `false`, `1`, `0`, `on`, and `off`. The repository's VS Code CMake Run/Debug configuration enables RenderDoc with its standard Windows install path. Change `cmake.debugConfig.args` in `.vscode/settings.json` if RenderDoc is installed elsewhere, or set the flag to `--renderdoc=false` to run without it.
+`--renderdoc` 是 `--renderdoc=true` 的简写；显式值支持 `true`、`false`、`1`、`0`、`on` 和 `off`。
+仓库中的 VS Code CMake 运行/调试配置会使用 RenderDoc 的 Windows 标准安装路径启用它。如果 RenderDoc 安装在其他位置，
+请修改 `.vscode/settings.json` 中的 `cmake.debugConfig.args`；如需禁用，则传入 `--renderdoc=false`。
 
-The Debug configure step also generates `out/build/debug/compile_commands.json`. The local VS Code settings pass that directory to clangd automatically. Refresh it after changing CMake files or dependencies with:
+Debug 配置过程还会生成 `out/build/debug/compile_commands.json`。本地 VS Code 设置会自动将该目录传给 clangd。
+修改 CMake 文件或依赖项后，可使用以下命令刷新：
 
 ```powershell
 cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
-Use `WASD`, `Space`, and `Left Ctrl` to move the camera. The ImGui panel exposes camera speed, CSM, SSAO, TAA, exposure, and sun direction.
+使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。ImGui 面板可调整相机速度、CSM、SSAO、TAA、曝光和太阳方向。
 
-If no OBJ path is supplied, the sandbox loads `assets/models/stanford-bunny.obj` when available, otherwise it uses a built-in cube. The scene also creates a procedural terrain Actor and a second built-in mesh.
+如果未提供 OBJ 路径，沙盒会优先加载 `assets/models/stanford-bunny.obj`；该文件不可用时则使用内置立方体。
+场景还会创建一个程序化地形 Actor 和第二个内置网格。
 
-## Tests
+## 测试
 
 ```powershell
 ctest --test-dir out\build\debug --output-on-failure
 ```
 
-The tests cover camera movement, Level/model revisions, Actor lifecycle and deferred changes, terrain generation and height sampling, and renderer batch construction.
+测试覆盖相机移动、`Level`/模型修订号、Actor 生命周期与延迟变更、地形生成与高度采样，以及渲染器批次构建。
 
-See `docs/rendering-architecture.md` for the render-pass order, temporal history contract, and resource ownership model.
+有关渲染通道顺序、时序历史约定和资源所有权模型，请参阅 `docs/rendering-architecture.md`。

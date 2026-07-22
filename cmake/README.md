@@ -1,1 +1,1 @@
-Reusable CMake helper modules belong here.
+可复用的 CMake 辅助模块应放在此目录中。

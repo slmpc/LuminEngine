@@ -1,51 +1,68 @@
-# Lumin Rendering Architecture
+# Lumin 渲染架构
 
-## Scene Update
+## 场景更新
 
-`Level` owns meshes, model instances, and Actors. Actor handles contain an index and generation so stale handles do not resolve after a slot is reused. Spawn and destroy requests made from `tick`, `onSpawn`, or `onDestroy` are deferred until the active callback traversal is safe to commit.
+`Level` 管理网格、模型实例和 Actor。Actor 句柄包含索引和代数，因此槽位复用后，旧句柄不会解析到新对象。
+在 `tick`、`onSpawn` 或 `onDestroy` 中发起的生成与销毁请求会延迟处理，直到当前回调遍历可以安全提交变更。
 
-`Application` updates camera input, calls `Level::tick(deltaSeconds)`, and then renders. Model transform and material changes increment `modelRevision`; mesh/model membership changes increment `topologyRevision`. `LevelRenderer` uploads object records every frame and rebuilds packed geometry only when the topology revision changes.
+`Application` 更新相机输入，调用 `Level::tick(deltaSeconds)`，然后执行渲染。模型变换和材质变化会递增
+`modelRevision`；网格或模型成员变化会递增 `topologyRevision`。`LevelRenderer` 每帧上传对象记录，仅在拓扑修订号
+发生变化时重新构建打包后的几何数据。
 
-`Terrain` generates an indexed height-field mesh with normalized accumulated triangle normals and bilinear height queries. `TerrainActor` owns the terrain data, attaches its generated mesh to the Level, and replaces the Level mesh after terrain edits.
+`Terrain` 生成带索引的高度场网格，通过累积三角形法线得到归一化法线，并支持双线性高度查询。`TerrainActor`
+拥有地形数据，将生成的网格附加到 `Level`，并在地形编辑后替换 `Level` 中的网格。
 
-## Frame Order
+## 帧内顺序
 
-Each frame is recorded through `FrameGraph` in this order:
+每一帧通过 `FrameGraph` 按以下顺序记录：
 
-1. Four CSM depth-only passes, one independent 2D depth image per cascade.
-2. G-buffer pass: world position, world normal and roughness, albedo, motion vector, and depth.
-3. SSAO fullscreen pass reading world position and normal.
-4. Procedural skybox fullscreen pass writing the HDR lighting target.
-5. Deferred lighting pass loading that target and shading geometry with SSAO and CSM.
-6. TAA resolve reading HDR lighting, motion, and the previous frame history.
-7. Transfer copy from the resolved image into the current history image.
-8. ACES tonemap to the swapchain.
-9. ImGui overlay and presentation.
+1. 四个 CSM 纯深度通道，每个级联使用一张独立的二维深度图像。
+2. G-buffer 通道：世界空间位置、世界空间法线与粗糙度、反照率、运动矢量和深度。
+3. SSAO 全屏通道，读取世界空间位置和法线。
+4. 程序化天空盒全屏通道，写入 HDR 光照目标。
+5. 延迟光照通道，加载该目标，并结合 SSAO 和 CSM 对几何体进行着色。
+6. TAA 解析，读取 HDR 光照、运动矢量和上一帧历史。
+7. 将解析结果传输复制到当前历史图像。
+8. 使用 ACES 色调映射输出到交换链。
+9. 绘制 ImGui 界面并呈现。
 
-All graphics passes use Vulkan 1.3 dynamic rendering. `PipelineFactory` supports MRT pipelines and vertex-only depth pipelines; no `VkRenderPass` or framebuffer objects are created.
+所有图形通道均使用 Vulkan 1.3 动态渲染。`PipelineFactory` 支持 MRT 流水线和仅含顶点阶段的深度流水线；
+项目不会创建 `VkRenderPass` 或 framebuffer 对象。
 
-## Cascaded Shadows
+## 级联阴影
 
-The camera frustum is split into four logarithmic/uniform blended ranges. Each slice is fitted by an orthographic light projection and snapped to the shadow texel grid to reduce shimmering. Shadow matrices use four separate per-frame uniform buffers, so recording one cascade never overwrites data consumed by another cascade.
+相机视锥体通过对数与均匀混合方式划分为四段。每一段都使用正交光源投影进行拟合，并对齐到阴影纹素网格以减少抖动。
+阴影矩阵使用四个独立的逐帧 uniform buffer，因此记录某一级联时不会覆盖其他级联正在使用的数据。
 
-Shadow depth is sampled with explicit `Texture2D.Load` calls and a manual 3x3 PCF kernel. This avoids requiring linear filtering support for the selected depth format.
+阴影深度通过显式 `Texture2D.Load` 调用和手动 3x3 PCF 核进行采样，从而无需所选深度格式支持线性过滤。
 
-## Motion And TAA
+## 运动矢量与 TAA
 
-`ObjectData` contains current and previous model matrices plus an inverse-transpose normal matrix for non-uniform scale. The G-buffer frame uniform contains current and previous jittered view-projection matrices. The motion attachment stores `currentUv - previousUv`; TAA reconstructs the previous sample location as `currentUv - motion`.
+`ObjectData` 包含当前及上一帧模型矩阵，以及用于非均匀缩放的逆转置法线矩阵。G-buffer 的帧 uniform 包含当前及
+上一帧带抖动的视图投影矩阵。运动附件存储 `currentUv - previousUv`；TAA 以 `currentUv - motion`
+重建上一帧的采样位置。
 
-An eight-sample Halton (bases 2 and 3) sequence jitters the camera projection while TAA is enabled. Each frame slot writes its own history image and reads the other slot, producing true previous-frame ping-pong on the ordered graphics queue.
+启用 TAA 时，使用以 2 和 3 为底、包含八个样本的 Halton 序列抖动相机投影。每个帧槽写入自己的历史图像并读取
+另一个槽位的历史图像，从而在有序图形队列上实现真正的上一帧乒乓缓冲。
 
-History is invalidated on first use, swapchain recreation, topology changes, camera cuts, meaningful FOV changes, and TAA off-to-on transitions. The first valid frame bypasses temporal blending. Content validity is tracked separately from whether each persistent history image has been initialized; invalidating a sample never discards its real shader-read layout/access state. FrameGraph can therefore emit the required shader-read to transfer-write dependency when that image is reused.
+以下情况会使历史失效：首次使用、交换链重建、拓扑变化、相机切换、明显的 FOV 变化，以及 TAA 从关闭切换到开启。
+第一个有效帧会跳过时序混合。内容有效性与各持久历史图像是否完成初始化分开跟踪；使样本失效不会丢弃其真实的
+着色器读取布局和访问状态。因此，该图像被复用时，`FrameGraph` 仍可生成从着色器读取到传输写入所需的依赖。
 
-## Resource Ownership
+## 资源所有权
 
-`TextureManager` owns two frame slots. Each slot has its own G-buffer, SSAO, HDR lighting, TAA resolved/history, four shadow maps, postprocess uniform buffer, and descriptor set. `ModelRenderer` likewise owns per-frame object and camera buffers plus four per-frame shadow matrix buffers. A frame slot is updated only after `VulkanContext::beginFrame` has waited for its fence.
+`TextureManager` 拥有两个帧槽。每个槽位都有自己的 G-buffer、SSAO、HDR 光照、TAA 解析/历史、四张阴影图、
+后处理 uniform buffer 和 descriptor set。`ModelRenderer` 同样拥有逐帧对象及相机 buffer，以及四个逐帧阴影矩阵
+buffer。只有在 `VulkanContext::beginFrame` 等待相应 fence 后，才能更新帧槽。
 
-Swapchain recreation waits for device idle, shuts down ImGui, destroys pipelines before descriptor layouts/images, recreates extent-dependent resources, invalidates temporal history, and then initializes ImGui again.
+交换链重建时，系统会等待设备空闲、关闭 ImGui、先于 descriptor layout 和图像销毁流水线、重新创建与尺寸相关的
+资源、使时序历史失效，然后再次初始化 ImGui。
 
-## FrameGraph Contract
+## FrameGraph 约定
 
-Pass setup callbacks declare texture layouts, pipeline stages, and access masks. `FrameGraph` derives ordering from read/write hazards and emits image or buffer barriers before each pass. Imported persistent textures may also supply `initialStages` and `initialAccess`; this is used by TAA history resources across submissions.
+通道的 setup 回调声明纹理布局、流水线阶段和访问掩码。`FrameGraph` 根据读写冲突推导顺序，并在每个通道前生成
+图像或 buffer barrier。导入的持久纹理还可以提供 `initialStages` 和 `initialAccess`；TAA 历史资源通过它们在不同
+提交之间传递同步状态。
 
-FrameGraph currently schedules and synchronizes externally allocated resources. It does not allocate transient images or alias memory. CSM therefore remains four single-layer images; an array-image implementation would also need explicit layer ranges in `FrameGraphTextureDesc`.
+`FrameGraph` 当前仅调度和同步外部分配的资源，不负责分配瞬时图像或进行内存别名复用。因此，CSM 仍使用四张
+单层图像；若改用数组图像，还需要在 `FrameGraphTextureDesc` 中显式描述层范围。

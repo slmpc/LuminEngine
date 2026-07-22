@@ -1,3 +1,3 @@
-Put OBJ files in this directory while testing the sandbox.
+测试沙盒时，请将 OBJ 文件放在此目录中。
 
-`stanford-bunny.obj` is a moderately complex default model used by the sandbox when no model path is supplied.
+未提供模型路径时，沙盒会使用复杂度适中的默认模型 `stanford-bunny.obj`。
