@@ -1,11 +1,12 @@
 #pragma once
 
 #include <filesystem>
-#include <optional>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "lumin/assets/ObjLoader.hpp"
+#include "lumin/platform/RenderDocAttachment.hpp"
 #include "lumin/platform/Window.hpp"
 #include "lumin/render/LevelRenderer.hpp"
 #include "lumin/render/VulkanContext.hpp"
@@ -19,6 +20,8 @@ namespace lumin::core {
         int height = 720;
         std::string title = "Lumin Engine";
         std::optional<std::filesystem::path> objPath;
+        bool enableRenderDoc = false;
+        std::optional<std::filesystem::path> renderDocPath;
     };
 
     class Application {
@@ -35,6 +38,7 @@ namespace lumin::core {
         void loadScene();
 
         ApplicationConfig config_;
+        platform::RenderDocAttachment renderDoc_;
         platform::Window window_;
         render::VulkanContext vulkan_;
         scene::Level level_;

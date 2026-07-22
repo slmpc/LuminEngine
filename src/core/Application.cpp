@@ -107,10 +107,24 @@ namespace lumin::core {
             return std::nullopt;
         }
 
+        platform::RenderDocAttachment attachRenderDoc(const ApplicationConfig& config) {
+            if (!config.enableRenderDoc) {
+                return {};
+            }
+            if (!config.renderDocPath.has_value()) {
+                throw std::invalid_argument("RenderDoc is enabled, but no library path was supplied");
+            }
+
+            platform::RenderDocAttachment attachment(*config.renderDocPath);
+            std::cout << "RenderDoc attached from '" << config.renderDocPath->string() << "'.\n";
+            return attachment;
+        }
+
     } // namespace
 
     Application::Application(ApplicationConfig config)
-        : config_(std::move(config)), window_(platform::WindowDesc{config_.width, config_.height, config_.title}),
+        : config_(std::move(config)), renderDoc_(attachRenderDoc(config_)),
+          window_(platform::WindowDesc{config_.width, config_.height, config_.title}),
           vulkan_(window_, render::VulkanContextDesc{config_.title,
 #if defined(LUMIN_ENABLE_VALIDATION)
                                                      true

@@ -53,6 +53,14 @@ Optionally replace the default model with an OBJ:
 .\out\build\debug\LuminEngine.exe .\assets\models\your_model.obj
 ```
 
+Attach RenderDoc before SDL and Vulkan are initialized by passing both the enable flag and the RenderDoc library path:
+
+```powershell
+.\out\build\debug\LuminEngine.exe --renderdoc=true --renderdoc-path "C:\Program Files\RenderDoc\renderdoc.dll"
+```
+
+`--renderdoc` is shorthand for `--renderdoc=true`; accepted explicit values are `true`, `false`, `1`, `0`, `on`, and `off`. The repository's VS Code CMake Run/Debug configuration enables RenderDoc with its standard Windows install path. Change `cmake.debugConfig.args` in `.vscode/settings.json` if RenderDoc is installed elsewhere, or set the flag to `--renderdoc=false` to run without it.
+
 The Debug configure step also generates `out/build/debug/compile_commands.json`. The local VS Code settings pass that directory to clangd automatically. Refresh it after changing CMake files or dependencies with:
 
 ```powershell

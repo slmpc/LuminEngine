@@ -106,6 +106,7 @@ target_sources(lumin_engine
     PRIVATE
         src/assets/ObjLoader.cpp
         src/core/Application.cpp
+        src/platform/RenderDocAttachment.cpp
         src/platform/Window.cpp
         src/scene/Camera.cpp
         src/scene/CameraController.cpp
@@ -139,6 +140,7 @@ target_link_libraries(lumin_engine
         glm::glm
         imgui::imgui
         tinyobjloader::tinyobjloader
+        ${CMAKE_DL_LIBS}
 )
 
 if(WIN32)
