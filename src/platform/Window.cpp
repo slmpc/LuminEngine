@@ -101,6 +101,35 @@ namespace lumin::platform {
         return window_;
     }
 
+    bool Window::isKeyDown(Key key) const noexcept {
+        const bool* keyboard = SDL_GetKeyboardState(nullptr);
+        SDL_Scancode scancode = SDL_SCANCODE_UNKNOWN;
+        switch (key) {
+        case Key::W:
+            scancode = SDL_SCANCODE_W;
+            break;
+        case Key::A:
+            scancode = SDL_SCANCODE_A;
+            break;
+        case Key::S:
+            scancode = SDL_SCANCODE_S;
+            break;
+        case Key::D:
+            scancode = SDL_SCANCODE_D;
+            break;
+        case Key::Space:
+            scancode = SDL_SCANCODE_SPACE;
+            break;
+        case Key::LeftControl:
+            scancode = SDL_SCANCODE_LCTRL;
+            break;
+        case Key::Escape:
+            scancode = SDL_SCANCODE_ESCAPE;
+            break;
+        }
+        return scancode != SDL_SCANCODE_UNKNOWN && keyboard[scancode];
+    }
+
     void Window::resetFramebufferResized() noexcept {
         framebufferResized_ = false;
     }

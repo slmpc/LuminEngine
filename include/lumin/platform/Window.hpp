@@ -12,6 +12,16 @@ union SDL_Event;
 
 namespace lumin::platform {
 
+    enum class Key {
+        W,
+        A,
+        S,
+        D,
+        Space,
+        LeftControl,
+        Escape,
+    };
+
     struct WindowDesc {
         int width = 1280;
         int height = 720;
@@ -38,6 +48,7 @@ namespace lumin::platform {
         [[nodiscard]] std::vector<const char*> requiredInstanceExtensions() const;
         [[nodiscard]] VkSurfaceKHR createSurface(VkInstance instance) const;
         [[nodiscard]] SDL_Window* nativeHandle() const noexcept;
+        [[nodiscard]] bool isKeyDown(Key key) const noexcept;
 
         void resetFramebufferResized() noexcept;
 

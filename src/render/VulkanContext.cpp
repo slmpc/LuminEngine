@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <vector>
@@ -67,8 +68,8 @@ namespace lumin::render {
 
         std::uint32_t selectApiVersion() {
             std::uint32_t version = VK_API_VERSION_1_0;
-            if (vkEnumerateInstanceVersion != nullptr) {
-                vkEnumerateInstanceVersion(&version);
+            if (vkEnumerateInstanceVersion(&version) != VK_SUCCESS) {
+                version = VK_API_VERSION_1_0;
             }
 
             if (version >= VK_API_VERSION_1_3) {
@@ -84,6 +85,28 @@ namespace lumin::render {
             }
 
             return VK_API_VERSION_1_0;
+        }
+
+        void checkVk(VkResult result, const char* message) {
+            if (result != VK_SUCCESS) {
+                throw std::runtime_error(message);
+            }
+        }
+
+        VkImageView createImageView(VkDevice device, VkImage image, VkFormat format) {
+            VkImageViewCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            info.image = image;
+            info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            info.format = format;
+            info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            info.subresourceRange.baseMipLevel = 0;
+            info.subresourceRange.levelCount = 1;
+            info.subresourceRange.baseArrayLayer = 0;
+            info.subresourceRange.layerCount = 1;
+            VkImageView view = VK_NULL_HANDLE;
+            checkVk(vkCreateImageView(device, &info, nullptr, &view), "Failed to create swapchain image view.");
+            return view;
         }
 
     } // namespace
@@ -106,11 +129,24 @@ namespace lumin::render {
         pickPhysicalDevice();
         createDevice();
         createCommandPool();
+        createSwapchainResources();
+        createCommandBuffers();
+        createSyncObjects();
     }
 
     VulkanContext::~VulkanContext() {
         if (device_ != VK_NULL_HANDLE) {
             vkDeviceWaitIdle(device_);
+
+            cleanupSwapchainResources();
+            for (std::uint32_t index = 0; index < maxFramesInFlight; ++index) {
+                if (imageAvailableSemaphores_[index] != VK_NULL_HANDLE) {
+                    vkDestroySemaphore(device_, imageAvailableSemaphores_[index], nullptr);
+                }
+                if (inFlightFences_[index] != VK_NULL_HANDLE) {
+                    vkDestroyFence(device_, inFlightFences_[index], nullptr);
+                }
+            }
 
             if (commandPool_ != VK_NULL_HANDLE) {
                 vkDestroyCommandPool(device_, commandPool_, nullptr);
@@ -170,6 +206,106 @@ namespace lumin::render {
 
     std::uint32_t VulkanContext::apiVersion() const noexcept {
         return apiVersion_;
+    }
+
+    VkSwapchainKHR VulkanContext::swapchain() const noexcept {
+        return swapchain_;
+    }
+
+    VkFormat VulkanContext::swapchainFormat() const noexcept {
+        return swapchainImageFormat_;
+    }
+
+    VkExtent2D VulkanContext::swapchainExtent() const noexcept {
+        return swapchainExtent_;
+    }
+
+    std::uint32_t VulkanContext::swapchainMinImageCount() const noexcept {
+        return minImageCount_;
+    }
+
+    std::uint32_t VulkanContext::swapchainImageCount() const noexcept {
+        return static_cast<std::uint32_t>(swapchainImages_.size());
+    }
+
+    const std::vector<VkImage>& VulkanContext::swapchainImages() const noexcept {
+        return swapchainImages_;
+    }
+
+    const std::vector<VkImageView>& VulkanContext::swapchainImageViews() const noexcept {
+        return swapchainImageViews_;
+    }
+
+    std::uint64_t VulkanContext::swapchainGeneration() const noexcept {
+        return swapchainGeneration_;
+    }
+
+    std::optional<VulkanFrame> VulkanContext::beginFrame() {
+        checkVk(vkWaitForFences(device_, 1, &inFlightFences_[currentFrame_], VK_TRUE, UINT64_MAX),
+                "Failed to wait for the current frame fence.");
+
+        std::uint32_t imageIndex = 0;
+        const VkResult result = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
+                                                       imageAvailableSemaphores_[currentFrame_], VK_NULL_HANDLE,
+                                                       &imageIndex);
+        if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+            recreateSwapchain();
+            return std::nullopt;
+        }
+        if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+            throw std::runtime_error("Failed to acquire a swapchain image.");
+        }
+
+        checkVk(vkResetFences(device_, 1, &inFlightFences_[currentFrame_]), "Failed to reset the frame fence.");
+        checkVk(vkResetCommandBuffer(commandBuffers_[currentFrame_], 0), "Failed to reset the frame command buffer.");
+        return VulkanFrame{commandBuffers_[currentFrame_], currentFrame_, imageIndex};
+    }
+
+    bool VulkanContext::submitFrame(const VulkanFrame& frame) {
+        if (frame.frameIndex != currentFrame_) {
+            throw std::invalid_argument("VulkanFrame does not belong to the current frame slot.");
+        }
+
+        const VkSemaphore waitSemaphores[] = {imageAvailableSemaphores_[currentFrame_]};
+        const VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        const VkSemaphore signalSemaphores[] = {renderFinishedSemaphores_[frame.imageIndex]};
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = waitSemaphores;
+        submitInfo.pWaitDstStageMask = waitStages;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &frame.commandBuffer;
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = signalSemaphores;
+        checkVk(vkQueueSubmit(graphicsQueue_, 1, &submitInfo, inFlightFences_[currentFrame_]),
+                "Failed to submit the Vulkan frame.");
+
+        VkPresentInfoKHR presentInfo{};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = signalSemaphores;
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = &swapchain_;
+        presentInfo.pImageIndices = &frame.imageIndex;
+        const VkResult result = vkQueuePresentKHR(presentQueue_, &presentInfo);
+        const bool needsRecreate = result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR ||
+                                    window_.framebufferResized();
+        if (!needsRecreate && result != VK_SUCCESS) {
+            throw std::runtime_error("Failed to present the Vulkan frame.");
+        }
+
+        currentFrame_ = (currentFrame_ + 1) % maxFramesInFlight;
+        if (needsRecreate) {
+            recreateSwapchain();
+        }
+        return needsRecreate;
+    }
+
+    void VulkanContext::waitIdle() const {
+        if (device_ != VK_NULL_HANDLE) {
+            checkVk(vkDeviceWaitIdle(device_), "Failed to wait for the Vulkan device.");
+        }
     }
 
     void VulkanContext::createInstance() {
@@ -270,12 +406,17 @@ namespace lumin::render {
             queueInfos.push_back(queueInfo);
         }
 
-        VkPhysicalDeviceFeatures features;
-        features = {};
+        VkPhysicalDeviceFeatures features{};
+        features.multiDrawIndirect = VK_TRUE;
+
+        VkPhysicalDeviceVulkan11Features vulkan11Features{};
+        vulkan11Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+        vulkan11Features.shaderDrawParameters = VK_TRUE;
 
         VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{};
         dynamicRenderingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
         dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
+        dynamicRenderingFeatures.pNext = &vulkan11Features;
 
         VkDeviceCreateInfo createInfo;
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -312,6 +453,174 @@ namespace lumin::render {
 
         if (vkCreateCommandPool(device_, &createInfo, nullptr, &commandPool_) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create Vulkan command pool.");
+        }
+    }
+
+    void VulkanContext::createSwapchainResources() {
+        createSwapchain();
+        createImageViews();
+        createRenderFinishedSemaphores();
+    }
+
+    void VulkanContext::cleanupSwapchainResources() {
+        for (VkSemaphore semaphore : renderFinishedSemaphores_) {
+            if (semaphore != VK_NULL_HANDLE) {
+                vkDestroySemaphore(device_, semaphore, nullptr);
+            }
+        }
+        renderFinishedSemaphores_.clear();
+        for (VkImageView view : swapchainImageViews_) {
+            if (view != VK_NULL_HANDLE) {
+                vkDestroyImageView(device_, view, nullptr);
+            }
+        }
+        swapchainImageViews_.clear();
+        swapchainImages_.clear();
+        if (swapchain_ != VK_NULL_HANDLE) {
+            vkDestroySwapchainKHR(device_, swapchain_, nullptr);
+            swapchain_ = VK_NULL_HANDLE;
+        }
+    }
+
+    void VulkanContext::recreateSwapchain() {
+        waitIdle();
+        cleanupSwapchainResources();
+        createSwapchainResources();
+        window_.resetFramebufferResized();
+        ++swapchainGeneration_;
+    }
+
+    VulkanContext::SwapchainSupport VulkanContext::querySwapchainSupport() const {
+        SwapchainSupport support;
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice_, surface_, &support.capabilities);
+
+        std::uint32_t formatCount = 0;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice_, surface_, &formatCount, nullptr);
+        support.formats.resize(formatCount);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice_, surface_, &formatCount, support.formats.data());
+
+        std::uint32_t presentModeCount = 0;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice_, surface_, &presentModeCount, nullptr);
+        support.presentModes.resize(presentModeCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice_, surface_, &presentModeCount,
+                                                   support.presentModes.data());
+        return support;
+    }
+
+    VkSurfaceFormatKHR VulkanContext::chooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats) const {
+        for (const VkSurfaceFormatKHR& format : formats) {
+            if (format.format == VK_FORMAT_B8G8R8A8_SRGB &&
+                format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                return format;
+            }
+        }
+        if (formats.empty()) {
+            throw std::runtime_error("Swapchain surface does not expose any formats.");
+        }
+        return formats.front();
+    }
+
+    VkPresentModeKHR VulkanContext::choosePresentMode(const std::vector<VkPresentModeKHR>& presentModes) const {
+        for (const VkPresentModeKHR mode : presentModes) {
+            if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+                return mode;
+            }
+        }
+        return VK_PRESENT_MODE_FIFO_KHR;
+    }
+
+    VkExtent2D VulkanContext::chooseExtent(const VkSurfaceCapabilitiesKHR& capabilities) const {
+        if (capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max()) {
+            return capabilities.currentExtent;
+        }
+        VkExtent2D extent = window_.framebufferExtent();
+        extent.width = std::clamp(extent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+        extent.height =
+            std::clamp(extent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+        return extent;
+    }
+
+    void VulkanContext::createSwapchain() {
+        const SwapchainSupport support = querySwapchainSupport();
+        const VkSurfaceFormatKHR surfaceFormat = chooseSurfaceFormat(support.formats);
+        const VkPresentModeKHR presentMode = choosePresentMode(support.presentModes);
+        const VkExtent2D extent = chooseExtent(support.capabilities);
+
+        minImageCount_ = std::max(2U, support.capabilities.minImageCount);
+        std::uint32_t imageCount = minImageCount_ + 1;
+        if (support.capabilities.maxImageCount > 0 && imageCount > support.capabilities.maxImageCount) {
+            imageCount = support.capabilities.maxImageCount;
+        }
+
+        VkSwapchainCreateInfoKHR createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        createInfo.surface = surface_;
+        createInfo.minImageCount = imageCount;
+        createInfo.imageFormat = surfaceFormat.format;
+        createInfo.imageColorSpace = surfaceFormat.colorSpace;
+        createInfo.imageExtent = extent;
+        createInfo.imageArrayLayers = 1;
+        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        const std::uint32_t queueFamilies[] = {graphicsQueueFamily(), presentQueueFamily()};
+        if (graphicsQueueFamily() != presentQueueFamily()) {
+            createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+            createInfo.queueFamilyIndexCount = 2;
+            createInfo.pQueueFamilyIndices = queueFamilies;
+        } else {
+            createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        }
+        createInfo.preTransform = support.capabilities.currentTransform;
+        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        createInfo.presentMode = presentMode;
+        createInfo.clipped = VK_TRUE;
+        checkVk(vkCreateSwapchainKHR(device_, &createInfo, nullptr, &swapchain_),
+                "Failed to create the Vulkan swapchain.");
+
+        vkGetSwapchainImagesKHR(device_, swapchain_, &imageCount, nullptr);
+        swapchainImages_.resize(imageCount);
+        vkGetSwapchainImagesKHR(device_, swapchain_, &imageCount, swapchainImages_.data());
+        swapchainImageFormat_ = surfaceFormat.format;
+        swapchainExtent_ = extent;
+    }
+
+    void VulkanContext::createImageViews() {
+        swapchainImageViews_.resize(swapchainImages_.size());
+        for (std::size_t index = 0; index < swapchainImages_.size(); ++index) {
+            swapchainImageViews_[index] = createImageView(device_, swapchainImages_[index], swapchainImageFormat_);
+        }
+    }
+
+    void VulkanContext::createCommandBuffers() {
+        VkCommandBufferAllocateInfo allocateInfo{};
+        allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocateInfo.commandPool = commandPool_;
+        allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocateInfo.commandBufferCount = maxFramesInFlight;
+        checkVk(vkAllocateCommandBuffers(device_, &allocateInfo, commandBuffers_.data()),
+                "Failed to allocate Vulkan command buffers.");
+    }
+
+    void VulkanContext::createSyncObjects() {
+        VkSemaphoreCreateInfo semaphoreInfo{};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        for (std::uint32_t index = 0; index < maxFramesInFlight; ++index) {
+            checkVk(vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &imageAvailableSemaphores_[index]),
+                    "Failed to create image-available semaphore.");
+            checkVk(vkCreateFence(device_, &fenceInfo, nullptr, &inFlightFences_[index]),
+                    "Failed to create in-flight fence.");
+        }
+    }
+
+    void VulkanContext::createRenderFinishedSemaphores() {
+        renderFinishedSemaphores_.resize(swapchainImages_.size());
+        VkSemaphoreCreateInfo semaphoreInfo{};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        for (VkSemaphore& semaphore : renderFinishedSemaphores_) {
+            checkVk(vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &semaphore),
+                    "Failed to create render-finished semaphore.");
         }
     }
 
@@ -398,8 +707,12 @@ namespace lumin::render {
     }
 
     bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device) const {
+        VkPhysicalDeviceVulkan11Features vulkan11Features{};
+        vulkan11Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+
         VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{};
         dynamicRenderingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
+        dynamicRenderingFeatures.pNext = &vulkan11Features;
 
         VkPhysicalDeviceFeatures2 features{};
         features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -407,6 +720,7 @@ namespace lumin::render {
         vkGetPhysicalDeviceFeatures2(device, &features);
 
         return findQueueFamilies(device).complete() && deviceExtensionsAvailable(device) &&
+               features.features.multiDrawIndirect == VK_TRUE && vulkan11Features.shaderDrawParameters == VK_TRUE &&
                dynamicRenderingFeatures.dynamicRendering == VK_TRUE;
     }
 

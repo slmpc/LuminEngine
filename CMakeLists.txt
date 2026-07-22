@@ -21,6 +21,10 @@ endif()
 project(LuminEngine VERSION 0.1.0 LANGUAGES CXX)
 
 option(LUMIN_BUILD_SANDBOX "Build the sandbox executable." ON)
+option(LUMIN_BUILD_TESTS "Build the engine tests." ON)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(LuminShaders)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,61 +37,33 @@ find_package(glm CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
 
-find_program(SLANGC_EXECUTABLE
-    NAMES slangc
-    HINTS
-        "$ENV{VULKAN_SDK}/Bin"
-        "$ENV{VULKAN_SDK}/Bin32"
-)
-
-if(NOT SLANGC_EXECUTABLE)
-    message(FATAL_ERROR "slangc was not found. Install the Vulkan SDK with Slang support or add slangc to PATH.")
-endif()
-
 set(LUMIN_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(LUMIN_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
 set(LUMIN_ASSET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/assets")
 file(TO_CMAKE_PATH "${LUMIN_SHADER_OUTPUT_DIR}" LUMIN_SHADER_OUTPUT_DIR_CMAKE)
 file(TO_CMAKE_PATH "${LUMIN_ASSET_DIR}" LUMIN_ASSET_DIR_CMAKE)
 
-set(LUMIN_SHADER_SOURCE "${LUMIN_SHADER_SOURCE_DIR}/blinn_phong.slang")
-set(LUMIN_VERTEX_SHADER_SPV "${LUMIN_SHADER_OUTPUT_DIR}/blinn_phong.vert.spv")
-set(LUMIN_FRAGMENT_SHADER_SPV "${LUMIN_SHADER_OUTPUT_DIR}/blinn_phong.frag.spv")
-
-add_custom_command(
-    OUTPUT "${LUMIN_VERTEX_SHADER_SPV}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${LUMIN_SHADER_OUTPUT_DIR}"
-    COMMAND "${SLANGC_EXECUTABLE}" "${LUMIN_SHADER_SOURCE}"
-            -target spirv
-            -profile spirv_1_5
-            -matrix-layout-column-major
-            -entry vertexMain
-            -stage vertex
-            -o "${LUMIN_VERTEX_SHADER_SPV}"
-    DEPENDS "${LUMIN_SHADER_SOURCE}"
-    COMMENT "Compiling Slang vertex shader"
-    VERBATIM
+set(LUMIN_SHADER_OUTPUTS)
+lumin_add_slang_graphics_shader(
+    OUTPUT_VARIABLE LUMIN_SHADER_OUTPUTS
+    SOURCE "${LUMIN_SHADER_SOURCE_DIR}/blinn_phong.slang"
+    OUTPUT_DIRECTORY "${LUMIN_SHADER_OUTPUT_DIR}"
+    MATRIX_LAYOUT column-major
 )
-
-add_custom_command(
-    OUTPUT "${LUMIN_FRAGMENT_SHADER_SPV}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${LUMIN_SHADER_OUTPUT_DIR}"
-    COMMAND "${SLANGC_EXECUTABLE}" "${LUMIN_SHADER_SOURCE}"
-            -target spirv
-            -profile spirv_1_5
-            -matrix-layout-column-major
-            -entry fragmentMain
-            -stage fragment
-            -o "${LUMIN_FRAGMENT_SHADER_SPV}"
-    DEPENDS "${LUMIN_SHADER_SOURCE}"
-    COMMENT "Compiling Slang fragment shader"
-    VERBATIM
+lumin_add_slang_graphics_shader(
+    OUTPUT_VARIABLE LUMIN_SHADER_OUTPUTS
+    SOURCE "${LUMIN_SHADER_SOURCE_DIR}/gbuffer.slang"
+    OUTPUT_DIRECTORY "${LUMIN_SHADER_OUTPUT_DIR}"
+    MATRIX_LAYOUT column-major
+)
+lumin_add_slang_graphics_shader(
+    OUTPUT_VARIABLE LUMIN_SHADER_OUTPUTS
+    SOURCE "${LUMIN_SHADER_SOURCE_DIR}/postprocess.slang"
+    OUTPUT_DIRECTORY "${LUMIN_SHADER_OUTPUT_DIR}"
 )
 
 add_custom_target(lumin_shaders ALL
-    DEPENDS
-        "${LUMIN_VERTEX_SHADER_SPV}"
-        "${LUMIN_FRAGMENT_SHADER_SPV}"
+    DEPENDS ${LUMIN_SHADER_OUTPUTS}
 )
 
 add_library(lumin_engine STATIC)
@@ -98,11 +74,19 @@ target_sources(lumin_engine
         src/assets/ObjLoader.cpp
         src/core/Application.cpp
         src/platform/Window.cpp
+        src/scene/Camera.cpp
+        src/scene/CameraController.cpp
+        src/scene/Level.cpp
         src/render/FrameGraph.cpp
         src/render/ImGuiLayer.cpp
+        src/render/ImGuiManager.cpp
+        src/render/LevelRenderer.cpp
+        src/render/ModelRenderer.cpp
         src/render/ObjRenderer.cpp
+        src/render/PipelineManager.cpp
         src/render/PipelineFactory.cpp
         src/render/ShaderLibrary.cpp
+        src/render/TextureManager.cpp
         src/render/VulkanContext.cpp
         src/render/VulkanResources.cpp
 )
@@ -146,4 +130,11 @@ if(LUMIN_BUILD_SANDBOX)
     target_link_libraries(lumin_sandbox PRIVATE Lumin::Engine)
     add_dependencies(lumin_sandbox lumin_shaders)
     set_target_properties(lumin_sandbox PROPERTIES OUTPUT_NAME LuminEngine)
+endif()
+
+if(LUMIN_BUILD_TESTS)
+    enable_testing()
+    add_executable(lumin_tests tests/CameraLevelTests.cpp)
+    target_link_libraries(lumin_tests PRIVATE Lumin::Engine)
+    add_test(NAME CameraLevel COMMAND lumin_tests)
 endif()

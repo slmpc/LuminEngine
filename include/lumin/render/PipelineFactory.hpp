@@ -16,8 +16,10 @@ namespace lumin::render {
         VkShaderModule vertexShader = VK_NULL_HANDLE;
         VkShaderModule fragmentShader = VK_NULL_HANDLE;
         VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
-        VkFormat colorFormat = VK_FORMAT_UNDEFINED;
+        std::span<const VkFormat> colorFormats;
         VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+        bool depthTestEnable = true;
+        bool depthWriteEnable = true;
         VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
         std::span<const VkVertexInputBindingDescription> vertexBindings;
         std::span<const VkVertexInputAttributeDescription> vertexAttributes;

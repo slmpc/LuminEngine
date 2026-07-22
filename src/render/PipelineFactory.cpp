@@ -54,18 +54,20 @@ namespace lumin::render {
 
         VkPipelineDepthStencilStateCreateInfo depthStencil{};
         depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-        depthStencil.depthTestEnable = VK_TRUE;
-        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthTestEnable = desc.depthTestEnable ? VK_TRUE : VK_FALSE;
+        depthStencil.depthWriteEnable = desc.depthWriteEnable ? VK_TRUE : VK_FALSE;
         depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
 
-        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-        colorBlendAttachment.colorWriteMask =
-            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        std::vector<VkPipelineColorBlendAttachmentState> colorBlendAttachments(desc.colorFormats.size());
+        for (VkPipelineColorBlendAttachmentState& attachment : colorBlendAttachments) {
+            attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        }
 
         VkPipelineColorBlendStateCreateInfo colorBlending{};
         colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        colorBlending.attachmentCount = 1;
-        colorBlending.pAttachments = &colorBlendAttachment;
+        colorBlending.attachmentCount = static_cast<std::uint32_t>(colorBlendAttachments.size());
+        colorBlending.pAttachments = colorBlendAttachments.data();
 
         const VkDynamicState dynamicStates[] = {
             VK_DYNAMIC_STATE_VIEWPORT,
@@ -87,11 +89,11 @@ namespace lumin::render {
             throw std::runtime_error("Failed to create pipeline layout.");
         }
 
-        // Dynamic Rendering 不需要 VkRenderPass，颜色/深度格式通过 pNext 声明。
+        // Dynamic Rendering 的 MRT 数量必须同时匹配 shader 输出、attachment 和 blend state。
         VkPipelineRenderingCreateInfo renderingInfo{};
         renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-        renderingInfo.colorAttachmentCount = 1;
-        renderingInfo.pColorAttachmentFormats = &desc.colorFormat;
+        renderingInfo.colorAttachmentCount = static_cast<std::uint32_t>(desc.colorFormats.size());
+        renderingInfo.pColorAttachmentFormats = desc.colorFormats.data();
         renderingInfo.depthAttachmentFormat = desc.depthFormat;
 
         VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -104,7 +106,7 @@ namespace lumin::render {
         pipelineInfo.pViewportState = &viewportState;
         pipelineInfo.pRasterizationState = &rasterizer;
         pipelineInfo.pMultisampleState = &multisampling;
-        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.pDepthStencilState = desc.depthFormat == VK_FORMAT_UNDEFINED ? nullptr : &depthStencil;
         pipelineInfo.pColorBlendState = &colorBlending;
         pipelineInfo.pDynamicState = &dynamicState;
         pipelineInfo.layout = pipeline.layout;

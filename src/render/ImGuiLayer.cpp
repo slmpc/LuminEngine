@@ -34,6 +34,7 @@ namespace lumin::render {
         ImGui::CreateContext();
 
         ImGuiIO& io = ImGui::GetIO();
+        io.IniFilename = nullptr;
         if (config.enableKeyboard) {
             io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         }
@@ -47,6 +48,7 @@ namespace lumin::render {
 
         VkDescriptorPoolSize poolSizes[] = {
             {VK_DESCRIPTOR_TYPE_SAMPLER, config.samplerDescriptorCount},
+            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, config.sampledImageDescriptorCount},
             {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, config.sampledImageDescriptorCount},
         };
 

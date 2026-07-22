@@ -2,13 +2,15 @@
 
 #include <filesystem>
 #include <optional>
+#include <memory>
 #include <string>
 
 #include "lumin/assets/ObjLoader.hpp"
 #include "lumin/platform/Window.hpp"
-#include "lumin/render/FrameGraph.hpp"
-#include "lumin/render/ObjRenderer.hpp"
+#include "lumin/render/LevelRenderer.hpp"
 #include "lumin/render/VulkanContext.hpp"
+#include "lumin/scene/Camera.hpp"
+#include "lumin/scene/Level.hpp"
 
 namespace lumin::core {
 
@@ -31,13 +33,13 @@ namespace lumin::core {
 
     private:
         void loadScene();
-        void buildFrameGraph();
 
         ApplicationConfig config_;
         platform::Window window_;
         render::VulkanContext vulkan_;
-        render::FrameGraph frameGraph_;
-        std::optional<assets::Mesh> mesh_;
+        scene::Level level_;
+        scene::Camera camera_;
+        std::unique_ptr<render::LevelRenderer> renderer_;
         render::RenderSettings renderSettings_;
     };
 
