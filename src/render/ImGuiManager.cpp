@@ -39,13 +39,14 @@ namespace lumin::render {
     void ImGuiManager::drawLevelPanel(scene::Camera& camera, RenderSettings& settings, std::uint32_t modelCount,
                                       std::uint32_t mdiDrawCount) {
         settings.cameraPosition = camera.position();
-        ImGui::SetNextWindowSize(ImVec2{360.0f, 220.0f}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2{360.0f, 320.0f}, ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowCollapsed(false, ImGuiCond_Always);
         ImGui::Begin("Lumin Level Renderer");
         ImGui::Text("Models: %u", modelCount);
         ImGui::Text("MDI draws: %u", mdiDrawCount);
-        ImGui::Text("G-buffer: Position + Normal + Albedo");
-        ImGui::Text("Postprocess: Deferred light + Tonemap");
+        ImGui::Text("G-buffer: Position + Normal + Albedo + Motion");
+        ImGui::Text("Lighting: 4-cascade CSM + SSAO + Sky");
+        ImGui::Text("Postprocess: TAA + Tonemap");
         ImGui::Text("Camera: %.2f, %.2f, %.2f", camera.position().x, camera.position().y, camera.position().z);
         float moveSpeed = camera.moveSpeed();
         if (ImGui::SliderFloat("Camera speed", &moveSpeed, 0.1f, 20.0f)) {
@@ -53,11 +54,13 @@ namespace lumin::render {
         }
         ImGui::SliderFloat3("Camera position", &settings.cameraPosition.x, -20.0f, 20.0f);
         camera.setPosition(settings.cameraPosition);
-        ImGui::Checkbox("ImGui Demo", &settings.showDemoWindow);
+        ImGui::Separator();
+        ImGui::Checkbox("Cascaded shadows", &settings.enableShadows);
+        ImGui::Checkbox("Ambient occlusion", &settings.enableSsao);
+        ImGui::Checkbox("Temporal anti-aliasing", &settings.enableTaa);
+        ImGui::SliderFloat("Exposure", &settings.exposure, 0.1f, 4.0f);
+        ImGui::SliderFloat3("Sun direction", &settings.sunDirection.x, -1.0f, 1.0f);
         ImGui::End();
-        if (settings.showDemoWindow) {
-            ImGui::ShowDemoWindow(&settings.showDemoWindow);
-        }
     }
 
     void ImGuiManager::record(VkCommandBuffer commandBuffer, VkImageView targetView, VkExtent2D extent) {
@@ -78,4 +81,4 @@ namespace lumin::render {
         vkCmdEndRendering(commandBuffer);
     }
 
-}
+} // namespace lumin::render

@@ -60,6 +60,39 @@ lumin_add_slang_graphics_shader(
     OUTPUT_VARIABLE LUMIN_SHADER_OUTPUTS
     SOURCE "${LUMIN_SHADER_SOURCE_DIR}/postprocess.slang"
     OUTPUT_DIRECTORY "${LUMIN_SHADER_OUTPUT_DIR}"
+    MATRIX_LAYOUT column-major
+)
+lumin_add_slang_shader(
+    OUTPUT_VARIABLE LUMIN_SHADER_OUTPUTS
+    SOURCE "${LUMIN_SHADER_SOURCE_DIR}/shadow.slang"
+    OUTPUT "${LUMIN_SHADER_OUTPUT_DIR}/shadow.vert.spv"
+    ENTRY_POINT vertexMain
+    STAGE vertex
+    MATRIX_LAYOUT column-major
+)
+lumin_add_slang_graphics_shader(
+    OUTPUT_VARIABLE LUMIN_SHADER_OUTPUTS
+    SOURCE "${LUMIN_SHADER_SOURCE_DIR}/ssao.slang"
+    OUTPUT_DIRECTORY "${LUMIN_SHADER_OUTPUT_DIR}"
+    MATRIX_LAYOUT column-major
+)
+lumin_add_slang_graphics_shader(
+    OUTPUT_VARIABLE LUMIN_SHADER_OUTPUTS
+    SOURCE "${LUMIN_SHADER_SOURCE_DIR}/deferred.slang"
+    OUTPUT_DIRECTORY "${LUMIN_SHADER_OUTPUT_DIR}"
+    MATRIX_LAYOUT column-major
+)
+lumin_add_slang_graphics_shader(
+    OUTPUT_VARIABLE LUMIN_SHADER_OUTPUTS
+    SOURCE "${LUMIN_SHADER_SOURCE_DIR}/sky.slang"
+    OUTPUT_DIRECTORY "${LUMIN_SHADER_OUTPUT_DIR}"
+    MATRIX_LAYOUT column-major
+)
+lumin_add_slang_graphics_shader(
+    OUTPUT_VARIABLE LUMIN_SHADER_OUTPUTS
+    SOURCE "${LUMIN_SHADER_SOURCE_DIR}/taa.slang"
+    OUTPUT_DIRECTORY "${LUMIN_SHADER_OUTPUT_DIR}"
+    MATRIX_LAYOUT column-major
 )
 
 add_custom_target(lumin_shaders ALL

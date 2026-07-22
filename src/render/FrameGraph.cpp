@@ -218,6 +218,13 @@ namespace lumin::render {
         std::vector<RuntimeResourceState> states(resources_.size());
         for (std::size_t i = 0; i < resources_.size(); ++i) {
             states[i].layout = resources_[i].texture.initialLayout;
+            if (resources_[i].kind == FrameGraphResourceKind::Texture &&
+                resources_[i].texture.initialLayout != VK_IMAGE_LAYOUT_UNDEFINED) {
+                states[i].stage = fallbackStage(resources_[i].texture.initialStages);
+                states[i].access = resources_[i].texture.initialAccess;
+                states[i].graphAccess = FrameGraphAccess::Read;
+                states[i].hasUsage = true;
+            }
         }
 
         auto issueTextureBarrier = [&](const ResourceNode& resource, ResourceUsage usage, RuntimeResourceState& state) {

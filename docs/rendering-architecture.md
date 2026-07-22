@@ -1,36 +1,51 @@
-# Lumin 渲染层结构
+# Lumin Rendering Architecture
 
-这份文档记录当前渲染层的职责拆分，方便后续继续扩展 FrameGraph、材质系统和资源生命周期。
+## Scene Update
 
-## FrameGraph
+`Level` owns meshes, model instances, and Actors. Actor handles contain an index and generation so stale handles do not resolve after a slot is reused. Spawn and destroy requests made from `tick`, `onSpawn`, or `onDestroy` are deferred until the active callback traversal is safe to commit.
 
-`FrameGraph` 负责 pass 排序、image layout barrier 和 buffer/image 的读写内存依赖。
+`Application` updates camera input, calls `Level::tick(deltaSeconds)`, and then renders. Model transform and material changes increment `modelRevision`; mesh/model membership changes increment `topologyRevision`. `LevelRenderer` uploads object records every frame and rebuilds packed geometry only when the topology revision changes.
 
-渲染代码不直接调用 `vkCmdPipelineBarrier`。每个 pass 只通过 `FrameGraphBuilder::readTexture` 或 `writeTexture` 声明自己需要的目标 layout、pipeline stage 和 access mask；buffer pass 使用 `read`、`write` 或 `readWrite` 声明访问类型。`FrameGraph::execute` 会在 pass 执行前自动比较资源当前状态并录制 barrier。
+`Terrain` generates an indexed height-field mesh with normalized accumulated triangle normals and bilinear height queries. `TerrainActor` owns the terrain data, attaches its generated mesh to the Level, and replaces the Level mesh after terrain edits.
 
-当前 OBJ 渲染帧包含两个 pass：
+## Frame Order
 
-- `OBJ + ImGui dynamic rendering`：把 swapchain image 转到 `VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL`，把 depth image 转到 `VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL`。
-- `Present`：把 swapchain image 转到 `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR`。
+Each frame is recorded through `FrameGraph` in this order:
 
-## Dynamic Rendering
+1. Four CSM depth-only passes, one independent 2D depth image per cascade.
+2. G-buffer pass: world position, world normal and roughness, albedo, motion vector, and depth.
+3. SSAO fullscreen pass reading world position and normal.
+4. Procedural skybox fullscreen pass writing the HDR lighting target.
+5. Deferred lighting pass loading that target and shading geometry with SSAO and CSM.
+6. TAA resolve reading HDR lighting, motion, and the previous frame history.
+7. Transfer copy from the resolved image into the current history image.
+8. ACES tonemap to the swapchain.
+9. ImGui overlay and presentation.
 
-项目不再创建 `VkRenderPass` 和 `VkFramebuffer`。图形 pipeline 通过 `VkPipelineRenderingCreateInfo` 声明 color/depth format；命令录制使用 `vkCmdBeginRendering` 和 `vkCmdEndRendering`。
+All graphics passes use Vulkan 1.3 dynamic rendering. `PipelineFactory` supports MRT pipelines and vertex-only depth pipelines; no `VkRenderPass` or framebuffer objects are created.
 
-`VulkanContext` 在 device 创建时启用 Vulkan 1.3 的 Dynamic Rendering feature。若设备不支持 Vulkan 1.3/Dynamic Rendering，初始化会直接失败。
+## Cascaded Shadows
 
-## Pipeline 和 Shader
+The camera frustum is split into four logarithmic/uniform blended ranges. Each slice is fitted by an orthographic light projection and snapped to the shadow texel grid to reduce shimmering. Shadow matrices use four separate per-frame uniform buffers, so recording one cascade never overwrites data consumed by another cascade.
 
-`ShaderLibrary` 负责从 CMake 生成的 shader 目录读取 SPIR-V 并创建 `VkShaderModule`。
+Shadow depth is sampled with explicit `Texture2D.Load` calls and a manual 3x3 PCF kernel. This avoids requiring linear filtering support for the selected depth format.
 
-`PipelineFactory` 负责把 shader、顶点布局、descriptor set layout、color/depth format 组装成 dynamic-rendering graphics pipeline。`ObjRenderer` 不再直接拼装 pipeline create info。
+## Motion And TAA
 
-## 资源管理
+`ObjectData` contains current and previous model matrices plus an inverse-transpose normal matrix for non-uniform scale. The G-buffer frame uniform contains current and previous jittered view-projection matrices. The motion attachment stores `currentUv - previousUv`; TAA reconstructs the previous sample location as `currentUv - motion`.
 
-`VulkanResourceManager` 封装 buffer、image、image view 和 device memory 的创建/销毁，并提供 depth format 和 memory type 查询。当前仍使用 host-visible buffer，后续可以在该类内部切换为 staging buffer + device-local buffer，而不影响上层 renderer。
+An eight-sample Halton (bases 2 and 3) sequence jitters the camera projection while TAA is enabled. Each frame slot writes its own history image and reads the other slot, producing true previous-frame ping-pong on the ordered graphics queue.
 
-## ImGui
+History is invalidated on first use, swapchain recreation, topology changes, camera cuts, meaningful FOV changes, and TAA off-to-on transitions. The first valid frame bypasses temporal blending. Content validity is tracked separately from whether each persistent history image has been initialized; invalidating a sample never discards its real shader-read layout/access state. FrameGraph can therefore emit the required shader-read to transfer-write dependency when that image is reused.
 
-`ImGuiLayerConfig` 集中描述 ImGui Vulkan backend 的配置项，包括 API version、queue、swapchain image count、color/depth format、descriptor pool 大小和输入选项。
+## Resource Ownership
 
-ImGui backend 也使用 Dynamic Rendering，和主渲染 pipeline 一样不依赖 `VkRenderPass`。
+`TextureManager` owns two frame slots. Each slot has its own G-buffer, SSAO, HDR lighting, TAA resolved/history, four shadow maps, postprocess uniform buffer, and descriptor set. `ModelRenderer` likewise owns per-frame object and camera buffers plus four per-frame shadow matrix buffers. A frame slot is updated only after `VulkanContext::beginFrame` has waited for its fence.
+
+Swapchain recreation waits for device idle, shuts down ImGui, destroys pipelines before descriptor layouts/images, recreates extent-dependent resources, invalidates temporal history, and then initializes ImGui again.
+
+## FrameGraph Contract
+
+Pass setup callbacks declare texture layouts, pipeline stages, and access masks. `FrameGraph` derives ordering from read/write hazards and emits image or buffer barriers before each pass. Imported persistent textures may also supply `initialStages` and `initialAccess`; this is used by TAA history resources across submissions.
+
+FrameGraph currently schedules and synchronizes externally allocated resources. It does not allocate transient images or alias memory. CSM therefore remains four single-layer images; an array-image implementation would also need explicit layer ranges in `FrameGraphTextureDesc`.

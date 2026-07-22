@@ -19,16 +19,26 @@ namespace lumin::render {
         PipelineManager(const PipelineManager&) = delete;
         PipelineManager& operator=(const PipelineManager&) = delete;
 
-        void createPostprocess(VkDescriptorSetLayout descriptorSetLayout, VkFormat colorFormat);
+        void create(VkDescriptorSetLayout descriptorSetLayout, VkFormat ambientOcclusionFormat, VkFormat lightingFormat,
+                    VkFormat swapchainFormat);
         void destroy() noexcept;
 
+        [[nodiscard]] const GraphicsPipeline& ssao() const noexcept;
+        [[nodiscard]] const GraphicsPipeline& sky() const noexcept;
+        [[nodiscard]] const GraphicsPipeline& deferredLighting() const noexcept;
+        [[nodiscard]] const GraphicsPipeline& taa() const noexcept;
+        [[nodiscard]] const GraphicsPipeline& tonemap() const noexcept;
         [[nodiscard]] const GraphicsPipeline& postprocess() const noexcept;
 
     private:
         VulkanContext& context_;
         ShaderLibrary shaders_;
         PipelineFactory factory_;
-        GraphicsPipeline postprocess_;
+        GraphicsPipeline ssao_;
+        GraphicsPipeline sky_;
+        GraphicsPipeline deferredLighting_;
+        GraphicsPipeline taa_;
+        GraphicsPipeline tonemap_;
     };
 
-}
+} // namespace lumin::render

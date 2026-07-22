@@ -1,7 +1,19 @@
-[[vk::binding(0, 0)]] Texture2D<float4> positionTexture;
-[[vk::binding(1, 0)]] Texture2D<float4> normalTexture;
-[[vk::binding(2, 0)]] Texture2D<float4> albedoTexture;
-[[vk::binding(3, 0)]] SamplerState gbufferSampler;
+struct PostProcessUniforms {
+    float4x4 inverseViewProjection;
+    float4x4 viewProjection;
+    float4x4 cascadeViewProjections[4];
+    float4 cascadeSplits;
+    float4 cameraPosition;
+    float4 cameraForward;
+    float4 lightDirection;
+    float4 renderSize;
+    float4 renderOptions;
+    float4 tonemapOptions;
+};
+
+[[vk::binding(7, 0)]] Texture2D<float4> resolvedTexture;
+[[vk::binding(12, 0)]] SamplerState renderSampler;
+[[vk::binding(13, 0)]] ConstantBuffer<PostProcessUniforms> frame;
 
 struct VertexOutput {
     float4 position : SV_Position;
@@ -10,28 +22,28 @@ struct VertexOutput {
 
 [shader("vertex")]
 VertexOutput vertexMain(uint vertexId : SV_VertexID) {
-    float2 uv = float2((vertexId << 1) & 2, vertexId & 2);
+    float2 triangleUv = float2((vertexId << 1) & 2, vertexId & 2);
     VertexOutput output;
-    output.position = float4(uv * 2.0 - 1.0, 0.0, 1.0);
-    output.uv = float2(uv.x, 1.0 - uv.y);
+    output.position = float4(triangleUv * 2.0 - 1.0, 0.0, 1.0);
+    output.uv = triangleUv;
     return output;
+}
+
+float3 acesFilm(float3 color) {
+    const float a = 2.51;
+    const float b = 0.03;
+    const float c = 2.43;
+    const float d = 0.59;
+    const float e = 0.14;
+    return saturate((color * (a * color + b)) / (color * (c * color + d) + e));
 }
 
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target {
-    float4 worldPosition = positionTexture.Sample(gbufferSampler, input.uv);
-    if (worldPosition.w < 0.5) {
-        return float4(0.035, 0.04, 0.05, 1.0);
+    float3 hdrColor = resolvedTexture.SampleLevel(renderSampler, input.uv, 0.0).rgb;
+    float3 mapped = acesFilm(hdrColor * max(frame.tonemapOptions.x, 0.01));
+    if (frame.tonemapOptions.y < 0.5) {
+        mapped = pow(mapped, 1.0 / 2.2);
     }
-
-    float3 normal = normalize(normalTexture.Sample(gbufferSampler, input.uv).xyz);
-    float3 albedo = albedoTexture.Sample(gbufferSampler, input.uv).rgb;
-    float3 lightDirection = normalize(float3(0.45, 0.8, 0.35));
-    float diffuse = max(dot(normal, lightDirection), 0.0);
-    float3 hdrColor = albedo * (0.16 + diffuse * 1.35);
-
-    // Reinhard 与 gamma 校正放在全屏 pass，证明 G-buffer 确实被后处理消费。
-    float3 mapped = hdrColor / (hdrColor + 1.0);
-    mapped = pow(mapped, 1.0 / 2.2);
     return float4(mapped, 1.0);
 }

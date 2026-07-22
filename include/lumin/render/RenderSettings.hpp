@@ -13,7 +13,11 @@ namespace lumin::render {
         float specularStrength = 0.55f;
         float shininess = 48.0f;
         bool smoothShading = true;
-        bool showDemoWindow = false;
+        glm::vec3 sunDirection{-0.45f, -0.8f, -0.35f};
+        float exposure = 1.0f;
+        bool enableShadows = true;
+        bool enableSsao = true;
+        bool enableTaa = true;
     };
 
-}
+} // namespace lumin::render

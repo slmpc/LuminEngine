@@ -62,6 +62,8 @@ namespace lumin::render {
         VkImage image = VK_NULL_HANDLE;
         VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         VkImageLayout initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkPipelineStageFlags initialStages = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        VkAccessFlags initialAccess = 0;
         VkImageLayout finalLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     };
 

@@ -1,6 +1,7 @@
 #include "lumin/core/Application.hpp"
 
 #include "lumin/scene/CameraController.hpp"
+#include "lumin/scene/Terrain.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -133,7 +134,7 @@ namespace lumin::core {
         renderer_ = std::make_unique<render::LevelRenderer>(window_, vulkan_, level_, shaderDirectory);
         std::cout << "Level renderer ready: models=" << renderer_->modelCount()
                   << " mdiDraws=" << renderer_->mdiDrawCount()
-                  << " gbuffer=position+normal+albedo postprocess=tonemap\n";
+                  << " gbuffer=position+normal+albedo+motion csm=4 ssao=on taa=on\n";
 
         auto previousTime = std::chrono::steady_clock::now();
         while (!window_.shouldClose()) {
@@ -143,8 +144,8 @@ namespace lumin::core {
             }
 
             const auto currentTime = std::chrono::steady_clock::now();
-            const float deltaSeconds = std::clamp(std::chrono::duration<float>(currentTime - previousTime).count(),
-                                                  0.0f, 0.1f);
+            const float deltaSeconds =
+                std::clamp(std::chrono::duration<float>(currentTime - previousTime).count(), 0.0f, 0.1f);
             previousTime = currentTime;
 
             scene::CameraInput input;
@@ -155,6 +156,7 @@ namespace lumin::core {
             input.up = static_cast<float>(window_.isKeyDown(platform::Key::Space)) -
                        static_cast<float>(window_.isKeyDown(platform::Key::LeftControl));
             scene::CameraController::update(camera_, input, deltaSeconds);
+            level_.tick(deltaSeconds);
             renderer_->drawFrame(camera_, renderSettings_);
         }
 
@@ -199,8 +201,21 @@ namespace lumin::core {
         level_.addModel(primary, leftTransform, bronze);
         level_.addModel(secondary, centerTransform, green);
         level_.addModel(primary, rightTransform, blue);
+        scene::TerrainDesc terrainDescription;
+        terrainDescription.resolutionX = 48;
+        terrainDescription.resolutionZ = 48;
+        terrainDescription.sizeX = 18.0f;
+        terrainDescription.sizeZ = 18.0f;
+        scene::Material terrainMaterial;
+        terrainMaterial.albedo = {0.18f, 0.42f, 0.23f};
+        terrainMaterial.roughness = 0.82f;
+        const scene::ActorHandle terrainActor =
+            level_.spawnActor<scene::TerrainActor>(terrainDescription, terrainMaterial);
+        if (scene::Actor* actor = level_.actor(terrainActor); actor != nullptr) {
+            actor->setTransform(scene::Transform{.position = {0.0f, -1.35f, 0.0f}});
+        }
         std::cout << "Level assembled with " << level_.meshes().size() << " meshes and " << level_.models().size()
-                  << " model instances.\n";
+                  << " model instances and " << level_.actorCount() << " actors.\n";
     }
 
 } // namespace lumin::core

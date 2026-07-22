@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <memory>
 
+#include <glm/mat4x4.hpp>
+#include <glm/vec3.hpp>
 #include <vulkan/vulkan.h>
 
 #include "lumin/render/FrameGraph.hpp"
@@ -20,7 +22,7 @@ namespace lumin::platform {
 namespace lumin::scene {
     class Camera;
     class Level;
-}
+} // namespace lumin::scene
 
 namespace lumin::render {
 
@@ -43,14 +45,21 @@ namespace lumin::render {
 
     private:
         void createRenderResources();
+        void createModelRenderer();
         void destroyRenderResources() noexcept;
         void refreshSwapchainResources();
-        void recordCommandBuffer(VkCommandBuffer commandBuffer, std::uint32_t frameIndex,
-                                 std::uint32_t imageIndex, const scene::Camera& camera);
-        void recordGBufferPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex,
-                               const scene::Camera& camera);
-        void recordPostprocessPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex,
-                                   std::uint32_t imageIndex);
+        void recordCommandBuffer(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, std::uint32_t imageIndex,
+                                 const scene::Camera& camera, const RenderSettings& settings);
+        void recordShadowPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, std::uint32_t cascadeIndex,
+                              const glm::mat4& lightViewProjection);
+        void recordGBufferPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, const glm::mat4& viewProjection,
+                               const glm::mat4& previousViewProjection);
+        void recordSsaoPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex);
+        void recordSkyPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex);
+        void recordDeferredLightingPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex);
+        void recordTaaPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex);
+        void recordHistoryCopy(VkCommandBuffer commandBuffer, std::uint32_t frameIndex);
+        void recordTonemapPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, std::uint32_t imageIndex);
 
         platform::Window& window_;
         VulkanContext& context_;
@@ -62,6 +71,14 @@ namespace lumin::render {
         FrameGraph frameGraph_;
         std::unique_ptr<ModelRenderer> modelRenderer_;
         std::uint64_t swapchainGeneration_ = 0;
+        std::uint64_t topologyRevision_ = 0;
+        glm::mat4 previousViewProjection_{1.0f};
+        glm::vec3 previousCameraPosition_{0.0f};
+        glm::vec3 previousCameraForward_{0.0f, 0.0f, -1.0f};
+        float previousFieldOfView_ = 0.0f;
+        bool hasPreviousCamera_ = false;
+        bool previousTaaEnabled_ = true;
+        std::uint64_t frameNumber_ = 0;
     };
 
-}
+} // namespace lumin::render
