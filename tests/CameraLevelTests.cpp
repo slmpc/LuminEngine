@@ -448,6 +448,24 @@ namespace {
         bool queued_ = false;
     };
 
+    struct HandleEnumerationState {
+        std::vector<lumin::scene::ActorHandle> duringDestroy;
+    };
+
+    class DeferredEnumerationActor final : public lumin::scene::Actor {
+    public:
+        explicit DeferredEnumerationActor(std::shared_ptr<HandleEnumerationState> state) : state_(std::move(state)) {
+        }
+
+        void onTick(lumin::scene::Level& level, float) override {
+            level.destroyActor(handle());
+            state_->duringDestroy = level.actorHandles();
+        }
+
+    private:
+        std::shared_ptr<HandleEnumerationState> state_;
+    };
+
     void testActorLifecycleAndDeferredChanges() {
         lumin::scene::Level level;
         const auto counters = std::make_shared<ActorCounters>();
@@ -632,6 +650,54 @@ namespace {
                 "Mesh-slot reuse must preserve the renderer's handle-to-mesh index contract.");
     }
 
+    void testHandleEnumeration() {
+        lumin::scene::Level empty;
+        require(empty.actorHandles().empty() && empty.modelHandles().empty(),
+                "An empty Level must enumerate no actor or model handles.");
+
+        const auto mesh = empty.addMesh(makeTriangle("handle-enumeration"));
+        const auto firstModel = empty.addModel(mesh, {.position = {1.0f, 0.0f, 0.0f}});
+        const auto secondModel = empty.addModel(mesh, {.position = {2.0f, 0.0f, 0.0f}});
+        const auto firstActor = empty.spawnActor<ShutdownPassiveActor>();
+        const auto secondActor = empty.spawnActor<ShutdownPassiveActor>();
+        require(empty.actorHandles() == std::vector<lumin::scene::ActorHandle>{firstActor, secondActor},
+                "Actor handles must be live snapshots ordered by slot index.");
+        require(empty.modelHandles() == std::vector<lumin::scene::ModelHandle>{firstModel, secondModel},
+                "Model handles must match the dense model order.");
+
+        require(empty.destroyActor(firstActor), "The first actor must be destroyable.");
+        const auto replacementActor = empty.spawnActor<ShutdownPassiveActor>();
+        require(replacementActor.index == firstActor.index && replacementActor.generation != firstActor.generation,
+                "Reused actor slots must advance generation.");
+        const auto actorSnapshot = empty.actorHandles();
+        require(actorSnapshot == std::vector<lumin::scene::ActorHandle>{replacementActor, secondActor} &&
+                    std::find(actorSnapshot.begin(), actorSnapshot.end(), firstActor) == actorSnapshot.end(),
+                "Stale actor generations must never appear in enumeration.");
+
+        require(empty.removeModel(firstModel), "The first model must be removable.");
+        require(empty.modelHandles() == std::vector<lumin::scene::ModelHandle>{secondModel},
+                "Dense model removal must preserve the moved model handle.");
+        const auto replacementModel = empty.addModel(mesh, {.position = {3.0f, 0.0f, 0.0f}});
+        require(replacementModel.index == firstModel.index && replacementModel.generation != firstModel.generation,
+                "Reused model slots must advance generation.");
+        require(empty.modelHandles() == std::vector<lumin::scene::ModelHandle>{secondModel, replacementModel},
+                "Appended model handles must remain paired with dense model entries.");
+        require(empty.removeModel(secondModel), "The moved model must be removable through its stable handle.");
+        require(empty.modelHandles() == std::vector<lumin::scene::ModelHandle>{replacementModel},
+                "Dense swap must retain the moved model handle at its new index.");
+        const auto modelSnapshot = empty.modelHandles();
+        require(std::find(modelSnapshot.begin(), modelSnapshot.end(), firstModel) == modelSnapshot.end(),
+                "Stale model generations must never appear in enumeration.");
+
+        lumin::scene::Level deferred;
+        const auto state = std::make_shared<HandleEnumerationState>();
+        const auto deferredActor = deferred.spawnActor<DeferredEnumerationActor>(state);
+        deferred.tick(0.0f);
+        require(state->duringDestroy.empty() && deferred.actorHandles().empty() &&
+                    !deferred.isActorAlive(deferredActor),
+                "Pending actor destruction must be hidden from snapshots before flush completes.");
+    }
+
     void testModelRevisionAndTerrainActor() {
         lumin::scene::Level level;
         lumin::assets::Mesh mesh = makeTriangle("revision-triangle");
@@ -712,6 +778,7 @@ int main() {
         testFlushDrainsAfterMultipleDestroyErrors();
         testTerrainGenerationAndHeight();
         testStableModelAndMeshHandles();
+        testHandleEnumeration();
         testModelRevisionAndTerrainActor();
         std::cout << "CameraLevel PASS\n";
         return 0;

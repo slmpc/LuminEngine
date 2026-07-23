@@ -176,6 +176,7 @@ namespace lumin::scene {
         [[nodiscard]] const assets::Mesh& mesh(MeshHandle handle) const;
         [[nodiscard]] const std::vector<assets::Mesh>& meshes() const noexcept;
         [[nodiscard]] const std::vector<ModelInstance>& models() const noexcept;
+        [[nodiscard]] std::vector<ModelHandle> modelHandles() const;
 
         ActorHandle spawnActor(std::unique_ptr<Actor> actor);
 
@@ -196,6 +197,7 @@ namespace lumin::scene {
         bool destroy(ActorHandle handle);
         bool removeActor(ActorHandle handle);
         bool isActorAlive(ActorHandle handle) const noexcept;
+        [[nodiscard]] std::vector<ActorHandle> actorHandles() const;
         [[nodiscard]] Actor* actor(ActorHandle handle) noexcept;
         [[nodiscard]] const Actor* actor(ActorHandle handle) const noexcept;
         [[nodiscard]] Actor* getActor(ActorHandle handle) noexcept;

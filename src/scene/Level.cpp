@@ -669,6 +669,16 @@ namespace lumin::scene {
         return models_;
     }
 
+    std::vector<ModelHandle> Level::modelHandles() const {
+        std::vector<ModelHandle> handles;
+        handles.reserve(models_.size());
+        for (const std::uint32_t slotIndex : denseModelSlots_) {
+            const ModelSlot& slot = modelSlots_[slotIndex];
+            handles.push_back(ModelHandle{slotIndex, slot.generation});
+        }
+        return handles;
+    }
+
     ActorHandle Level::spawnActor(std::unique_ptr<Actor> actorValue) {
         if (actorValue == nullptr) {
             throw std::invalid_argument("Level cannot spawn a null actor.");
@@ -721,6 +731,18 @@ namespace lumin::scene {
     bool Level::isActorAlive(ActorHandle handle) const noexcept {
         const ActorSlot* slot = findActorSlot(handle);
         return slot != nullptr && slot->actor != nullptr && slot->state == ActorSlotState::Active;
+    }
+
+    std::vector<ActorHandle> Level::actorHandles() const {
+        std::vector<ActorHandle> handles;
+        handles.reserve(actorCount());
+        for (std::size_t index = 0; index < actors_.size(); ++index) {
+            const ActorSlot& slot = actors_[index];
+            if (slot.actor != nullptr && slot.state == ActorSlotState::Active) {
+                handles.push_back(ActorHandle{static_cast<std::uint32_t>(index), slot.generation});
+            }
+        }
+        return handles;
     }
 
     Actor* Level::actor(ActorHandle handle) noexcept {
