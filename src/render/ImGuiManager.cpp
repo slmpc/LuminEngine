@@ -56,7 +56,7 @@ namespace lumin::render {
         camera.setPosition(settings.cameraPosition);
         ImGui::Separator();
         ImGui::Checkbox("Cascaded shadows", &settings.enableShadows);
-        ImGui::Checkbox("Ambient occlusion", &settings.enableSsao);
+        ImGui::Checkbox("Global illumination", &settings.enableGlobalIllumination);
         ImGui::Checkbox("Temporal anti-aliasing", &settings.enableTaa);
         ImGui::SliderFloat("Exposure", &settings.exposure, 0.1f, 4.0f);
         ImGui::SliderFloat3("Sun direction", &settings.sunDirection.x, -1.0f, 1.0f);
