@@ -94,19 +94,46 @@ add_custom_target(lumin_shaders ALL
     DEPENDS ${LUMIN_SHADER_OUTPUTS}
 )
 
-add_library(lumin_engine STATIC)
-add_library(Lumin::Engine ALIAS lumin_engine)
+function(lumin_configure_library target)
+    target_include_directories(${target}
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:include>
+    )
+    target_compile_features(${target} PUBLIC cxx_std_20)
 
-target_sources(lumin_engine
+    if(MSVC)
+        target_compile_options(${target} PUBLIC /utf-8 PRIVATE /W4 /permissive- /Zc:__cplusplus)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endfunction()
+
+add_library(lumin_runtime STATIC)
+add_library(Lumin::Runtime ALIAS lumin_runtime)
+target_sources(lumin_runtime
     PRIVATE
         src/assets/ImageLoader.cpp
         src/assets/ObjLoader.cpp
-        src/core/Application.cpp
-        src/platform/RenderDocAttachment.cpp
-        src/platform/Window.cpp
         src/scene/Camera.cpp
         src/scene/CameraController.cpp
         src/scene/Level.cpp
+)
+lumin_configure_library(lumin_runtime)
+target_include_directories(lumin_runtime PRIVATE ${Stb_INCLUDE_DIR})
+target_link_libraries(lumin_runtime
+    PUBLIC
+        glm::glm
+    PRIVATE
+        tinyobjloader::tinyobjloader
+)
+
+add_library(lumin_render_engine STATIC)
+add_library(Lumin::Rendering ALIAS lumin_render_engine)
+target_sources(lumin_render_engine
+    PRIVATE
+        src/platform/RenderDocAttachment.cpp
+        src/platform/Window.cpp
         src/render/FrameGraph.cpp
         src/render/ImGuiLayer.cpp
         src/render/ImGuiManager.cpp
@@ -120,47 +147,49 @@ target_sources(lumin_engine
         src/render/VulkanContext.cpp
         src/render/VulkanResources.cpp
 )
-
-target_include_directories(lumin_engine
+lumin_configure_library(lumin_render_engine)
+target_link_libraries(lumin_render_engine
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:include>
-    PRIVATE
-        ${Stb_INCLUDE_DIR}
-)
-
-target_compile_features(lumin_engine PUBLIC cxx_std_20)
-
-target_link_libraries(lumin_engine
-    PUBLIC
+        Lumin::Runtime
         Vulkan::Vulkan
+    PRIVATE
         SDL3::SDL3
-        glm::glm
         imgui::imgui
-        tinyobjloader::tinyobjloader
         ${CMAKE_DL_LIBS}
 )
 
 if(WIN32)
-    target_compile_definitions(lumin_engine PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_compile_definitions(lumin_render_engine PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
-target_compile_definitions(lumin_engine
+set(LUMIN_GAME_ENGINE_FEATURE_LIBRARIES)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/LuminGlobalIllumination.cmake" OPTIONAL)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/LuminScripting.cmake" OPTIONAL)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/LuminEditor.cmake" OPTIONAL)
+
+add_library(lumin_game_engine STATIC)
+add_library(Lumin::GameEngine ALIAS lumin_game_engine)
+target_sources(lumin_game_engine PRIVATE src/core/Application.cpp)
+lumin_configure_library(lumin_game_engine)
+target_link_libraries(lumin_game_engine
+    PUBLIC
+        Lumin::Rendering
+        ${LUMIN_GAME_ENGINE_FEATURE_LIBRARIES}
+)
+target_compile_definitions(lumin_game_engine
     PRIVATE
         $<$<CONFIG:Debug>:LUMIN_ENABLE_VALIDATION>
         LUMIN_ASSET_DIR="${LUMIN_ASSET_DIR_CMAKE}"
         LUMIN_SHADER_DIR="${LUMIN_SHADER_OUTPUT_DIR_CMAKE}"
 )
 
-if(MSVC)
-    target_compile_options(lumin_engine PUBLIC /utf-8 PRIVATE /W4 /permissive- /Zc:__cplusplus)
-else()
-    target_compile_options(lumin_engine PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+add_library(lumin_engine INTERFACE)
+add_library(Lumin::Engine ALIAS lumin_engine)
+target_link_libraries(lumin_engine INTERFACE Lumin::GameEngine)
 
 if(LUMIN_BUILD_SANDBOX)
     add_executable(lumin_sandbox apps/sandbox/main.cpp)
-    target_link_libraries(lumin_sandbox PRIVATE Lumin::Engine)
+    target_link_libraries(lumin_sandbox PRIVATE Lumin::GameEngine)
     add_dependencies(lumin_sandbox lumin_shaders)
     set_target_properties(lumin_sandbox PROPERTIES OUTPUT_NAME LuminEngine)
 endif()
@@ -168,7 +197,7 @@ endif()
 if(LUMIN_BUILD_TESTS)
     enable_testing()
     add_executable(lumin_tests tests/CameraLevelTests.cpp)
-    target_link_libraries(lumin_tests PRIVATE Lumin::Engine)
+    target_link_libraries(lumin_tests PRIVATE Lumin::Rendering)
     target_compile_definitions(lumin_tests PRIVATE
         LUMIN_TEST_ASSET_DIR="${LUMIN_ASSET_DIR_CMAKE}"
         LUMIN_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
