@@ -204,3 +204,5 @@ if(LUMIN_BUILD_TESTS)
     )
     add_test(NAME CameraLevel COMMAND lumin_tests)
 endif()
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/LuminDescriptorIndexing.cmake")

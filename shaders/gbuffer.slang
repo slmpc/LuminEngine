@@ -18,10 +18,10 @@ ConstantBuffer<FrameUniforms> frame;
 StructuredBuffer<ObjectData> objects;
 
 [[vk::binding(2, 0)]]
-Texture2DArray<float4> baseColorTextures;
+Texture2D<float4> baseColorTextures[];
 
 [[vk::binding(3, 0)]]
-Texture2DArray<float4> normalRoughnessTextures;
+Texture2D<float4> normalRoughnessTextures[];
 
 [[vk::binding(4, 0)]]
 SamplerState materialSampler;
@@ -39,7 +39,7 @@ struct VertexOutput {
     [[vk::location(1)]] float3 worldNormal : TEXCOORD1;
     [[vk::location(2)]] float2 texCoord : TEXCOORD2;
     [[vk::location(3)]] float4 baseColorMetallic : TEXCOORD3;
-    [[vk::location(4)]] float4 materialParameters : TEXCOORD4;
+    [[vk::location(4)]] nointerpolation float4 materialParameters : TEXCOORD4;
     [[vk::location(5)]] float4 currentClip : TEXCOORD5;
     [[vk::location(6)]] float4 previousClip : TEXCOORD6;
 };
@@ -94,15 +94,16 @@ VertexOutput vertexMain(VertexInput input) {
 
 [shader("fragment")]
 GBufferOutput fragmentMain(VertexOutput input) {
-    uint textureLayer = uint(input.materialParameters.z + 0.5);
+    uint textureIndex = uint(input.materialParameters.z);
     float textureScale = max(abs(input.materialParameters.y), 1e-4);
     float2 materialUv = input.texCoord * textureScale;
-    float3 textureCoordinate = float3(materialUv, float(textureLayer));
-    float4 baseColorSample = baseColorTextures.Sample(materialSampler, textureCoordinate);
-    float4 normalRoughnessSample = normalRoughnessTextures.Sample(materialSampler, textureCoordinate);
+    float4 baseColorSample =
+        baseColorTextures[NonUniformResourceIndex(textureIndex)].Sample(materialSampler, materialUv);
+    float4 normalRoughnessSample =
+        normalRoughnessTextures[NonUniformResourceIndex(textureIndex)].Sample(materialSampler, materialUv);
 
     float3 worldNormal = normalize(input.worldNormal);
-    if (textureLayer != 0) {
+    if (textureIndex != 0) {
         float3 tangentNormal = normalRoughnessSample.xyz * 2.0 - 1.0;
         tangentNormal.y *= input.materialParameters.w;
         worldNormal = applyNormalMap(worldNormal, input.worldPosition, materialUv, normalize(tangentNormal));

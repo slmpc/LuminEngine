@@ -255,9 +255,8 @@ namespace lumin::render {
                 "Failed to wait for the current frame fence.");
 
         std::uint32_t imageIndex = 0;
-        const VkResult result = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
-                                                       imageAvailableSemaphores_[currentFrame_], VK_NULL_HANDLE,
-                                                       &imageIndex);
+        const VkResult result = vkAcquireNextImageKHR(
+            device_, swapchain_, UINT64_MAX, imageAvailableSemaphores_[currentFrame_], VK_NULL_HANDLE, &imageIndex);
         if (result == VK_ERROR_OUT_OF_DATE_KHR) {
             recreateSwapchain();
             return std::nullopt;
@@ -299,8 +298,8 @@ namespace lumin::render {
         presentInfo.pSwapchains = &swapchain_;
         presentInfo.pImageIndices = &frame.imageIndex;
         const VkResult result = vkQueuePresentKHR(presentQueue_, &presentInfo);
-        const bool needsRecreate = result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR ||
-                                    window_.framebufferResized();
+        const bool needsRecreate =
+            result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || window_.framebufferResized();
         if (!needsRecreate && result != VK_SUCCESS) {
             throw std::runtime_error("Failed to present the Vulkan frame.");
         }
@@ -423,10 +422,17 @@ namespace lumin::render {
         vulkan11Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
         vulkan11Features.shaderDrawParameters = VK_TRUE;
 
+        VkPhysicalDeviceVulkan12Features vulkan12Features{};
+        vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        vulkan12Features.pNext = &vulkan11Features;
+        vulkan12Features.descriptorIndexing = VK_TRUE;
+        vulkan12Features.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        vulkan12Features.runtimeDescriptorArray = VK_TRUE;
+
         VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{};
         dynamicRenderingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
         dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
-        dynamicRenderingFeatures.pNext = &vulkan11Features;
+        dynamicRenderingFeatures.pNext = &vulkan12Features;
 
         VkDeviceCreateInfo createInfo;
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -529,14 +535,13 @@ namespace lumin::render {
         vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice_, surface_, &presentModeCount, nullptr);
         support.presentModes.resize(presentModeCount);
         vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice_, surface_, &presentModeCount,
-                                                   support.presentModes.data());
+                                                  support.presentModes.data());
         return support;
     }
 
     VkSurfaceFormatKHR VulkanContext::chooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats) const {
         for (const VkSurfaceFormatKHR& format : formats) {
-            if (format.format == VK_FORMAT_B8G8R8A8_SRGB &&
-                format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            if (format.format == VK_FORMAT_B8G8R8A8_SRGB && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
                 return format;
             }
         }
@@ -748,9 +753,13 @@ namespace lumin::render {
         VkPhysicalDeviceVulkan11Features vulkan11Features{};
         vulkan11Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
 
+        VkPhysicalDeviceVulkan12Features vulkan12Features{};
+        vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        vulkan12Features.pNext = &vulkan11Features;
+
         VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{};
         dynamicRenderingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
-        dynamicRenderingFeatures.pNext = &vulkan11Features;
+        dynamicRenderingFeatures.pNext = &vulkan12Features;
 
         VkPhysicalDeviceFeatures2 features{};
         features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -759,6 +768,9 @@ namespace lumin::render {
 
         return findQueueFamilies(device).complete() && deviceExtensionsAvailable(device) &&
                features.features.multiDrawIndirect == VK_TRUE && vulkan11Features.shaderDrawParameters == VK_TRUE &&
+               vulkan12Features.descriptorIndexing == VK_TRUE &&
+               vulkan12Features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE &&
+               vulkan12Features.runtimeDescriptorArray == VK_TRUE &&
                dynamicRenderingFeatures.dynamicRendering == VK_TRUE;
     }
 

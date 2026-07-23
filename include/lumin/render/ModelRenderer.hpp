@@ -26,7 +26,7 @@ namespace lumin::render {
         glm::mat4 previousModel{1.0f};
         glm::mat4 normalMatrix{1.0f};
         glm::vec4 baseColorMetallic{1.0f};
-        // roughness factor, UV scale, texture-array layer, normal-map Y sign
+        // roughness factor, UV scale, material texture descriptor index, normal-map Y sign
         glm::vec4 materialParameters{1.0f, 1.0f, 0.0f, 1.0f};
     };
 
