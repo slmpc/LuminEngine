@@ -208,7 +208,7 @@ namespace lumin::render {
         destroyRenderResources();
     }
 
-    void LevelRenderer::drawFrame(scene::Camera& camera, RenderSettings& settings) {
+    void LevelRenderer::drawFrame(scene::Camera& camera, RenderSettings& settings, ImGuiContent* content) {
         if (swapchainGeneration_ != context_.swapchainGeneration()) {
             refreshSwapchainResources();
         }
@@ -227,8 +227,7 @@ namespace lumin::render {
             return;
         }
 
-        imgui_.beginFrame();
-        imgui_.drawLevelPanel(camera, settings, modelCount(), mdiDrawCount());
+        imgui_.beginFrame(content);
         recordCommandBuffer(frame->commandBuffer, frame->frameIndex, frame->imageIndex, camera, settings);
         if (context_.submitFrame(*frame)) {
             refreshSwapchainResources();
@@ -237,6 +236,10 @@ namespace lumin::render {
 
     void LevelRenderer::waitIdle() const {
         context_.waitIdle();
+    }
+
+    ImGuiCaptureState LevelRenderer::imguiCaptureState() const noexcept {
+        return imgui_.captureState();
     }
 
     std::uint32_t LevelRenderer::modelCount() const noexcept {

@@ -39,12 +39,13 @@ namespace lumin::render {
         LevelRenderer(const LevelRenderer&) = delete;
         LevelRenderer& operator=(const LevelRenderer&) = delete;
 
-        void drawFrame(scene::Camera& camera, RenderSettings& settings);
+        void drawFrame(scene::Camera& camera, RenderSettings& settings, ImGuiContent* content = nullptr);
         void waitIdle() const;
 
         [[nodiscard]] std::uint32_t modelCount() const noexcept;
         [[nodiscard]] std::uint32_t mdiDrawCount() const noexcept;
         [[nodiscard]] gi::BackendInfo globalIlluminationBackendInfo() const noexcept;
+        [[nodiscard]] ImGuiCaptureState imguiCaptureState() const noexcept;
 
     private:
         void createRenderResources();

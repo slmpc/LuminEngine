@@ -4,6 +4,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include "lumin/render/ImGuiContent.hpp"
+
 namespace lumin::platform {
     class Window;
 }
@@ -27,7 +29,7 @@ namespace lumin::render {
         std::uint32_t maxDescriptorSets = 40;
         bool enableKeyboard = true;
         bool enableGamepad = false;
-        bool enableDocking = false;
+        bool enableDocking = true;
         float globalScale = 1.0f;
     };
 
@@ -45,6 +47,7 @@ namespace lumin::render {
         void render(VkCommandBuffer commandBuffer);
 
         [[nodiscard]] bool initialized() const noexcept;
+        [[nodiscard]] ImGuiCaptureState captureState() const noexcept;
 
     private:
         platform::Window* window_ = nullptr;

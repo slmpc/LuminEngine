@@ -4,8 +4,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include "lumin/render/ImGuiContent.hpp"
 #include "lumin/render/ImGuiLayer.hpp"
-#include "lumin/render/RenderSettings.hpp"
 
 namespace lumin::platform {
     class Window;
@@ -13,10 +13,6 @@ namespace lumin::platform {
 
 namespace lumin::render {
     class VulkanContext;
-}
-
-namespace lumin::scene {
-    class Camera;
 }
 
 namespace lumin::render {
@@ -31,13 +27,12 @@ namespace lumin::render {
 
         void initialize(platform::Window& window, VulkanContext& context);
         void shutdown();
-        void beginFrame();
-        void drawLevelPanel(scene::Camera& camera, RenderSettings& settings, std::uint32_t modelCount,
-                            std::uint32_t mdiDrawCount);
+        void beginFrame(ImGuiContent* content = nullptr);
         void record(VkCommandBuffer commandBuffer, VkImageView targetView, VkExtent2D extent);
+        [[nodiscard]] ImGuiCaptureState captureState() const noexcept;
 
     private:
         ImGuiLayer layer_;
     };
 
-}
+} // namespace lumin::render

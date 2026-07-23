@@ -41,8 +41,9 @@ namespace lumin::render {
         if (config.enableGamepad) {
             io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
         }
-        // 当前 vcpkg 默认 imgui port 未启用 docking 分支；字段先保留在配置层，方便后续切 feature。
-        (void)config.enableDocking;
+        if (config.enableDocking) {
+            io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+        }
         io.FontGlobalScale = config.globalScale;
         ImGui::StyleColorsDark();
 
@@ -133,18 +134,32 @@ namespace lumin::render {
     }
 
     void ImGuiLayer::newFrame() {
+        if (!initialized_) {
+            return;
+        }
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
     }
 
     void ImGuiLayer::render(VkCommandBuffer commandBuffer) {
+        if (!initialized_) {
+            return;
+        }
         ImGui::Render();
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
     }
 
     bool ImGuiLayer::initialized() const noexcept {
         return initialized_;
+    }
+
+    ImGuiCaptureState ImGuiLayer::captureState() const noexcept {
+        if (!initialized_) {
+            return {};
+        }
+        const ImGuiIO& io = ImGui::GetIO();
+        return {io.WantCaptureKeyboard, io.WantCaptureMouse, io.WantTextInput};
     }
 
 } // namespace lumin::render
