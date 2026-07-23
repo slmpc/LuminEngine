@@ -14,7 +14,7 @@ struct PostProcessUniforms {
 [[vk::binding(0, 0)]] Texture2D<float4> positionTexture;
 [[vk::binding(1, 0)]] Texture2D<float4> normalTexture;
 [[vk::binding(2, 0)]] Texture2D<float4> albedoTexture;
-[[vk::binding(4, 0)]] Texture2D<float> ambientOcclusionTexture;
+[[vk::binding(4, 0)]] Texture2D<float4> globalIlluminationTexture;
 [[vk::binding(8, 0)]] Texture2D<float> shadowTexture0;
 [[vk::binding(9, 0)]] Texture2D<float> shadowTexture1;
 [[vk::binding(10, 0)]] Texture2D<float> shadowTexture2;
@@ -113,7 +113,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target {
     float4 albedoMetallic = albedoTexture.SampleLevel(renderSampler, input.uv, 0.0);
     float3 albedo = albedoMetallic.rgb;
     float metallic = saturate(albedoMetallic.a);
-    float ao = ambientOcclusionTexture.SampleLevel(renderSampler, input.uv, 0.0);
+    float4 globalIllumination = globalIlluminationTexture.SampleLevel(renderSampler, input.uv, 0.0);
 
     float viewDepth = max(dot(worldPosition - frame.cameraPosition.xyz, frame.cameraForward.xyz), 0.0);
     uint cascadeIndex = viewDepth < frame.cascadeSplits.x ? 0
@@ -134,7 +134,8 @@ float4 fragmentMain(VertexOutput input) : SV_Target {
     float3 specular = distribution * geometry * fresnel / max(4.0 * normalDotView * normalDotLight, 1e-4);
     float3 diffuseWeight = (1.0 - fresnel) * (1.0 - metallic);
     float3 sunColor = float3(1.0, 0.94, 0.82) * 3.2;
-    float3 ambient = (albedo * (1.0 - metallic) * 0.12 + baseReflectance * 0.04) * ao;
+    float3 legacyAmbient = albedo * (1.0 - metallic) * 0.12 + baseReflectance * 0.04;
+    float3 ambient = legacyAmbient * globalIllumination.a + globalIllumination.rgb;
     float3 direct = (diffuseWeight * albedo / pi + specular) * sunColor * normalDotLight * visibility;
     return float4(ambient + direct, 1.0);
 }

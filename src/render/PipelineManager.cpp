@@ -14,8 +14,8 @@ namespace lumin::render {
         destroy();
     }
 
-    void PipelineManager::create(VkDescriptorSetLayout descriptorSetLayout, VkFormat ambientOcclusionFormat,
-                                 VkFormat lightingFormat, VkFormat swapchainFormat) {
+    void PipelineManager::create(VkDescriptorSetLayout descriptorSetLayout, VkFormat lightingFormat,
+                                 VkFormat swapchainFormat) {
         destroy();
 
         const std::array<VkVertexInputBindingDescription, 0> bindings{};
@@ -53,7 +53,6 @@ namespace lumin::render {
         };
 
         try {
-            createFullscreen("ssao", ambientOcclusionFormat, ssao_);
             createFullscreen("sky", lightingFormat, sky_);
             createFullscreen("deferred", lightingFormat, deferredLighting_);
             createFullscreen("taa", lightingFormat, taa_);
@@ -69,11 +68,6 @@ namespace lumin::render {
         factory_.destroy(taa_);
         factory_.destroy(deferredLighting_);
         factory_.destroy(sky_);
-        factory_.destroy(ssao_);
-    }
-
-    const GraphicsPipeline& PipelineManager::ssao() const noexcept {
-        return ssao_;
     }
 
     const GraphicsPipeline& PipelineManager::sky() const noexcept {

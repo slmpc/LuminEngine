@@ -39,7 +39,7 @@ namespace lumin::render {
         VulkanImage albedo;
         VulkanImage motion;
         VulkanImage depth;
-        VulkanImage ambientOcclusion;
+        VulkanImage globalIllumination;
         VulkanImage lighting;
         VulkanImage taaResolved;
         VulkanImage history;
@@ -71,7 +71,7 @@ namespace lumin::render {
         [[nodiscard]] VkFormat albedoFormat() const noexcept;
         [[nodiscard]] VkFormat motionFormat() const noexcept;
         [[nodiscard]] VkFormat depthFormat() const noexcept;
-        [[nodiscard]] VkFormat ambientOcclusionFormat() const noexcept;
+        [[nodiscard]] VkFormat globalIlluminationFormat() const noexcept;
         [[nodiscard]] VkFormat lightingFormat() const noexcept;
         [[nodiscard]] VkFormat shadowDepthFormat() const noexcept;
         [[nodiscard]] VkSampler sampler() const noexcept;
@@ -91,7 +91,7 @@ namespace lumin::render {
         VkFormat albedoFormat_ = VK_FORMAT_UNDEFINED;
         VkFormat motionFormat_ = VK_FORMAT_UNDEFINED;
         VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
-        VkFormat ambientOcclusionFormat_ = VK_FORMAT_UNDEFINED;
+        VkFormat globalIlluminationFormat_ = VK_FORMAT_UNDEFINED;
         VkFormat lightingFormat_ = VK_FORMAT_UNDEFINED;
         VkFormat shadowDepthFormat_ = VK_FORMAT_UNDEFINED;
         VkSampler sampler_ = VK_NULL_HANDLE;

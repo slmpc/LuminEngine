@@ -13,8 +13,8 @@ struct PostProcessUniforms {
 
 [[vk::binding(0, 0)]] Texture2D<float4> positionTexture;
 [[vk::binding(1, 0)]] Texture2D<float4> normalTexture;
-[[vk::binding(12, 0)]] SamplerState renderSampler;
-[[vk::binding(13, 0)]] ConstantBuffer<PostProcessUniforms> frame;
+[[vk::binding(2, 0)]] SamplerState renderSampler;
+[[vk::binding(3, 0)]] ConstantBuffer<PostProcessUniforms> frame;
 
 struct VertexOutput {
     float4 position : SV_Position;
@@ -37,10 +37,10 @@ float hash12(float2 p) {
 }
 
 [shader("fragment")]
-float fragmentMain(VertexOutput input) : SV_Target {
+float4 fragmentMain(VertexOutput input) : SV_Target {
     float4 centerSample = positionTexture.SampleLevel(renderSampler, input.uv, 0.0);
     if (centerSample.w < 0.5 || frame.renderOptions.y < 0.5) {
-        return 1.0;
+        return float4(0.0, 0.0, 0.0, 1.0);
     }
 
     float3 center = centerSample.xyz;
@@ -71,5 +71,6 @@ float fragmentMain(VertexOutput input) : SV_Target {
         occlusion += horizon * rangeWeight;
     }
 
-    return saturate(1.0 - occlusion * (2.2 / 12.0));
+    float ao = saturate(1.0 - occlusion * (2.2 / 12.0));
+    return float4(0.0, 0.0, 0.0, ao);
 }

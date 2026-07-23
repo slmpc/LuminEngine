@@ -19,11 +19,9 @@ namespace lumin::render {
         PipelineManager(const PipelineManager&) = delete;
         PipelineManager& operator=(const PipelineManager&) = delete;
 
-        void create(VkDescriptorSetLayout descriptorSetLayout, VkFormat ambientOcclusionFormat, VkFormat lightingFormat,
-                    VkFormat swapchainFormat);
+        void create(VkDescriptorSetLayout descriptorSetLayout, VkFormat lightingFormat, VkFormat swapchainFormat);
         void destroy() noexcept;
 
-        [[nodiscard]] const GraphicsPipeline& ssao() const noexcept;
         [[nodiscard]] const GraphicsPipeline& sky() const noexcept;
         [[nodiscard]] const GraphicsPipeline& deferredLighting() const noexcept;
         [[nodiscard]] const GraphicsPipeline& taa() const noexcept;
@@ -34,7 +32,6 @@ namespace lumin::render {
         VulkanContext& context_;
         ShaderLibrary shaders_;
         PipelineFactory factory_;
-        GraphicsPipeline ssao_;
         GraphicsPipeline sky_;
         GraphicsPipeline deferredLighting_;
         GraphicsPipeline taa_;

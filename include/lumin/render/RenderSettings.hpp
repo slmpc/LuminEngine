@@ -16,7 +16,7 @@ namespace lumin::render {
         glm::vec3 sunDirection{-0.45f, -0.8f, -0.35f};
         float exposure = 1.0f;
         bool enableShadows = true;
-        bool enableSsao = true;
+        bool enableGlobalIllumination = true;
         bool enableTaa = true;
     };
 

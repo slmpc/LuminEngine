@@ -8,7 +8,7 @@ Lumin Engine 是一个使用 C++20、SDL3、Slang 和动态渲染构建的紧凑
 - 可生成法线并支持高度查询的程序化高度场地形。
 - 包含位置、法线与粗糙度、反照率与金属度、运动矢量的 G-buffer 延迟渲染器。
 - 支持 sRGB base color、切线空间 normal 和 roughness 贴图，以及 GGX/Cook-Torrance PBR 光照。
-- 四级联方向光阴影、SSAO 和程序化天空盒。
+- 四级联方向光阴影、可替换的全局光照后端（默认使用 SSAO）和程序化天空盒。
 - 使用 Halton 抖动，并结合上一帧相机与模型运动矢量的 TAA。
 - ACES 色调映射，以及用于运行时调整渲染设置的 ImGui 面板。
 
@@ -74,14 +74,14 @@ Debug 配置过程还会生成 `out/build/debug/compile_commands.json`。本地 
 cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
-使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。ImGui 面板可调整相机速度、CSM、SSAO、TAA、曝光和太阳方向。
+使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。ImGui 面板可调整相机速度、CSM、全局光照、TAA、曝光和太阳方向。
 
 如果未提供 OBJ 路径，沙盒会优先加载 `assets/models/stanford-bunny.obj`；该文件不可用时则使用内置立方体。
 场景还会创建一个程序化地形 Actor 和第二个内置网格。
 
 默认主模型使用 `assets/materials/aerial_asphalt_01` 下的沥青材质。base color 按 sRGB 解码，OpenGL normal
 贴图在采样时修正 Y 方向，roughness 写入 G-buffer 的法线附件 alpha，metallic 写入反照率附件 alpha。
-该材质没有 metallic 或 AO 贴图，因此使用 `metallic=0`，环境遮蔽由 SSAO 提供。缺少 `vt` 的 OBJ 会在加载时
+该材质没有 metallic 或 AO 贴图，因此使用 `metallic=0`，环境遮蔽由默认 SSAO 全局光照后端提供。缺少 `vt` 的 OBJ 会在加载时
 生成柱面 UV。当前材质路径不执行几何位移或视差映射。
 
 材质贴图不纳入版本控制。首次运行沙盒前，请使用 Python 3 下载清单中的全部材质：
@@ -101,6 +101,6 @@ ctest --test-dir out\build\debug --output-on-failure
 ```
 
 测试覆盖相机移动、`Level`/模型修订号、Actor 生命周期与延迟变更、地形生成与高度采样、PBR 图像解码、
-缺失 UV 生成和渲染器材质批次构建。
+缺失 UV 生成、渲染器材质批次构建和全局光照后端契约。
 
 有关渲染通道顺序、时序历史约定和资源所有权模型，请参阅 `docs/rendering-architecture.md`。

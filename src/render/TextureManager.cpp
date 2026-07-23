@@ -63,7 +63,7 @@ namespace lumin::render {
             resources_.destroyImage(frame.history);
             resources_.destroyImage(frame.taaResolved);
             resources_.destroyImage(frame.lighting);
-            resources_.destroyImage(frame.ambientOcclusion);
+            resources_.destroyImage(frame.globalIllumination);
             resources_.destroyImage(frame.depth);
             resources_.destroyImage(frame.motion);
             resources_.destroyImage(frame.albedo);
@@ -135,8 +135,8 @@ namespace lumin::render {
         return depthFormat_;
     }
 
-    VkFormat TextureManager::ambientOcclusionFormat() const noexcept {
-        return ambientOcclusionFormat_;
+    VkFormat TextureManager::globalIlluminationFormat() const noexcept {
+        return globalIlluminationFormat_;
     }
 
     VkFormat TextureManager::lightingFormat() const noexcept {
@@ -174,7 +174,10 @@ namespace lumin::render {
         normalFormat_ = positionFormat_;
         albedoFormat_ = chooseFormat({VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM});
         motionFormat_ = chooseFormat({VK_FORMAT_R16G16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT});
-        ambientOcclusionFormat_ = chooseFormat({VK_FORMAT_R8_UNORM, VK_FORMAT_R16_SFLOAT});
+        globalIlluminationFormat_ = resources_.findSupportedFormat(
+            {VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT}, VK_IMAGE_TILING_OPTIMAL,
+            VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
         lightingFormat_ = chooseFormat({VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT});
         depthFormat_ = resources_.findDepthFormat();
         shadowDepthFormat_ = resources_.findSupportedFormat(
@@ -197,8 +200,9 @@ namespace lumin::render {
             frame.depth =
                 resources_.createImage(extent.width, extent.height, depthFormat_,
                                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-            frame.ambientOcclusion = resources_.createImage(extent.width, extent.height, ambientOcclusionFormat_,
-                                                            colorSampled, VK_IMAGE_ASPECT_COLOR_BIT);
+            frame.globalIllumination =
+                resources_.createImage(extent.width, extent.height, globalIlluminationFormat_,
+                                       colorSampled | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
             frame.lighting = resources_.createImage(extent.width, extent.height, lightingFormat_, colorSampled,
                                                     VK_IMAGE_ASPECT_COLOR_BIT);
             frame.taaResolved =
@@ -280,8 +284,8 @@ namespace lumin::render {
                 frames_[(frameIndex + maxFramesInFlight - 1) % maxFramesInFlight];
             std::array<VkDescriptorImageInfo, sampledImageCount> images{};
             const std::array<const VulkanImage*, 8> frameImages = {
-                &frame.position,         &frame.normalRoughness, &frame.albedo,          &frame.motion,
-                &frame.ambientOcclusion, &frame.lighting,        &previousFrame.history, &frame.taaResolved,
+                &frame.position,           &frame.normalRoughness, &frame.albedo,          &frame.motion,
+                &frame.globalIllumination, &frame.lighting,        &previousFrame.history, &frame.taaResolved,
             };
             for (std::uint32_t index = 0; index < frameImages.size(); ++index) {
                 images[index] = VkDescriptorImageInfo{VK_NULL_HANDLE, frameImages[index]->view,

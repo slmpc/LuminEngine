@@ -19,9 +19,9 @@
 
 1. 四个 CSM 纯深度通道，每个级联使用一张独立的二维深度图像。
 2. G-buffer 通道：世界空间位置、世界空间法线与粗糙度、线性反照率与金属度、运动矢量和深度。
-3. SSAO 全屏通道，读取世界空间位置和法线。
+3. 全局光照后端通道；默认 SSAO 后端读取世界空间位置和法线。
 4. 程序化天空盒全屏通道，写入 HDR 光照目标。
-5. 延迟光照通道，加载该目标，并结合 SSAO 和 CSM 对几何体进行着色。
+5. 延迟光照通道，加载该目标，并结合全局光照输出和 CSM 对几何体进行着色。
 6. TAA 解析，读取 HDR 光照、运动矢量和上一帧历史。
 7. 将解析结果传输复制到当前历史图像。
 8. 使用 ACES 色调映射输出到交换链。
@@ -39,7 +39,20 @@
 base color 图像使用 `VK_FORMAT_R8G8B8A8_SRGB`，normal RGB 与 roughness 被打包到线性
 `VK_FORMAT_R8G8B8A8_UNORM`。G-buffer 将世界空间 normal/roughness 写入一个附件，将线性
 albedo/metallic 写入另一个附件。延迟光照使用 GGX 法线分布、Smith 几何遮蔽和 Schlick Fresnel；材质缺少
-metallic/AO 贴图时分别使用介电常量和 SSAO。OBJ 没有 `vt` 时，加载器生成带接缝修正的柱面 UV。
+metallic/AO 贴图时分别使用介电常量和默认 SSAO 后端。OBJ 没有 `vt` 时，加载器生成带接缝修正的柱面 UV。
+
+## 全局光照后端
+
+`LevelRenderer` 接受 `GlobalIlluminationBackend`，未注入后端时创建 `SsaoBackend`。后端报告名称、是否使用时序历史和
+是否依赖硬件光线追踪，并拥有自己的流水线、私有 descriptor 以及向 `FrameGraph` 注册通道的逻辑。
+
+`TextureManager` 为每个帧槽拥有一张标准 RGBA 全局光照图像。RGB 保存线性间接辐射亮度，alpha 保存环境可见度；
+禁用全局光照时的中性值为 `{0, 0, 0, 1}`。默认 SSAO 后端写入 `{0, 0, 0, ao}`，延迟光照按
+`legacyAmbient * globalIllumination.a + globalIllumination.rgb` 合成环境光。该图像同时支持颜色附件、采样和存储图像
+用途，以便后续后端使用光线追踪或计算通道写入相同契约。
+
+相机切换、场景拓扑变化、全局光照从关闭切换到开启以及交换链重建都会使后端历史失效。无时序历史的 SSAO 后端
+忽略失效通知；时序后端必须在下一帧从无历史状态重新开始。
 
 ## 级联阴影
 
@@ -63,7 +76,7 @@ metallic/AO 贴图时分别使用介电常量和 SSAO。OBJ 没有 `vt` 时，�
 
 ## 资源所有权
 
-`TextureManager` 拥有两个帧槽。每个槽位都有自己的 G-buffer、SSAO、HDR 光照、TAA 解析/历史、四张阴影图、
+`TextureManager` 拥有两个帧槽。每个槽位都有自己的 G-buffer、标准全局光照输出、HDR 光照、TAA 解析/历史、四张阴影图、
 后处理 uniform buffer 和 descriptor set。`ModelRenderer` 同样拥有逐帧对象及相机 buffer、四个逐帧阴影矩阵
 buffer，以及只读材质数组纹理和采样器。材质纹理在创建时通过 staging buffer 上传并转换到
 `VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL`，之后跨帧保持该布局。只有在 `VulkanContext::beginFrame` 等待相应
@@ -74,7 +87,8 @@ fence 后，才能更新帧槽。
 
 ## FrameGraph 约定
 
-通道的 setup 回调声明纹理布局、流水线阶段和访问掩码。`FrameGraph` 根据读写冲突推导顺序，并在每个通道前生成
+通道的 setup 回调声明纹理布局、流水线阶段和访问掩码。G-buffer 写入之后，全局光照通道以片段着色器读取位置和
+法线，并以颜色附件写入标准输出；延迟光照随后以片段着色器读取该输出。`FrameGraph` 根据这些读写冲突推导顺序，并在每个通道前生成
 图像或 buffer barrier。导入的持久纹理还可以提供 `initialStages` 和 `initialAccess`；TAA 历史资源通过它们在不同
 提交之间传递同步状态。
 

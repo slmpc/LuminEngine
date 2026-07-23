@@ -14,6 +14,7 @@
 #include "lumin/render/PipelineManager.hpp"
 #include "lumin/render/RenderSettings.hpp"
 #include "lumin/render/TextureManager.hpp"
+#include "lumin/render/gi/GlobalIllumination.hpp"
 
 namespace lumin::platform {
     class Window;
@@ -31,7 +32,8 @@ namespace lumin::render {
     class LevelRenderer {
     public:
         LevelRenderer(platform::Window& window, VulkanContext& context, const scene::Level& level,
-                      std::filesystem::path shaderDirectory);
+                      std::filesystem::path shaderDirectory,
+                      std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination = {});
         ~LevelRenderer();
 
         LevelRenderer(const LevelRenderer&) = delete;
@@ -42,6 +44,7 @@ namespace lumin::render {
 
         [[nodiscard]] std::uint32_t modelCount() const noexcept;
         [[nodiscard]] std::uint32_t mdiDrawCount() const noexcept;
+        [[nodiscard]] gi::BackendInfo globalIlluminationBackendInfo() const noexcept;
 
     private:
         void createRenderResources();
@@ -54,7 +57,6 @@ namespace lumin::render {
                               const glm::mat4& lightViewProjection);
         void recordGBufferPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, const glm::mat4& viewProjection,
                                const glm::mat4& previousViewProjection);
-        void recordSsaoPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex);
         void recordSkyPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex);
         void recordDeferredLightingPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex);
         void recordTaaPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex);
@@ -67,6 +69,7 @@ namespace lumin::render {
         std::filesystem::path shaderDirectory_;
         TextureManager textures_;
         PipelineManager pipelines_;
+        std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination_;
         ImGuiManager imgui_;
         FrameGraph frameGraph_;
         std::unique_ptr<ModelRenderer> modelRenderer_;
@@ -78,6 +81,7 @@ namespace lumin::render {
         float previousFieldOfView_ = 0.0f;
         bool hasPreviousCamera_ = false;
         bool previousTaaEnabled_ = true;
+        bool previousGlobalIlluminationEnabled_ = true;
         std::uint64_t frameNumber_ = 0;
     };
 

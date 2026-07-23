@@ -2,6 +2,7 @@
 
 #include "lumin/platform/Window.hpp"
 #include "lumin/render/VulkanContext.hpp"
+#include "lumin/render/gi/SsaoBackend.hpp"
 #include "lumin/scene/Camera.hpp"
 #include "lumin/scene/Level.hpp"
 
@@ -188,9 +189,14 @@ namespace lumin::render {
     } // namespace
 
     LevelRenderer::LevelRenderer(platform::Window& window, VulkanContext& context, const scene::Level& level,
-                                 std::filesystem::path shaderDirectory)
+                                 std::filesystem::path shaderDirectory,
+                                 std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
         : window_(window), context_(context), level_(level), shaderDirectory_(std::move(shaderDirectory)),
-          textures_(context), pipelines_(context, shaderDirectory_) {
+          textures_(context), pipelines_(context, shaderDirectory_),
+          globalIllumination_(std::move(globalIllumination)) {
+        if (globalIllumination_ == nullptr) {
+            globalIllumination_ = gi::makeSsaoBackend(shaderDirectory_);
+        }
         createRenderResources();
         imgui_.initialize(window_, context_);
         swapchainGeneration_ = context_.swapchainGeneration();
@@ -208,6 +214,7 @@ namespace lumin::render {
         }
         if (topologyRevision_ != level_.topologyRevision()) {
             context_.waitIdle();
+            globalIllumination_->invalidateHistory();
             modelRenderer_.reset();
             createModelRenderer();
             textures_.invalidateHistory();
@@ -240,13 +247,32 @@ namespace lumin::render {
         return modelCount();
     }
 
+    gi::BackendInfo LevelRenderer::globalIlluminationBackendInfo() const noexcept {
+        return globalIllumination_->info();
+    }
+
     void LevelRenderer::createRenderResources() {
         const VkExtent2D extent = context_.swapchainExtent();
         textures_.create(extent);
-        pipelines_.create(textures_.descriptorSetLayout(), textures_.ambientOcclusionFormat(),
-                          textures_.lightingFormat(), context_.swapchainFormat());
+        pipelines_.create(textures_.descriptorSetLayout(), textures_.lightingFormat(), context_.swapchainFormat());
+
+        std::array<gi::FrameResources, TextureManager::maxFramesInFlight> giFrames{};
+        for (std::uint32_t frameIndex = 0; frameIndex < giFrames.size(); ++frameIndex) {
+            const TextureFrameResources& frame = textures_.frame(frameIndex);
+            giFrames[frameIndex].positionView = frame.position.view;
+            giFrames[frameIndex].normalRoughnessView = frame.normalRoughness.view;
+            giFrames[frameIndex].albedoMetallicView = frame.albedo.view;
+            giFrames[frameIndex].motionView = frame.motion.view;
+            giFrames[frameIndex].depthView = frame.depth.view;
+            giFrames[frameIndex].uniformBuffer = frame.postProcessUniform.buffer;
+            giFrames[frameIndex].outputImage = frame.globalIllumination.image;
+            giFrames[frameIndex].outputView = frame.globalIllumination.view;
+        }
+        globalIllumination_->create(
+            gi::CreateInfo{context_, extent, textures_.globalIlluminationFormat(), textures_.sampler(), giFrames});
         createModelRenderer();
         hasPreviousCamera_ = false;
+        previousGlobalIlluminationEnabled_ = true;
         frameNumber_ = 0;
     }
 
@@ -265,12 +291,14 @@ namespace lumin::render {
 
     void LevelRenderer::destroyRenderResources() noexcept {
         modelRenderer_.reset();
+        globalIllumination_->destroy();
         pipelines_.destroy();
         textures_.destroy();
     }
 
     void LevelRenderer::refreshSwapchainResources() {
         context_.waitIdle();
+        globalIllumination_->invalidateHistory();
         imgui_.shutdown();
         destroyRenderResources();
         createRenderResources();
@@ -290,6 +318,12 @@ namespace lumin::render {
                                glm::dot(cameraForward, previousCameraForward_) < std::cos(glm::radians(20.0f)) ||
                                std::abs(camera.fieldOfViewDegrees() - previousFieldOfView_) > 1.0f ||
                                (!previousTaaEnabled_ && settings.enableTaa);
+        const bool globalIlluminationReenabled =
+            !previousGlobalIlluminationEnabled_ && settings.enableGlobalIllumination;
+        if (gi::shouldInvalidateHistory(gi::HistoryInvalidationState{
+                .cameraCut = cameraCut, .backendReenabled = globalIlluminationReenabled})) {
+            globalIllumination_->invalidateHistory();
+        }
         if (cameraCut) {
             textures_.invalidateHistory();
             frameNumber_ = 0;
@@ -322,9 +356,9 @@ namespace lumin::render {
         uniforms.renderSize =
             glm::vec4{static_cast<float>(extent.width), static_cast<float>(extent.height),
                       1.0f / static_cast<float>(extent.width), 1.0f / static_cast<float>(extent.height)};
-        uniforms.renderOptions =
-            glm::vec4{textures_.historyValid(historyReadIndex) ? 1.0f : 0.0f, settings.enableSsao ? 1.0f : 0.0f,
-                      settings.enableShadows ? 1.0f : 0.0f, settings.enableTaa ? 1.0f : 0.0f};
+        uniforms.renderOptions = glm::vec4{textures_.historyValid(historyReadIndex) ? 1.0f : 0.0f,
+                                           settings.enableGlobalIllumination ? 1.0f : 0.0f,
+                                           settings.enableShadows ? 1.0f : 0.0f, settings.enableTaa ? 1.0f : 0.0f};
         uniforms.tonemapOptions.x = settings.exposure;
         uniforms.tonemapOptions.y = isSrgbFormat(context_.swapchainFormat()) ? 1.0f : 0.0f;
         textures_.updatePostProcessUniforms(frameIndex, uniforms);
@@ -359,9 +393,10 @@ namespace lumin::render {
             textureDesc(frame.motion, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT));
         const auto depth = frameGraph_.importTexture(
             "gbuffer.depth", textureDesc(frame.depth, extent, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT));
-        const auto ambientOcclusion = frameGraph_.importTexture(
-            "ssao", textureDesc(frame.ambientOcclusion, extent,
-                                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT));
+        const auto globalIllumination = frameGraph_.importTexture(
+            "global-illumination.output",
+            textureDesc(frame.globalIllumination, extent,
+                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT));
         const auto lighting = frameGraph_.importTexture(
             "lighting.hdr",
             textureDesc(frame.lighting, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT));
@@ -426,20 +461,9 @@ namespace lumin::render {
                 recordGBufferPass(commandBuffer, frameIndex, viewProjection, previousViewProjection);
             });
 
-        frameGraph_.addPass(
-            "SSAO", FrameGraphPassType::Graphics,
-            [position, normal, ambientOcclusion](FrameGraphBuilder& builder) {
-                builder.readTexture(position, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
-                builder.readTexture(normal, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
-                builder.writeTexture(ambientOcclusion, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                     VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-            },
-            [this, commandBuffer, frameIndex](const FrameGraphContext&) {
-                recordSsaoPass(commandBuffer, frameIndex);
-            });
+        globalIllumination_->addPasses(
+            frameGraph_, gi::FrameInfo{level_, frameIndex, frameNumber_, settings.enableGlobalIllumination, cameraCut,
+                                       extent, position, normal, albedo, motion, depth, globalIllumination});
 
         frameGraph_.addPass(
             "Procedural sky", FrameGraphPassType::Graphics,
@@ -454,8 +478,8 @@ namespace lumin::render {
 
         frameGraph_.addPass(
             "Deferred lighting", FrameGraphPassType::Graphics,
-            [position, normal, albedo, ambientOcclusion, shadows, lighting](FrameGraphBuilder& builder) {
-                for (FrameGraphResourceHandle input : {position, normal, albedo, ambientOcclusion}) {
+            [position, normal, albedo, globalIllumination, shadows, lighting](FrameGraphBuilder& builder) {
+                for (FrameGraphResourceHandle input : {position, normal, albedo, globalIllumination}) {
                     builder.readTexture(input, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
                 }
@@ -553,6 +577,7 @@ namespace lumin::render {
         previousCameraForward_ = cameraForward;
         previousFieldOfView_ = camera.fieldOfViewDegrees();
         previousTaaEnabled_ = settings.enableTaa;
+        previousGlobalIlluminationEnabled_ = settings.enableGlobalIllumination;
         hasPreviousCamera_ = true;
         ++frameNumber_;
     }
@@ -622,13 +647,6 @@ namespace lumin::render {
             modelRenderer_->recordGBuffer(commandBuffer, frameIndex, viewProjection, previousViewProjection);
         }
         vkCmdEndRendering(commandBuffer);
-    }
-
-    void LevelRenderer::recordSsaoPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex) {
-        const TextureFrameResources& frame = textures_.frame(frameIndex);
-        recordFullscreen(commandBuffer, frame.ambientOcclusion.view, context_.swapchainExtent(), pipelines_.ssao(),
-                         textures_.descriptorSet(frameIndex), VK_ATTACHMENT_LOAD_OP_CLEAR,
-                         VkClearColorValue{{1.0f, 1.0f, 1.0f, 1.0f}});
     }
 
     void LevelRenderer::recordSkyPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex) {
