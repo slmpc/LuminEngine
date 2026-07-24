@@ -201,7 +201,7 @@ namespace lumin::editor {
         }
 
         void buildLayout(ImGuiID dockspace, const ImGuiViewport& viewport) {
-            const EditorLayoutMode mode = editorLayoutModeForExtent(viewport.WorkSize.x, viewport.WorkSize.y);
+            const EditorLayoutMode mode = editorLayoutModeForViewportSize(viewport.Size.x, viewport.Size.y);
             const bool transition = layoutLifecycle.update(ImGui::GetCurrentContext(), mode, style::LayoutSchema);
             if (!transition && ImGui::DockBuilderGetNode(dockspace) != nullptr) {
                 return;
@@ -209,7 +209,9 @@ namespace lumin::editor {
             if (ImGui::DockBuilderGetNode(dockspace) != nullptr) {
                 ImGui::DockBuilderRemoveNode(dockspace);
             }
-            ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderAddNode(dockspace,
+                                      ImGuiDockNodeFlags_DockSpace |
+                                          static_cast<ImGuiDockNodeFlags>(ImGuiDockNodeFlags_PassthruCentralNode));
             ImGui::DockBuilderSetNodePos(dockspace, viewport.WorkPos);
             ImGui::DockBuilderSetNodeSize(dockspace, viewport.WorkSize);
 
@@ -236,7 +238,6 @@ namespace lumin::editor {
                 ImGui::DockBuilderDockWindow("Render / GI", renderGi);
                 ImGui::DockBuilderDockWindow("Script Console", bottom);
             }
-            ImGui::DockBuilderDockWindow("Viewport", center);
             ImGui::DockBuilderFinish(dockspace);
         }
 
@@ -348,12 +349,17 @@ namespace lumin::editor {
             ImGui::End();
         }
 
-        void drawViewport() {
+        void drawViewport(ImGuiID dockspace, const ImGuiViewport& viewport) {
             constexpr ImGuiWindowFlags flags =
-                ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+                ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
+            const ImGuiDockNode* center = ImGui::DockBuilderGetCentralNode(dockspace);
+            ImGui::SetNextWindowPos(center != nullptr ? center->Pos : viewport.Pos);
+            ImGui::SetNextWindowSize(center != nullptr ? center->Size : viewport.Size);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {style::Space0, style::Space0});
             ImGui::Begin("Viewport", nullptr, flags);
-            ImGui::Dummy(ImGui::GetContentRegionAvail());
+            ImGui::SetCursorPos({style::Space2, style::Space2});
+            ImGui::TextDisabled("Viewport");
             ImGui::End();
             ImGui::PopStyleVar();
         }
@@ -545,7 +551,7 @@ namespace lumin::editor {
         ImGui::DockSpaceOverViewport(dockspace, viewport, ImGuiDockNodeFlags_PassthruCentralNode);
         impl_->drawHierarchy();
         impl_->drawInspector();
-        impl_->drawViewport();
+        impl_->drawViewport(dockspace, *viewport);
         impl_->drawRenderSettings();
         impl_->drawConsole();
     }

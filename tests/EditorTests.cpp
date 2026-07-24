@@ -113,12 +113,19 @@ namespace {
         using lumin::editor::EditorLayoutLifecycle;
         using lumin::editor::EditorLayoutMode;
         using lumin::editor::editorLayoutModeForExtent;
+        using lumin::editor::editorLayoutModeForViewportSize;
 
         require(editorLayoutModeForExtent(1280.0f, 720.0f) == EditorLayoutMode::Full,
                 "The design-system minimum extent must use the full layout.");
         require(editorLayoutModeForExtent(1279.0f, 720.0f) == EditorLayoutMode::Compact &&
                     editorLayoutModeForExtent(1280.0f, 719.0f) == EditorLayoutMode::Compact,
                 "Crossing either minimum extent must select compact layout.");
+        require(editorLayoutModeForViewportSize(1280.0f, 720.0f) == EditorLayoutMode::Full &&
+                    editorLayoutModeForViewportSize(1276.0f, 711.0f) == EditorLayoutMode::Full,
+                "A native 1280x720 viewport must remain full when constrained by desktop chrome.");
+        require(editorLayoutModeForViewportSize(1275.0f, 711.0f) == EditorLayoutMode::Compact &&
+                    editorLayoutModeForViewportSize(1200.0f, 680.0f) == EditorLayoutMode::Compact,
+                "Viewports smaller than the tolerated desktop size must use compact layout.");
 
         EditorLayoutLifecycle lifecycle;
         const auto* firstContext = reinterpret_cast<const void*>(1);

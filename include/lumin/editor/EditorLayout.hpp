@@ -4,6 +4,8 @@ namespace lumin::editor {
 
     inline constexpr float EditorFullLayoutWidth = 1280.0f;
     inline constexpr float EditorFullLayoutHeight = 720.0f;
+    inline constexpr float EditorFullLayoutWidthTolerance = 4.0f;
+    inline constexpr float EditorFullLayoutHeightTolerance = 9.0f;
 
     enum class EditorLayoutMode {
         Full,
@@ -13,6 +15,11 @@ namespace lumin::editor {
     [[nodiscard]] constexpr EditorLayoutMode editorLayoutModeForExtent(float width, float height) noexcept {
         return width >= EditorFullLayoutWidth && height >= EditorFullLayoutHeight ? EditorLayoutMode::Full
                                                                                   : EditorLayoutMode::Compact;
+    }
+
+    [[nodiscard]] constexpr EditorLayoutMode editorLayoutModeForViewportSize(float width, float height) noexcept {
+        return editorLayoutModeForExtent(width + EditorFullLayoutWidthTolerance,
+                                         height + EditorFullLayoutHeightTolerance);
     }
 
     class EditorLayoutLifecycle {
