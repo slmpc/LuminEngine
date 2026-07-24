@@ -1,11 +1,28 @@
 # Lumin 渲染架构
 
+## 应用与游戏边界
+
+依赖方向固定为 `Lumin::Runtime` -> `Lumin::Rendering` -> `Lumin::GameEngine`。`Lumin::Scripting` 基于 Runtime，
+`Lumin::Editor` 基于 Rendering 与 Scripting；Rendering 不依赖 Editor、Scripting 或 GameEngine。`Application` 的公共头
+使用 PImpl，只公开窗口配置、脚本配置和 `Game` 注入点，不泄露 SDL、Vulkan、renderer 或场景的具体所有权。
+
+`Application` 拥有窗口、Vulkan 上下文、`Level`、`Camera`、`ScriptRuntime`、`LevelRenderer` 和 `Editor`。
+具体游戏通过 `GameContext` 只接收 `Level`、`Camera` 与 `ScriptRuntime`，因此场景初始化和逐帧逻辑可以脱离 Vulkan
+测试。沙盒的 OBJ 选择、回退网格、材质和地形全部位于 `apps/sandbox/SandboxGame.*`，不属于通用应用宿主。
+
+renderer 创建后会安装 idle 守卫，正常退出或异常展开都会先调用 `waitIdle()`；成员销毁顺序保证 Editor 和 renderer
+先于 Vulkan 上下文与窗口关闭。
+
 ## 场景更新
 
 `Level` 管理网格、模型实例和 Actor。Actor 句柄包含索引和代数，因此槽位复用后，旧句柄不会解析到新对象。
 在 `tick`、`onSpawn` 或 `onDestroy` 中发起的生成与销毁请求会延迟处理，直到当前回调遍历可以安全提交变更。
 
-`Application` 更新相机输入，调用 `Level::tick(deltaSeconds)`，然后执行渲染。模型变换和材质变化会递增
+`Application` 先处理 SDL 事件并调用 `beginUiFrame(editor)` 构建当前 ImGui 帧，再读取当前帧 capture 状态。
+UI 未捕获输入时才更新相机和派发 `GameInput`，随后始终调用 `Game::tick`、`Level::tick(deltaSeconds)` 和渲染。
+因此，即使编辑器捕获输入，游戏模拟、Actor 与 Lua 生命周期仍会推进。`drawFrame` 只消费已经准备的 UI 帧；旧调用方
+未显式准备时由 renderer 兼容性补建。交换链图像获取提前返回时会取消该 UI 帧，避免重复 `NewFrame` 或遗留活动帧。
+模型变换和材质变化会递增
 `modelRevision`；网格或模型成员变化会递增 `topologyRevision`。PBR 纹理路径变化也会递增 `topologyRevision`，
 因为材质纹理数组和 descriptor 需要重建；纯标量材质变化只更新对象 buffer。`LevelRenderer` 每帧上传对象记录，
 仅在拓扑修订号发生变化时重新构建打包后的几何数据和材质资源。
@@ -53,6 +70,19 @@ metallic/AO 贴图时分别使用介电常量和默认 SSAO 后端。OBJ 没有 
 
 相机切换、场景拓扑变化、全局光照从关闭切换到开启以及交换链重建都会使后端历史失效。无时序历史的 SSAO 后端
 忽略失效通知；时序后端必须在下一帧从无历史状态重新开始。
+
+GameEngine 只通过 `LevelRenderer::globalIlluminationBackendInfo()` 向 Editor 提供只读后端信息；切换开关写入
+`RenderSettings`。该接缝不会让 Rendering 反向依赖 Editor，也不会让游戏代码接触 Vulkan 后端实现。
+
+## Lua 与编辑器工作流
+
+启动时，`Application` 先调用 `Game::initialize` 组装场景，再通过自身拥有的 `ScriptRuntime` 加载可选启动脚本。
+`scriptRoot` 是脚本文件访问边界。`--script <path>` 与 `--script=<path>` 都会将显式脚本所在目录设为根目录；默认值为
+`apps/sandbox/scripts/sandbox.lua`。加载失败会终止启动并报告源路径，事务式加载保证失败脚本不留下 Actor。
+
+同一个 `ScriptRuntime` 被传给 `Game` 和 `Editor`。编辑器可以查看脚本与诊断、重新加载变更并执行 Lua 控制台命令；
+Scene 面板选择仍引用同一个 `Level`。每帧渲染调用 `drawFrame(camera, settings, editor)`，因此编辑器与游戏视图共享渲染
+设置和后端状态。ImGui SDL3 后端负责文本输入与 IME，应用层不重复调用 SDL 文本输入 API。
 
 ## 级联阴影
 

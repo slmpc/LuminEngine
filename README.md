@@ -10,7 +10,7 @@ Lumin Engine 是一个使用 C++20、SDL3、Slang 和动态渲染构建的紧凑
 - 支持 sRGB base color、切线空间 normal 和 roughness 贴图，以及 GGX/Cook-Torrance PBR 光照。
 - 四级联方向光阴影、可替换的全局光照后端（默认使用 SSAO）和程序化天空盒。
 - 使用 Halton 抖动，并结合上一帧相机与模型运动矢量的 TAA。
-- ACES 色调映射，以及用于运行时调整渲染设置的 ImGui 面板。
+- ACES 色调映射，以及用于编辑场景、渲染设置和 Lua 脚本的原生停靠式编辑器。
 
 ## 目录结构
 
@@ -51,6 +51,16 @@ cmake --build out/build/debug
 .\out\build\debug\LuminEngine.exe
 ```
 
+沙盒默认加载仓库内的 `apps/sandbox/scripts/sandbox.lua`。也可以用以下两种等价形式指定启动脚本：
+
+```powershell
+.\out\build\debug\LuminEngine.exe --script .\my-game\startup.lua
+.\out\build\debug\LuminEngine.exe --script=.\my-game\startup.lua
+```
+
+显式脚本路径的父目录会成为该次运行的 `scriptRoot`。脚本及其派生加载只能访问此目录内的文件；缺失、语法错误或
+越界路径会在启动时返回明确错误，且不会留下无主的脚本 Actor。
+
 也可以使用 OBJ 文件替换默认模型：
 
 ```powershell
@@ -74,7 +84,9 @@ Debug 配置过程还会生成 `out/build/debug/compile_commands.json`。本地 
 cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
-使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。ImGui 面板可调整相机速度、CSM、全局光照、TAA、曝光和太阳方向。
+使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。编辑器面板可选择 Actor、模型或脚本，修改变换与材质，调整相机、
+CSM、全局光照、TAA、曝光和太阳方向，并在 Lua 控制台执行表达式（例如 `return 6 * 7`）。当编辑器正在接收键盘、
+鼠标或文本输入时，应用会抑制 `Escape` 和相机控制，但不会暂停 `Game::tick`、`Level::tick` 或 Lua 生命周期。
 
 如果未提供 OBJ 路径，沙盒会优先加载 `assets/models/stanford-bunny.obj`；该文件不可用时则使用内置立方体。
 场景还会创建一个程序化地形 Actor 和第二个内置网格。
@@ -101,6 +113,6 @@ ctest --test-dir out\build\debug --output-on-failure
 ```
 
 测试覆盖相机移动、`Level`/模型修订号、Actor 生命周期与延迟变更、地形生成与高度采样、PBR 图像解码、
-缺失 UV 生成、渲染器材质批次构建和全局光照后端契约。
+缺失 UV 生成、渲染器材质批次构建、全局光照后端契约、无 Vulkan 的 `Game` 生命周期、启动脚本错误隔离和输入路由。
 
 有关渲染通道顺序、时序历史约定和资源所有权模型，请参阅 `docs/rendering-architecture.md`。
