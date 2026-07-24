@@ -179,7 +179,6 @@ target_link_libraries(lumin_game_engine
 target_compile_definitions(lumin_game_engine
     PRIVATE
         $<$<CONFIG:Debug>:LUMIN_ENABLE_VALIDATION>
-        LUMIN_ASSET_DIR="${LUMIN_ASSET_DIR_CMAKE}"
         LUMIN_SHADER_DIR="${LUMIN_SHADER_OUTPUT_DIR_CMAKE}"
 )
 
@@ -188,8 +187,16 @@ add_library(Lumin::Engine ALIAS lumin_engine)
 target_link_libraries(lumin_engine INTERFACE Lumin::GameEngine)
 
 if(LUMIN_BUILD_SANDBOX)
-    add_executable(lumin_sandbox apps/sandbox/main.cpp)
+    add_executable(lumin_sandbox
+        apps/sandbox/main.cpp
+        apps/sandbox/SandboxGame.cpp
+    )
     target_link_libraries(lumin_sandbox PRIVATE Lumin::GameEngine)
+    file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/apps/sandbox/scripts" LUMIN_SANDBOX_SCRIPT_DIR_CMAKE)
+    target_compile_definitions(lumin_sandbox PRIVATE
+        LUMIN_ASSET_DIR="${LUMIN_ASSET_DIR_CMAKE}"
+        LUMIN_SANDBOX_SCRIPT_DIR="${LUMIN_SANDBOX_SCRIPT_DIR_CMAKE}"
+    )
     add_dependencies(lumin_sandbox lumin_shaders)
     set_target_properties(lumin_sandbox PROPERTIES OUTPUT_NAME LuminEngine)
 endif()
@@ -203,6 +210,10 @@ if(LUMIN_BUILD_TESTS)
         LUMIN_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     )
     add_test(NAME CameraLevel COMMAND lumin_tests)
+
+    add_executable(lumin_game_engine_tests tests/GameEngineIntegrationTests.cpp)
+    target_link_libraries(lumin_game_engine_tests PRIVATE Lumin::GameEngine)
+    add_test(NAME GameEngineIntegration COMMAND lumin_game_engine_tests)
 endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/LuminDescriptorIndexing.cmake")

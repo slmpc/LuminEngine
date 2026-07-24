@@ -28,11 +28,14 @@ namespace lumin::render {
         void initialize(platform::Window& window, VulkanContext& context);
         void shutdown();
         void beginFrame(ImGuiContent* content = nullptr);
+        void cancelFrame() noexcept;
         void record(VkCommandBuffer commandBuffer, VkImageView targetView, VkExtent2D extent);
+        [[nodiscard]] bool framePrepared() const noexcept;
         [[nodiscard]] ImGuiCaptureState captureState() const noexcept;
 
     private:
         ImGuiLayer layer_;
+        bool framePrepared_ = false;
     };
 
 } // namespace lumin::render

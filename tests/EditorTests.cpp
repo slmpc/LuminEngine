@@ -5,6 +5,7 @@
 #include "lumin/render/ImGuiContent.hpp"
 #include "lumin/render/ImGuiLayer.hpp"
 #include "lumin/render/ImGuiManager.hpp"
+#include "lumin/render/LevelRenderer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -12,6 +13,10 @@
 #include <stdexcept>
 
 namespace {
+
+    static_assert(requires(lumin::render::LevelRenderer& renderer, lumin::render::ImGuiContent* content) {
+        renderer.beginUiFrame(content);
+    });
 
     class TestActor final : public lumin::scene::Actor {};
 

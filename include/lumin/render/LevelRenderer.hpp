@@ -39,6 +39,8 @@ namespace lumin::render {
         LevelRenderer(const LevelRenderer&) = delete;
         LevelRenderer& operator=(const LevelRenderer&) = delete;
 
+        void beginUiFrame(ImGuiContent* content = nullptr);
+        void cancelUiFrame() noexcept;
         void drawFrame(scene::Camera& camera, RenderSettings& settings, ImGuiContent* content = nullptr);
         void waitIdle() const;
 

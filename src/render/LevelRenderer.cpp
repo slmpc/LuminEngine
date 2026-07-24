@@ -208,6 +208,17 @@ namespace lumin::render {
         destroyRenderResources();
     }
 
+    void LevelRenderer::beginUiFrame(ImGuiContent* content) {
+        if (swapchainGeneration_ != context_.swapchainGeneration()) {
+            refreshSwapchainResources();
+        }
+        imgui_.beginFrame(content);
+    }
+
+    void LevelRenderer::cancelUiFrame() noexcept {
+        imgui_.cancelFrame();
+    }
+
     void LevelRenderer::drawFrame(scene::Camera& camera, RenderSettings& settings, ImGuiContent* content) {
         if (swapchainGeneration_ != context_.swapchainGeneration()) {
             refreshSwapchainResources();
@@ -221,13 +232,17 @@ namespace lumin::render {
             hasPreviousCamera_ = false;
         }
 
+        if (!imgui_.framePrepared()) {
+            imgui_.beginFrame(content);
+        }
+
         const std::optional<VulkanFrame> frame = context_.beginFrame();
         if (!frame.has_value()) {
+            imgui_.cancelFrame();
             refreshSwapchainResources();
             return;
         }
 
-        imgui_.beginFrame(content);
         recordCommandBuffer(frame->commandBuffer, frame->frameIndex, frame->imageIndex, camera, settings);
         if (context_.submitFrame(*frame)) {
             refreshSwapchainResources();

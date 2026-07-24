@@ -5,13 +5,7 @@
 #include <optional>
 #include <string>
 
-#include "lumin/assets/ObjLoader.hpp"
-#include "lumin/platform/RenderDocAttachment.hpp"
-#include "lumin/platform/Window.hpp"
-#include "lumin/render/LevelRenderer.hpp"
-#include "lumin/render/VulkanContext.hpp"
-#include "lumin/scene/Camera.hpp"
-#include "lumin/scene/Level.hpp"
+#include "lumin/game/Game.hpp"
 
 namespace lumin::core {
 
@@ -19,14 +13,15 @@ namespace lumin::core {
         int width = 1280;
         int height = 720;
         std::string title = "Lumin Engine";
-        std::optional<std::filesystem::path> objPath;
+        std::filesystem::path scriptRoot;
+        std::optional<std::filesystem::path> startupScript;
         bool enableRenderDoc = false;
         std::optional<std::filesystem::path> renderDocPath;
     };
 
     class Application {
     public:
-        explicit Application(ApplicationConfig config);
+        Application(ApplicationConfig config, std::unique_ptr<game::Game> game);
         ~Application();
 
         Application(const Application&) = delete;
@@ -35,16 +30,8 @@ namespace lumin::core {
         int run();
 
     private:
-        void loadScene();
-
-        ApplicationConfig config_;
-        platform::RenderDocAttachment renderDoc_;
-        platform::Window window_;
-        render::VulkanContext vulkan_;
-        scene::Level level_;
-        scene::Camera camera_;
-        std::unique_ptr<render::LevelRenderer> renderer_;
-        render::RenderSettings renderSettings_;
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
     };
 
 } // namespace lumin::core

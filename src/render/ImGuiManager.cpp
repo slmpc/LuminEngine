@@ -3,6 +3,8 @@
 #include "lumin/platform/Window.hpp"
 #include "lumin/render/VulkanContext.hpp"
 
+#include <imgui.h>
+
 namespace lumin::render {
 
     ImGuiManager::~ImGuiManager() {
@@ -10,6 +12,7 @@ namespace lumin::render {
     }
 
     void ImGuiManager::initialize(platform::Window& window, VulkanContext& context) {
+        shutdown();
         ImGuiLayerConfig config;
         config.apiVersion = context.apiVersion();
         config.instance = context.instance();
@@ -27,21 +30,36 @@ namespace lumin::render {
     }
 
     void ImGuiManager::shutdown() {
+        cancelFrame();
         layer_.shutdown();
     }
 
     void ImGuiManager::beginFrame(ImGuiContent* content) {
-        if (!layer_.initialized()) {
+        if (!layer_.initialized() || framePrepared_) {
             return;
         }
         layer_.newFrame();
-        if (content != nullptr) {
-            content->draw();
+        framePrepared_ = true;
+        try {
+            if (content != nullptr) {
+                content->draw();
+            }
+        } catch (...) {
+            cancelFrame();
+            throw;
         }
     }
 
+    void ImGuiManager::cancelFrame() noexcept {
+        if (!framePrepared_) {
+            return;
+        }
+        ImGui::EndFrame();
+        framePrepared_ = false;
+    }
+
     void ImGuiManager::record(VkCommandBuffer commandBuffer, VkImageView targetView, VkExtent2D extent) {
-        if (!layer_.initialized()) {
+        if (!layer_.initialized() || !framePrepared_) {
             return;
         }
         VkRenderingAttachmentInfo colorAttachment{};
@@ -58,7 +76,12 @@ namespace lumin::render {
         renderingInfo.pColorAttachments = &colorAttachment;
         vkCmdBeginRendering(commandBuffer, &renderingInfo);
         layer_.render(commandBuffer);
+        framePrepared_ = false;
         vkCmdEndRendering(commandBuffer);
+    }
+
+    bool ImGuiManager::framePrepared() const noexcept {
+        return framePrepared_;
     }
 
     ImGuiCaptureState ImGuiManager::captureState() const noexcept {
