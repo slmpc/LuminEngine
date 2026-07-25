@@ -35,6 +35,7 @@ find_package(Vulkan REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
+find_package(nvrhi CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 
@@ -86,6 +87,12 @@ lumin_add_slang_graphics_shader(
 lumin_add_slang_graphics_shader(
     OUTPUT_VARIABLE LUMIN_SHADER_OUTPUTS
     SOURCE "${LUMIN_SHADER_SOURCE_DIR}/taa.slang"
+    OUTPUT_DIRECTORY "${LUMIN_SHADER_OUTPUT_DIR}"
+    MATRIX_LAYOUT column-major
+)
+lumin_add_slang_graphics_shader(
+    OUTPUT_VARIABLE LUMIN_SHADER_OUTPUTS
+    SOURCE "${LUMIN_SHADER_SOURCE_DIR}/imgui.slang"
     OUTPUT_DIRECTORY "${LUMIN_SHADER_OUTPUT_DIR}"
     MATRIX_LAYOUT column-major
 )
@@ -152,11 +159,15 @@ target_link_libraries(lumin_render_engine
     PUBLIC
         Lumin::Runtime
         Vulkan::Vulkan
+        nvrhi
+        nvrhi_vk
     PRIVATE
         SDL3::SDL3
         imgui::imgui
         ${CMAKE_DL_LIBS}
 )
+target_compile_definitions(lumin_render_engine PRIVATE LUMIN_SHADER_DIR="${LUMIN_SHADER_OUTPUT_DIR_CMAKE}")
+add_dependencies(lumin_render_engine lumin_shaders)
 
 if(WIN32)
     target_compile_definitions(lumin_render_engine PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -203,6 +214,51 @@ endif()
 
 if(LUMIN_BUILD_TESTS)
     enable_testing()
+    add_executable(lumin_nvrhi_dependency_tests tests/NvrhiDependencyTests.cpp)
+    target_link_libraries(lumin_nvrhi_dependency_tests PRIVATE nvrhi nvrhi_vk)
+    add_test(NAME NvrhiDependency COMMAND lumin_nvrhi_dependency_tests)
+
+    add_executable(lumin_nvrhi_backend_tests tests/NvrhiBackendTests.cpp)
+    target_include_directories(lumin_nvrhi_backend_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(lumin_nvrhi_backend_tests PRIVATE Vulkan::Vulkan nvrhi nvrhi_vk)
+    add_test(NAME NvrhiBackend COMMAND lumin_nvrhi_backend_tests)
+
+    add_executable(lumin_frame_graph_tests tests/FrameGraphTests.cpp src/render/FrameGraph.cpp)
+    target_include_directories(lumin_frame_graph_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(lumin_frame_graph_tests PRIVATE nvrhi)
+    if(WIN32)
+        target_compile_definitions(lumin_frame_graph_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    add_test(NAME FrameGraphNvRhiManualBarriers COMMAND lumin_frame_graph_tests)
+
+    add_executable(lumin_nvrhi_resource_tests tests/NvrhiResourceTests.cpp)
+    target_include_directories(lumin_nvrhi_resource_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(lumin_nvrhi_resource_tests PRIVATE nvrhi)
+    add_test(NAME NvrhiResource COMMAND lumin_nvrhi_resource_tests)
+
+    add_executable(lumin_nvrhi_pipeline_tests tests/NvrhiPipelineTests.cpp)
+    target_include_directories(lumin_nvrhi_pipeline_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(lumin_nvrhi_pipeline_tests
+        PRIVATE LUMIN_TEST_SHADER_DIR="${LUMIN_SHADER_OUTPUT_DIR_CMAKE}"
+    )
+    target_link_libraries(lumin_nvrhi_pipeline_tests PRIVATE nvrhi)
+    add_dependencies(lumin_nvrhi_pipeline_tests lumin_shaders)
+    add_test(NAME NvrhiPipeline COMMAND lumin_nvrhi_pipeline_tests)
+
+    add_executable(lumin_imgui_renderer_tests
+        tests/ImGuiRendererTests.cpp
+        src/platform/Window.cpp
+        src/render/ImGuiLayer.cpp
+        src/render/ShaderLibrary.cpp
+    )
+    target_include_directories(lumin_imgui_renderer_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(lumin_imgui_renderer_tests PRIVATE Vulkan::Vulkan SDL3::SDL3 imgui::imgui nvrhi)
+    target_compile_definitions(lumin_imgui_renderer_tests PRIVATE LUMIN_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    if(WIN32)
+        target_compile_definitions(lumin_imgui_renderer_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    add_test(NAME ImGuiRenderer COMMAND lumin_imgui_renderer_tests)
+
     add_executable(lumin_tests tests/CameraLevelTests.cpp)
     target_link_libraries(lumin_tests PRIVATE Lumin::Rendering)
     target_compile_definitions(lumin_tests PRIVATE
@@ -214,6 +270,21 @@ if(LUMIN_BUILD_TESTS)
     add_executable(lumin_game_engine_tests tests/GameEngineIntegrationTests.cpp)
     target_link_libraries(lumin_game_engine_tests PRIVATE Lumin::GameEngine)
     add_test(NAME GameEngineIntegration COMMAND lumin_game_engine_tests)
+
+    add_executable(lumin_level_renderer_tests tests/LevelRendererTests.cpp)
+    target_compile_features(lumin_level_renderer_tests PRIVATE cxx_std_20)
+    target_compile_definitions(lumin_level_renderer_tests PRIVATE LUMIN_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME LevelRendererRecorder COMMAND lumin_level_renderer_tests)
+
+    add_executable(lumin_render_backend_policy_tests tests/RenderBackendPolicyTests.cpp)
+    target_compile_features(lumin_render_backend_policy_tests PRIVATE cxx_std_20)
+    target_include_directories(lumin_render_backend_policy_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(lumin_render_backend_policy_tests
+        PRIVATE LUMIN_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_test(NAME RenderBackendPolicy COMMAND lumin_render_backend_policy_tests)
 endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/LuminDescriptorIndexing.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/LuminTextureManagerTests.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/LuminModelRendererNvrhiTests.cmake")

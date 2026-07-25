@@ -1,8 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
-#include <vulkan/vulkan.h>
+#include <nvrhi/nvrhi.h>
 
 #include "lumin/render/ImGuiContent.hpp"
 #include "lumin/render/ImGuiLayer.hpp"
@@ -13,9 +14,6 @@ namespace lumin::platform {
 
 namespace lumin::render {
     class VulkanContext;
-}
-
-namespace lumin::render {
 
     class ImGuiManager {
     public:
@@ -29,13 +27,17 @@ namespace lumin::render {
         void shutdown();
         void beginFrame(ImGuiContent* content = nullptr);
         void cancelFrame() noexcept;
-        void record(VkCommandBuffer commandBuffer, VkImageView targetView, VkExtent2D extent);
+        void record(nvrhi::ICommandList& commandList, std::uint32_t imageIndex, std::uint32_t frameSlot);
         [[nodiscard]] bool framePrepared() const noexcept;
         [[nodiscard]] ImGuiCaptureState captureState() const noexcept;
+        [[nodiscard]] nvrhi::ITexture* fontTexture() const noexcept;
+        [[nodiscard]] nvrhi::ResourceStates fontTextureInitialState() const noexcept;
+        void markFontTextureInitialized() noexcept;
 
     private:
         ImGuiLayer layer_;
+        std::vector<nvrhi::FramebufferHandle> framebuffers_;
         bool framePrepared_ = false;
     };
 
-} // namespace lumin::render
+}

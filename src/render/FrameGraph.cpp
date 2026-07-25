@@ -22,14 +22,8 @@ namespace lumin::render {
             return (static_cast<std::uint64_t>(from) << 32U) | static_cast<std::uint64_t>(to);
         }
 
-        VkPipelineStageFlags fallbackStage(VkPipelineStageFlags stage) {
-            return stage == 0 ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : stage;
-        }
-
         struct RuntimeResourceState {
-            VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
-            VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-            VkAccessFlags access = 0;
+            nvrhi::ResourceStates state = nvrhi::ResourceStates::Unknown;
             FrameGraphAccess graphAccess = FrameGraphAccess::Read;
             bool hasUsage = false;
         };
@@ -38,13 +32,43 @@ namespace lumin::render {
             return state.hasUsage && (isWriteAccess(state.graphAccess) || isWriteAccess(access));
         }
 
-        void updateRuntimeState(RuntimeResourceState& state, VkPipelineStageFlags stage, VkAccessFlags access,
-                                FrameGraphAccess graphAccess, VkImageLayout layout) {
-            state.layout = layout;
-            state.stage = fallbackStage(stage);
-            state.access = access;
-            state.graphAccess = graphAccess;
-            state.hasUsage = true;
+        class NvrhiBarrierRecorder final : public FrameGraphBarrierRecorder {
+        public:
+            explicit NvrhiBarrierRecorder(nvrhi::ICommandList* commandList)
+                : commandList_(commandList) {
+            }
+
+            void beginTrackingTextureState(nvrhi::ITexture* texture, nvrhi::TextureSubresourceSet subresources,
+                                           nvrhi::ResourceStates state) override {
+                commandList_->beginTrackingTextureState(texture, subresources, state);
+            }
+
+            void beginTrackingBufferState(nvrhi::IBuffer* buffer, nvrhi::ResourceStates state) override {
+                commandList_->beginTrackingBufferState(buffer, state);
+            }
+
+            void setTextureState(nvrhi::ITexture* texture, nvrhi::TextureSubresourceSet subresources,
+                                 nvrhi::ResourceStates state) override {
+                commandList_->setTextureState(texture, subresources, state);
+            }
+
+            void setBufferState(nvrhi::IBuffer* buffer, nvrhi::ResourceStates state) override {
+                commandList_->setBufferState(buffer, state);
+            }
+
+            void commitBarriers() override {
+                commandList_->commitBarriers();
+            }
+
+        private:
+            nvrhi::ICommandList* commandList_ = nullptr;
+        };
+
+        void updateRuntimeState(RuntimeResourceState& runtimeState, nvrhi::ResourceStates state,
+                                FrameGraphAccess graphAccess) {
+            runtimeState.state = state;
+            runtimeState.graphAccess = graphAccess;
+            runtimeState.hasUsage = true;
         }
 
     } // namespace
@@ -61,32 +85,26 @@ namespace lumin::render {
         : graph_(graph), passIndex_(passIndex) {
     }
 
-    void FrameGraphBuilder::read(FrameGraphResourceHandle resource, VkPipelineStageFlags stages, VkAccessFlags access) {
-        graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::Read, stages, access});
+    void FrameGraphBuilder::read(FrameGraphResourceHandle resource, nvrhi::ResourceStates state) {
+        graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::Read, state});
     }
 
-    void FrameGraphBuilder::write(FrameGraphResourceHandle resource, VkPipelineStageFlags stages,
-                                  VkAccessFlags access) {
-        graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::Write, stages, access});
+    void FrameGraphBuilder::write(FrameGraphResourceHandle resource, nvrhi::ResourceStates state) {
+        graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::Write, state});
     }
 
-    void FrameGraphBuilder::readWrite(FrameGraphResourceHandle resource, VkPipelineStageFlags stages,
-                                      VkAccessFlags access) {
-        graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::ReadWrite, stages, access});
+    void FrameGraphBuilder::readWrite(FrameGraphResourceHandle resource, nvrhi::ResourceStates state) {
+        graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::ReadWrite, state});
     }
 
-    void FrameGraphBuilder::readTexture(FrameGraphResourceHandle resource, VkImageLayout layout,
-                                        VkPipelineStageFlags stages, VkAccessFlags access,
-                                        VkImageAspectFlags aspectMask) {
-        graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::Read, stages, access, layout,
-                                                              aspectMask});
+    void FrameGraphBuilder::readTexture(FrameGraphResourceHandle resource, nvrhi::ResourceStates state,
+                                        nvrhi::TextureSubresourceSet subresources) {
+        graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::Read, state, subresources});
     }
 
-    void FrameGraphBuilder::writeTexture(FrameGraphResourceHandle resource, VkImageLayout layout,
-                                         VkPipelineStageFlags stages, VkAccessFlags access,
-                                         VkImageAspectFlags aspectMask) {
-        graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::Write, stages, access, layout,
-                                                              aspectMask});
+    void FrameGraphBuilder::writeTexture(FrameGraphResourceHandle resource, nvrhi::ResourceStates state,
+                                         nvrhi::TextureSubresourceSet subresources) {
+        graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::Write, state, subresources});
     }
 
     FrameGraphResourceHandle FrameGraph::importBuffer(std::string name, const FrameGraphBufferDesc& desc) {
@@ -215,82 +233,54 @@ namespace lumin::render {
             compile();
         }
 
+        NvrhiBarrierRecorder commandListBarriers(context.commandList);
+        FrameGraphBarrierRecorder* barriers = context.barriers;
+        if (barriers == nullptr && context.commandList != nullptr) {
+            barriers = &commandListBarriers;
+        }
+
         std::vector<RuntimeResourceState> states(resources_.size());
-        for (std::size_t i = 0; i < resources_.size(); ++i) {
-            states[i].layout = resources_[i].texture.initialLayout;
-            if (resources_[i].kind == FrameGraphResourceKind::Texture &&
-                resources_[i].texture.initialLayout != VK_IMAGE_LAYOUT_UNDEFINED) {
-                states[i].stage = fallbackStage(resources_[i].texture.initialStages);
-                states[i].access = resources_[i].texture.initialAccess;
-                states[i].graphAccess = FrameGraphAccess::Read;
-                states[i].hasUsage = true;
+        for (std::size_t resourceIndex = 0; resourceIndex < resources_.size(); ++resourceIndex) {
+            const ResourceNode& resource = resources_[resourceIndex];
+            if (resource.kind == FrameGraphResourceKind::Texture) {
+                states[resourceIndex].state = resource.texture.initialState;
+                if (barriers != nullptr && resource.texture.texture != nullptr) {
+                    barriers->beginTrackingTextureState(resource.texture.texture, resource.texture.subresources,
+                                                        resource.texture.initialState);
+                }
+            } else {
+                states[resourceIndex].state = resource.buffer.initialState;
+                if (barriers != nullptr && resource.buffer.buffer != nullptr) {
+                    barriers->beginTrackingBufferState(resource.buffer.buffer, resource.buffer.initialState);
+                }
             }
         }
 
-        auto issueTextureBarrier = [&](const ResourceNode& resource, ResourceUsage usage, RuntimeResourceState& state) {
-            if (context.commandBuffer == VK_NULL_HANDLE || resource.kind != FrameGraphResourceKind::Texture ||
-                resource.texture.image == VK_NULL_HANDLE || usage.imageLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
-                updateRuntimeState(state, usage.stages, usage.vkAccess, usage.access, state.layout);
-                return;
+        auto issueTextureBarrier = [&](const ResourceNode& resource, const ResourceUsage& usage,
+                                       RuntimeResourceState& runtimeState) {
+            const bool stateChanged = runtimeState.state != usage.state;
+            const bool memoryDependency = needsMemoryDependency(runtimeState, usage.access);
+            if (barriers != nullptr && resource.texture.texture != nullptr && (stateChanged || memoryDependency)) {
+                if (!stateChanged && usage.state != nvrhi::ResourceStates::Common) {
+                    barriers->setTextureState(resource.texture.texture, usage.subresources,
+                                              nvrhi::ResourceStates::CopySource);
+                }
+                barriers->setTextureState(resource.texture.texture, usage.subresources, usage.state);
             }
-
-            const bool layoutChanged = state.layout != usage.imageLayout;
-            const bool memoryDependency = needsMemoryDependency(state, usage.access);
-            if (!layoutChanged && !memoryDependency) {
-                updateRuntimeState(state, usage.stages, usage.vkAccess, usage.access, usage.imageLayout);
-                return;
-            }
-
-            // FrameGraph 统一管理 image barrier；layout 不变但存在读写 hazard 时也会插入内存依赖。
-            VkImageMemoryBarrier barrier{};
-            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barrier.srcAccessMask = !state.hasUsage || state.layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : state.access;
-            barrier.dstAccessMask = usage.vkAccess;
-            barrier.oldLayout = state.layout;
-            barrier.newLayout = usage.imageLayout;
-            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.image = resource.texture.image;
-            barrier.subresourceRange.aspectMask =
-                usage.aspectMask != 0 ? usage.aspectMask : resource.texture.aspectMask;
-            barrier.subresourceRange.baseMipLevel = 0;
-            barrier.subresourceRange.levelCount = resource.texture.mipLevels;
-            barrier.subresourceRange.baseArrayLayer = 0;
-            barrier.subresourceRange.layerCount = 1;
-
-            vkCmdPipelineBarrier(context.commandBuffer, fallbackStage(state.stage), fallbackStage(usage.stages), 0, 0,
-                                 nullptr, 0, nullptr, 1, &barrier);
-
-            updateRuntimeState(state, usage.stages, usage.vkAccess, usage.access, usage.imageLayout);
+            updateRuntimeState(runtimeState, usage.state, usage.access);
         };
 
-        auto issueBufferBarrier = [&](const ResourceNode& resource, ResourceUsage usage, RuntimeResourceState& state) {
-            if (context.commandBuffer == VK_NULL_HANDLE || resource.kind != FrameGraphResourceKind::Buffer ||
-                resource.buffer.buffer == VK_NULL_HANDLE) {
-                updateRuntimeState(state, usage.stages, usage.vkAccess, usage.access, state.layout);
-                return;
+        auto issueBufferBarrier = [&](const ResourceNode& resource, const ResourceUsage& usage,
+                                      RuntimeResourceState& runtimeState) {
+            const bool stateChanged = runtimeState.state != usage.state;
+            const bool memoryDependency = needsMemoryDependency(runtimeState, usage.access);
+            if (barriers != nullptr && resource.buffer.buffer != nullptr && (stateChanged || memoryDependency)) {
+                if (!stateChanged && usage.state != nvrhi::ResourceStates::Common) {
+                    barriers->setBufferState(resource.buffer.buffer, nvrhi::ResourceStates::Common);
+                }
+                barriers->setBufferState(resource.buffer.buffer, usage.state);
             }
-
-            if (!needsMemoryDependency(state, usage.access)) {
-                updateRuntimeState(state, usage.stages, usage.vkAccess, usage.access, state.layout);
-                return;
-            }
-
-            // Buffer 没有 layout，FrameGraph 只需要为读写 hazard 建立内存依赖。
-            VkBufferMemoryBarrier barrier{};
-            barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-            barrier.srcAccessMask = state.access;
-            barrier.dstAccessMask = usage.vkAccess;
-            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.buffer = resource.buffer.buffer;
-            barrier.offset = 0;
-            barrier.size = resource.buffer.size == 0 ? VK_WHOLE_SIZE : resource.buffer.size;
-
-            vkCmdPipelineBarrier(context.commandBuffer, fallbackStage(state.stage), fallbackStage(usage.stages), 0, 0,
-                                 nullptr, 1, &barrier, 0, nullptr);
-
-            updateRuntimeState(state, usage.stages, usage.vkAccess, usage.access, state.layout);
+            updateRuntimeState(runtimeState, usage.state, usage.access);
         };
 
         for (const std::uint32_t passIndex : executionOrder_) {
@@ -299,18 +289,8 @@ namespace lumin::render {
                 *context.log << "[framegraph] " << pass.name << "\n";
             }
 
-            const bool hasDebugLabel = context.commandBuffer != VK_NULL_HANDLE &&
-                                       context.cmdBeginDebugUtilsLabel != nullptr &&
-                                       context.cmdEndDebugUtilsLabel != nullptr;
-            if (hasDebugLabel) {
-                VkDebugUtilsLabelEXT label{};
-                label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
-                label.pLabelName = pass.name.c_str();
-                label.color[0] = 0.20F;
-                label.color[1] = 0.55F;
-                label.color[2] = 0.90F;
-                label.color[3] = 1.00F;
-                context.cmdBeginDebugUtilsLabel(context.commandBuffer, &label);
+            if (context.commandList != nullptr) {
+                context.commandList->beginMarker(pass.name.c_str());
             }
 
             for (const ResourceUsage& usage : pass.usages) {
@@ -322,28 +302,38 @@ namespace lumin::render {
                 }
             }
 
+            if (barriers != nullptr) {
+                barriers->commitBarriers();
+            }
+
             if (pass.execute) {
                 pass.execute(context);
             }
-            if (hasDebugLabel) {
-                context.cmdEndDebugUtilsLabel(context.commandBuffer);
+            if (context.commandList != nullptr) {
+                context.commandList->endMarker();
             }
         }
 
+        bool hasFinalBarrier = false;
         for (std::size_t resourceIndex = 0; resourceIndex < resources_.size(); ++resourceIndex) {
             const ResourceNode& resource = resources_[resourceIndex];
-            if (resource.kind != FrameGraphResourceKind::Texture ||
-                resource.texture.finalLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
-                continue;
-            }
-
             ResourceUsage finalUsage;
             finalUsage.resource = FrameGraphResourceHandle{static_cast<std::uint32_t>(resourceIndex)};
-            finalUsage.stages = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-            finalUsage.vkAccess = 0;
-            finalUsage.imageLayout = resource.texture.finalLayout;
-            finalUsage.aspectMask = resource.texture.aspectMask;
-            issueTextureBarrier(resource, finalUsage, states[resourceIndex]);
+            if (resource.kind == FrameGraphResourceKind::Texture &&
+                resource.texture.finalState != nvrhi::ResourceStates::Unknown) {
+                finalUsage.state = resource.texture.finalState;
+                finalUsage.subresources = resource.texture.subresources;
+                issueTextureBarrier(resource, finalUsage, states[resourceIndex]);
+                hasFinalBarrier = true;
+            } else if (resource.kind == FrameGraphResourceKind::Buffer &&
+                       resource.buffer.finalState != nvrhi::ResourceStates::Unknown) {
+                finalUsage.state = resource.buffer.finalState;
+                issueBufferBarrier(resource, finalUsage, states[resourceIndex]);
+                hasFinalBarrier = true;
+            }
+        }
+        if (barriers != nullptr && hasFinalBarrier) {
+            barriers->commitBarriers();
         }
     }
 

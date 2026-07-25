@@ -53,6 +53,9 @@ function(lumin_add_slang_shader)
         -target "${ARG_TARGET}"
         -profile "${ARG_PROFILE}"
     )
+    if(ARG_TARGET STREQUAL "spirv")
+        list(APPEND _compiler_options -fvk-use-entrypoint-name)
+    endif()
     if(ARG_MATRIX_LAYOUT)
         list(APPEND _compiler_options "-matrix-layout-${ARG_MATRIX_LAYOUT}")
     endif()

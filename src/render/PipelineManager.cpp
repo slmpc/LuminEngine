@@ -4,52 +4,33 @@
 
 #include <array>
 #include <string>
+#include <utility>
 
 namespace lumin::render {
+
     PipelineManager::PipelineManager(VulkanContext& context, std::filesystem::path shaderDirectory)
-        : context_(context), shaders_(context.device(), std::move(shaderDirectory)), factory_(context.device()) {
+        : shaders_(*context.rhiDevice().Get(), std::move(shaderDirectory)), factory_(*context.rhiDevice().Get()) {
     }
 
     PipelineManager::~PipelineManager() {
         destroy();
     }
 
-    void PipelineManager::create(VkDescriptorSetLayout descriptorSetLayout, VkFormat lightingFormat,
-                                 VkFormat swapchainFormat) {
+    void PipelineManager::create(nvrhi::BindingLayoutHandle bindingLayout, nvrhi::Format lightingFormat,
+                                 nvrhi::Format swapchainFormat) {
         destroy();
 
-        const std::array<VkVertexInputBindingDescription, 0> bindings{};
-        const std::array<VkVertexInputAttributeDescription, 0> attributes{};
-        auto createFullscreen = [&](const std::string& shaderName, VkFormat colorFormat,
-                                    GraphicsPipeline& destination) {
-            VkShaderModule vertexShader = VK_NULL_HANDLE;
-            VkShaderModule fragmentShader = VK_NULL_HANDLE;
-            try {
-                vertexShader = shaders_.loadModule(shaderName + ".vert.spv");
-                fragmentShader = shaders_.loadModule(shaderName + ".frag.spv");
-                const std::array<VkFormat, 1> colors = {colorFormat};
-                GraphicsPipelineDesc desc;
-                desc.vertexShader = vertexShader;
-                desc.fragmentShader = fragmentShader;
-                desc.descriptorSetLayout = descriptorSetLayout;
-                desc.colorFormats = colors;
-                desc.depthFormat = VK_FORMAT_UNDEFINED;
-                desc.depthTestEnable = false;
-                desc.depthWriteEnable = false;
-                desc.vertexBindings = bindings;
-                desc.vertexAttributes = attributes;
+        const std::array<nvrhi::BindingLayoutHandle, 1> bindingLayouts = {std::move(bindingLayout)};
+        auto createFullscreen = [&](const std::string& shaderName, nvrhi::Format colorFormat,
+                                    nvrhi::GraphicsPipelineHandle& destination) {
+            auto loadModule = [this](const std::string& moduleName, nvrhi::ShaderType type) {
+                const std::string_view entryPoint = type == nvrhi::ShaderType::Vertex ? "vertexMain" : "fragmentMain";
+                return shaders_.loadModule(moduleName, type, entryPoint);
+            };
+            auto createPipeline = [this, &destination](const GraphicsPipelineDesc& desc) {
                 destination = factory_.createGraphicsPipeline(desc);
-            } catch (...) {
-                if (fragmentShader != VK_NULL_HANDLE) {
-                    vkDestroyShaderModule(context_.device(), fragmentShader, nullptr);
-                }
-                if (vertexShader != VK_NULL_HANDLE) {
-                    vkDestroyShaderModule(context_.device(), vertexShader, nullptr);
-                }
-                throw;
-            }
-            vkDestroyShaderModule(context_.device(), fragmentShader, nullptr);
-            vkDestroyShaderModule(context_.device(), vertexShader, nullptr);
+            };
+            detail::createFullscreenPipeline(shaderName, colorFormat, bindingLayouts, loadModule, createPipeline);
         };
 
         try {
@@ -64,29 +45,29 @@ namespace lumin::render {
     }
 
     void PipelineManager::destroy() noexcept {
-        factory_.destroy(tonemap_);
-        factory_.destroy(taa_);
-        factory_.destroy(deferredLighting_);
-        factory_.destroy(sky_);
+        tonemap_ = nullptr;
+        taa_ = nullptr;
+        deferredLighting_ = nullptr;
+        sky_ = nullptr;
     }
 
-    const GraphicsPipeline& PipelineManager::sky() const noexcept {
+    const nvrhi::GraphicsPipelineHandle& PipelineManager::sky() const noexcept {
         return sky_;
     }
 
-    const GraphicsPipeline& PipelineManager::deferredLighting() const noexcept {
+    const nvrhi::GraphicsPipelineHandle& PipelineManager::deferredLighting() const noexcept {
         return deferredLighting_;
     }
 
-    const GraphicsPipeline& PipelineManager::taa() const noexcept {
+    const nvrhi::GraphicsPipelineHandle& PipelineManager::taa() const noexcept {
         return taa_;
     }
 
-    const GraphicsPipeline& PipelineManager::tonemap() const noexcept {
+    const nvrhi::GraphicsPipelineHandle& PipelineManager::tonemap() const noexcept {
         return tonemap_;
     }
 
-    const GraphicsPipeline& PipelineManager::postprocess() const noexcept {
+    const nvrhi::GraphicsPipelineHandle& PipelineManager::postprocess() const noexcept {
         return tonemap_;
     }
 

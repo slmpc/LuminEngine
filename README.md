@@ -116,3 +116,25 @@ ctest --test-dir out\build\debug --output-on-failure
 缺失 UV 生成、渲染器材质批次构建、全局光照后端契约、无 Vulkan 的 `Game` 生命周期、启动脚本错误隔离和输入路由。
 
 有关渲染通道顺序、时序历史约定和资源所有权模型，请参阅 `docs/rendering-architecture.md`。
+
+## NvRHI 渲染后端边界
+
+渲染器使用 NvRHI 的 Vulkan 后端和 Vulkan 1.3 动态渲染。NvRHI 不创建交换链：`VulkanContext` 仍负责 SDL
+surface、Vulkan 实例与设备、交换链及 image view、图像获取和呈现，并把交换链图像包装为非拥有型 NvRHI
+texture。帧提交在同一次图形队列提交中严格按 `queueWaitForSemaphore`、`queueSignalSemaphore`、
+`executeCommandLists` 排列；每个帧槽复用独立的 `EventQuery`，再次写入该槽前必须等待并重置查询。
+
+所有逐帧命令列表都关闭 NvRHI automatic barriers；只有材质纹理与 ImGui 字体的专用初始化上传列表启用它，以上传并
+恢复到 `ShaderResource`。生产代码中只有 `FrameGraph` 可以在运行时调用显式 resource-state tracking 和 barrier API；
+附件清理由独立的 `CopyDest` transfer pass 声明。跨提交资源通过导入状态延续真实状态。TAA 分别记录 `historyValid` 与
+`historyInitialized`：内容失效不会抹去已初始化纹理的真实布局/访问状态。
+
+可使用独立目录配置、构建并验证后端策略：
+
+```powershell
+$env:VCPKG_ROOT = "D:/Programs/vcpkg"
+cmake -S . -B out/build/nvrhi-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLUMIN_BUILD_TESTS=ON
+cmake --build out/build/nvrhi-debug --target lumin_render_backend_policy_tests lumin_render_engine
+ctest --test-dir out/build/nvrhi-debug --output-on-failure
+.\out\build\nvrhi-debug\LuminEngine.exe
+```

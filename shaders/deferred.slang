@@ -31,7 +31,7 @@ struct VertexOutput {
 VertexOutput vertexMain(uint vertexId : SV_VertexID) {
     float2 triangleUv = float2((vertexId << 1) & 2, vertexId & 2);
     VertexOutput output;
-    output.position = float4(triangleUv * 2.0 - 1.0, 0.0, 1.0);
+    output.position = float4(triangleUv.x * 2.0 - 1.0, 1.0 - triangleUv.y * 2.0, 0.0, 1.0);
     output.uv = triangleUv;
     return output;
 }
@@ -52,7 +52,7 @@ float calculateShadow(float3 worldPosition, float3 normal, uint cascadeIndex) {
     }
     float4 shadowClip = mul(frame.cascadeViewProjections[cascadeIndex], float4(worldPosition, 1.0));
     float3 shadowNdc = shadowClip.xyz / max(shadowClip.w, 1e-5);
-    float2 shadowUv = shadowNdc.xy * 0.5 + 0.5;
+    float2 shadowUv = float2(shadowNdc.x * 0.5 + 0.5, 0.5 - shadowNdc.y * 0.5);
     if (shadowNdc.z <= 0.0 || shadowNdc.z >= 1.0 || any(shadowUv <= 0.0) || any(shadowUv >= 1.0)) {
         return 1.0;
     }

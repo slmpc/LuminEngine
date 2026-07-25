@@ -1,41 +1,53 @@
 #include "lumin/render/TextureManager.hpp"
 
+#if !defined(LUMIN_TEXTURE_MANAGER_STANDALONE_TEST)
 #include "lumin/render/VulkanContext.hpp"
+#endif
 
 #include <array>
 #include <stdexcept>
-#include <vector>
 
 namespace lumin::render {
     namespace {
 
-        constexpr std::uint32_t sampledImageCount = 8 + shadowCascadeCount;
-        constexpr std::uint32_t samplerBinding = sampledImageCount;
-        constexpr std::uint32_t uniformBinding = sampledImageCount + 1;
+        [[nodiscard]] bool supports(nvrhi::FormatSupport available, nvrhi::FormatSupport required) {
+            return (available & required) == required;
+        }
 
-        void checkVk(VkResult result, const char* message) {
-            if (result != VK_SUCCESS) {
-                throw std::runtime_error(message);
-            }
+        [[nodiscard]] nvrhi::TextureDesc textureDesc(std::uint32_t width, std::uint32_t height, nvrhi::Format format,
+                                                     const char* debugName) {
+            nvrhi::TextureDesc desc;
+            desc.width = width;
+            desc.height = height;
+            desc.format = format;
+            desc.debugName = debugName;
+            desc.initialState = nvrhi::ResourceStates::Common;
+            desc.keepInitialState = false;
+            return desc;
         }
 
     } // namespace
 
-    TextureManager::TextureManager(VulkanContext& context) : context_(context), resources_(context) {
+#if !defined(LUMIN_TEXTURE_MANAGER_STANDALONE_TEST)
+    TextureManager::TextureManager(VulkanContext& context) : TextureManager(*context.rhiDevice().Get()) {
+    }
+#endif
+
+    TextureManager::TextureManager(nvrhi::IDevice& device) : device_(device), resources_(device) {
     }
 
     TextureManager::~TextureManager() {
         destroy();
     }
 
-    void TextureManager::create(VkExtent2D extent) {
+    void TextureManager::create(std::uint32_t width, std::uint32_t height) {
         destroy();
-        if (extent.width == 0 || extent.height == 0) {
+        if (width == 0 || height == 0) {
             throw std::invalid_argument("TextureManager requires a non-zero render extent.");
         }
         try {
-            createImages(extent);
-            createSamplerAndDescriptors();
+            createImages(width, height);
+            createSamplerAndBindings();
         } catch (...) {
             destroy();
             throw;
@@ -43,34 +55,34 @@ namespace lumin::render {
     }
 
     void TextureManager::destroy() noexcept {
-        if (descriptorPool_ != VK_NULL_HANDLE) {
-            vkDestroyDescriptorPool(context_.device(), descriptorPool_, nullptr);
-            descriptorPool_ = VK_NULL_HANDLE;
-        }
-        if (descriptorSetLayout_ != VK_NULL_HANDLE) {
-            vkDestroyDescriptorSetLayout(context_.device(), descriptorSetLayout_, nullptr);
-            descriptorSetLayout_ = VK_NULL_HANDLE;
-        }
-        if (sampler_ != VK_NULL_HANDLE) {
-            vkDestroySampler(context_.device(), sampler_, nullptr);
-            sampler_ = VK_NULL_HANDLE;
-        }
-        for (TextureFrameResources& frame : frames_) {
-            resources_.destroyBuffer(frame.postProcessUniform);
-            for (VulkanImage& shadow : frame.shadowCascades) {
-                resources_.destroyImage(shadow);
+        bindingSets_.fill(nullptr);
+        bindingLayout_ = nullptr;
+        sampler_ = nullptr;
+
+        for (TextureFrameResources& frameResources : frames_) {
+            resources_.destroyBuffer(frameResources.postProcessUniform);
+            for (GpuTexture& shadow : frameResources.shadowCascades) {
+                resources_.destroyTexture(shadow);
             }
-            resources_.destroyImage(frame.history);
-            resources_.destroyImage(frame.taaResolved);
-            resources_.destroyImage(frame.lighting);
-            resources_.destroyImage(frame.globalIllumination);
-            resources_.destroyImage(frame.depth);
-            resources_.destroyImage(frame.motion);
-            resources_.destroyImage(frame.albedo);
-            resources_.destroyImage(frame.normalRoughness);
-            resources_.destroyImage(frame.position);
+            resources_.destroyTexture(frameResources.history);
+            resources_.destroyTexture(frameResources.taaResolved);
+            resources_.destroyTexture(frameResources.lighting);
+            resources_.destroyTexture(frameResources.globalIllumination);
+            resources_.destroyTexture(frameResources.depth);
+            resources_.destroyTexture(frameResources.motion);
+            resources_.destroyTexture(frameResources.albedo);
+            resources_.destroyTexture(frameResources.normalRoughness);
+            resources_.destroyTexture(frameResources.position);
         }
-        descriptorSets_.fill(VK_NULL_HANDLE);
+
+        positionFormat_ = nvrhi::Format::UNKNOWN;
+        normalFormat_ = nvrhi::Format::UNKNOWN;
+        albedoFormat_ = nvrhi::Format::UNKNOWN;
+        motionFormat_ = nvrhi::Format::UNKNOWN;
+        depthFormat_ = nvrhi::Format::UNKNOWN;
+        globalIlluminationFormat_ = nvrhi::Format::UNKNOWN;
+        lightingFormat_ = nvrhi::Format::UNKNOWN;
+        shadowDepthFormat_ = nvrhi::Format::UNKNOWN;
         historyValid_.fill(false);
         historyInitialized_.fill(false);
     }
@@ -92,6 +104,7 @@ namespace lumin::render {
         }
         historyValid_[frameIndex] = true;
         historyInitialized_[frameIndex] = true;
+        frames_[frameIndex].history.initialState = nvrhi::ResourceStates::ShaderResource;
     }
 
     const TextureFrameResources& TextureManager::frame(std::uint32_t frameIndex) const {
@@ -115,215 +128,207 @@ namespace lumin::render {
         return historyInitialized_[frameIndex];
     }
 
-    VkFormat TextureManager::positionFormat() const noexcept {
+    nvrhi::ResourceStates TextureManager::historyInitialState(std::uint32_t frameIndex) const {
+        return historyInitialized(frameIndex) ? nvrhi::ResourceStates::ShaderResource : nvrhi::ResourceStates::Common;
+    }
+
+    nvrhi::Format TextureManager::positionFormat() const noexcept {
         return positionFormat_;
     }
 
-    VkFormat TextureManager::normalFormat() const noexcept {
+    nvrhi::Format TextureManager::normalFormat() const noexcept {
         return normalFormat_;
     }
 
-    VkFormat TextureManager::albedoFormat() const noexcept {
+    nvrhi::Format TextureManager::albedoFormat() const noexcept {
         return albedoFormat_;
     }
 
-    VkFormat TextureManager::motionFormat() const noexcept {
+    nvrhi::Format TextureManager::motionFormat() const noexcept {
         return motionFormat_;
     }
 
-    VkFormat TextureManager::depthFormat() const noexcept {
+    nvrhi::Format TextureManager::depthFormat() const noexcept {
         return depthFormat_;
     }
 
-    VkFormat TextureManager::globalIlluminationFormat() const noexcept {
+    nvrhi::Format TextureManager::globalIlluminationFormat() const noexcept {
         return globalIlluminationFormat_;
     }
 
-    VkFormat TextureManager::lightingFormat() const noexcept {
+    nvrhi::Format TextureManager::lightingFormat() const noexcept {
         return lightingFormat_;
     }
 
-    VkFormat TextureManager::shadowDepthFormat() const noexcept {
+    nvrhi::Format TextureManager::shadowDepthFormat() const noexcept {
         return shadowDepthFormat_;
     }
 
-    VkSampler TextureManager::sampler() const noexcept {
+    nvrhi::SamplerHandle TextureManager::sampler() const noexcept {
         return sampler_;
     }
 
-    VkDescriptorSetLayout TextureManager::descriptorSetLayout() const noexcept {
-        return descriptorSetLayout_;
+    nvrhi::BindingLayoutHandle TextureManager::bindingLayout() const noexcept {
+        return bindingLayout_;
     }
 
-    VkDescriptorSet TextureManager::descriptorSet(std::uint32_t frameIndex) const {
+    nvrhi::BindingSetHandle TextureManager::bindingSet(std::uint32_t frameIndex) const {
         if (frameIndex >= maxFramesInFlight) {
-            throw std::out_of_range("TextureManager descriptor frame index is out of range.");
+            throw std::out_of_range("TextureManager binding frame index is out of range.");
         }
-        return descriptorSets_[frameIndex];
+        return bindingSets_[frameIndex];
     }
 
-    VkFormat TextureManager::chooseFormat(const std::vector<VkFormat>& candidates) const {
-        return resources_.findSupportedFormat(candidates, VK_IMAGE_TILING_OPTIMAL,
-                                              VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
-                                                  VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
-                                                  VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
-    }
-
-    void TextureManager::createImages(VkExtent2D extent) {
-        positionFormat_ = chooseFormat({VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT});
-        normalFormat_ = positionFormat_;
-        albedoFormat_ = chooseFormat({VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM});
-        motionFormat_ = chooseFormat({VK_FORMAT_R16G16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT});
-        globalIlluminationFormat_ = resources_.findSupportedFormat(
-            {VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT}, VK_IMAGE_TILING_OPTIMAL,
-            VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
-                VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
-        lightingFormat_ = chooseFormat({VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT});
-        depthFormat_ = resources_.findDepthFormat();
-        shadowDepthFormat_ = resources_.findSupportedFormat(
-            {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM}, VK_IMAGE_TILING_OPTIMAL,
-            VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
-
-        const VkImageUsageFlags colorSampled = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        const VkMemoryPropertyFlags hostMemory =
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-
-        for (TextureFrameResources& frame : frames_) {
-            frame.position = resources_.createImage(extent.width, extent.height, positionFormat_, colorSampled,
-                                                    VK_IMAGE_ASPECT_COLOR_BIT);
-            frame.normalRoughness = resources_.createImage(extent.width, extent.height, normalFormat_, colorSampled,
-                                                           VK_IMAGE_ASPECT_COLOR_BIT);
-            frame.albedo = resources_.createImage(extent.width, extent.height, albedoFormat_, colorSampled,
-                                                  VK_IMAGE_ASPECT_COLOR_BIT);
-            frame.motion = resources_.createImage(extent.width, extent.height, motionFormat_, colorSampled,
-                                                  VK_IMAGE_ASPECT_COLOR_BIT);
-            frame.depth =
-                resources_.createImage(extent.width, extent.height, depthFormat_,
-                                       VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-            frame.globalIllumination =
-                resources_.createImage(extent.width, extent.height, globalIlluminationFormat_,
-                                       colorSampled | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-            frame.lighting = resources_.createImage(extent.width, extent.height, lightingFormat_, colorSampled,
-                                                    VK_IMAGE_ASPECT_COLOR_BIT);
-            frame.taaResolved =
-                resources_.createImage(extent.width, extent.height, lightingFormat_,
-                                       colorSampled | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-            frame.history = resources_.createImage(extent.width, extent.height, lightingFormat_,
-                                                   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                                   VK_IMAGE_ASPECT_COLOR_BIT);
-            for (VulkanImage& shadow : frame.shadowCascades) {
-                shadow =
-                    resources_.createImage(shadowMapResolution, shadowMapResolution, shadowDepthFormat_,
-                                           VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                           VK_IMAGE_ASPECT_DEPTH_BIT);
+    nvrhi::Format TextureManager::chooseFormat(std::span<const nvrhi::Format> candidates,
+                                               nvrhi::FormatSupport required) const {
+        for (const nvrhi::Format candidate : candidates) {
+            if (supports(device_.queryFormatSupport(candidate), required)) {
+                return candidate;
             }
-            frame.postProcessUniform =
-                resources_.createBuffer(sizeof(PostProcessUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, hostMemory);
+        }
+        throw std::runtime_error("No supported NvRHI texture format satisfies the requested usage.");
+    }
+
+    GpuTexture TextureManager::createTexture(const nvrhi::TextureDesc& desc) const {
+        GpuTexture texture;
+        texture.texture = device_.createTexture(desc);
+        if (!texture.texture) {
+            throw std::runtime_error("Failed to create an NvRHI render texture.");
+        }
+        texture.format = desc.format;
+        texture.width = desc.width;
+        texture.height = desc.height;
+        texture.mipLevels = desc.mipLevels;
+        texture.arrayLayers = desc.arraySize;
+        texture.initialState = desc.initialState;
+        return texture;
+    }
+
+    void TextureManager::createImages(std::uint32_t width, std::uint32_t height) {
+        const nvrhi::FormatSupport colorSampled =
+            nvrhi::FormatSupport::Texture | nvrhi::FormatSupport::RenderTarget | nvrhi::FormatSupport::ShaderSample;
+        const nvrhi::FormatSupport depthAttachment = nvrhi::FormatSupport::Texture | nvrhi::FormatSupport::DepthStencil;
+        const nvrhi::FormatSupport depthSampled = depthAttachment | nvrhi::FormatSupport::ShaderSample;
+        const nvrhi::FormatSupport storageSampled =
+            colorSampled | nvrhi::FormatSupport::ShaderUavLoad | nvrhi::FormatSupport::ShaderUavStore;
+
+        constexpr std::array positionCandidates = {nvrhi::Format::RGBA16_FLOAT, nvrhi::Format::RGBA32_FLOAT};
+        constexpr std::array albedoCandidates = {nvrhi::Format::RGBA8_UNORM, nvrhi::Format::BGRA8_UNORM};
+        constexpr std::array motionCandidates = {nvrhi::Format::RG16_FLOAT, nvrhi::Format::RGBA16_FLOAT};
+        constexpr std::array depthCandidates = {nvrhi::Format::D32, nvrhi::Format::D32S8, nvrhi::Format::D24S8};
+        constexpr std::array shadowCandidates = {nvrhi::Format::D32, nvrhi::Format::D16};
+
+        positionFormat_ = chooseFormat(positionCandidates, colorSampled);
+        normalFormat_ = positionFormat_;
+        albedoFormat_ = chooseFormat(albedoCandidates, colorSampled);
+        motionFormat_ = chooseFormat(motionCandidates, colorSampled);
+        globalIlluminationFormat_ = chooseFormat(positionCandidates, storageSampled);
+        lightingFormat_ = chooseFormat(positionCandidates, colorSampled);
+        depthFormat_ = chooseFormat(depthCandidates, depthAttachment);
+        shadowDepthFormat_ = chooseFormat(shadowCandidates, depthSampled);
+
+        for (TextureFrameResources& frameResources : frames_) {
+            nvrhi::TextureDesc desc = textureDesc(width, height, positionFormat_, "G-buffer position");
+            desc.isRenderTarget = true;
+            frameResources.position = createTexture(desc);
+
+            desc = textureDesc(width, height, normalFormat_, "G-buffer normal roughness");
+            desc.isRenderTarget = true;
+            frameResources.normalRoughness = createTexture(desc);
+
+            desc = textureDesc(width, height, albedoFormat_, "G-buffer albedo");
+            desc.isRenderTarget = true;
+            frameResources.albedo = createTexture(desc);
+
+            desc = textureDesc(width, height, motionFormat_, "G-buffer motion");
+            desc.isRenderTarget = true;
+            frameResources.motion = createTexture(desc);
+
+            desc = textureDesc(width, height, depthFormat_, "G-buffer depth");
+            desc.isShaderResource = false;
+            desc.isRenderTarget = true;
+            frameResources.depth = createTexture(desc);
+
+            desc = textureDesc(width, height, globalIlluminationFormat_, "Global illumination");
+            desc.isRenderTarget = true;
+            desc.isUAV = true;
+            frameResources.globalIllumination = createTexture(desc);
+
+            desc = textureDesc(width, height, lightingFormat_, "Deferred lighting");
+            desc.isRenderTarget = true;
+            frameResources.lighting = createTexture(desc);
+
+            desc = textureDesc(width, height, lightingFormat_, "TAA resolved");
+            desc.isRenderTarget = true;
+            frameResources.taaResolved = createTexture(desc);
+
+            desc = textureDesc(width, height, lightingFormat_, "TAA history");
+            frameResources.history = createTexture(desc);
+
+            desc = textureDesc(shadowMapResolution, shadowMapResolution, shadowDepthFormat_, "Shadow cascade");
+            desc.isRenderTarget = true;
+            for (GpuTexture& shadow : frameResources.shadowCascades) {
+                shadow = createTexture(desc);
+            }
+
+            nvrhi::BufferDesc bufferDesc;
+            bufferDesc.byteSize = sizeof(PostProcessUniforms);
+            bufferDesc.debugName = "Post-process uniforms";
+            bufferDesc.isConstantBuffer = true;
+            bufferDesc.cpuAccess = nvrhi::CpuAccessMode::Write;
+            frameResources.postProcessUniform = resources_.createBuffer(bufferDesc);
         }
         historyValid_.fill(false);
         historyInitialized_.fill(false);
     }
 
-    void TextureManager::createSamplerAndDescriptors() {
-        VkSamplerCreateInfo samplerInfo{};
-        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        samplerInfo.magFilter = VK_FILTER_LINEAR;
-        samplerInfo.minFilter = VK_FILTER_LINEAR;
-        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        samplerInfo.minLod = 0.0f;
-        samplerInfo.maxLod = 0.0f;
-        checkVk(vkCreateSampler(context_.device(), &samplerInfo, nullptr, &sampler_),
-                "Failed to create render texture sampler.");
-
-        std::array<VkDescriptorSetLayoutBinding, sampledImageCount + 2> bindings{};
-        for (std::uint32_t binding = 0; binding < sampledImageCount; ++binding) {
-            bindings[binding] = VkDescriptorSetLayoutBinding{binding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1,
-                                                             VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+    void TextureManager::createSamplerAndBindings() {
+        nvrhi::SamplerDesc samplerDesc;
+        samplerDesc.setMinFilter(true).setMagFilter(true).setMipFilter(false);
+        samplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::Clamp);
+        sampler_ = device_.createSampler(samplerDesc);
+        if (!sampler_) {
+            throw std::runtime_error("Failed to create the fullscreen sampler.");
         }
-        bindings[samplerBinding] = VkDescriptorSetLayoutBinding{samplerBinding, VK_DESCRIPTOR_TYPE_SAMPLER, 1,
-                                                                VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
-        bindings[uniformBinding] = VkDescriptorSetLayoutBinding{uniformBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
-                                                                VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
 
-        VkDescriptorSetLayoutCreateInfo layoutInfo{};
-        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
-        layoutInfo.pBindings = bindings.data();
-        checkVk(vkCreateDescriptorSetLayout(context_.device(), &layoutInfo, nullptr, &descriptorSetLayout_),
-                "Failed to create render texture descriptor set layout.");
-
-        const std::array<VkDescriptorPoolSize, 3> poolSizes = {
-            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, maxFramesInFlight * sampledImageCount},
-            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, maxFramesInFlight},
-            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, maxFramesInFlight},
-        };
-        VkDescriptorPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.maxSets = maxFramesInFlight;
-        poolInfo.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
-        poolInfo.pPoolSizes = poolSizes.data();
-        checkVk(vkCreateDescriptorPool(context_.device(), &poolInfo, nullptr, &descriptorPool_),
-                "Failed to create render texture descriptor pool.");
-
-        std::array<VkDescriptorSetLayout, maxFramesInFlight> layouts{};
-        layouts.fill(descriptorSetLayout_);
-        VkDescriptorSetAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocateInfo.descriptorPool = descriptorPool_;
-        allocateInfo.descriptorSetCount = maxFramesInFlight;
-        allocateInfo.pSetLayouts = layouts.data();
-        checkVk(vkAllocateDescriptorSets(context_.device(), &allocateInfo, descriptorSets_.data()),
-                "Failed to allocate render texture descriptor sets.");
+        nvrhi::BindingLayoutDesc layoutDesc;
+        layoutDesc.visibility = nvrhi::ShaderType::Pixel;
+        layoutDesc.bindingOffsets.setShaderResourceOffset(0).setSamplerOffset(0).setConstantBufferOffset(0);
+        for (std::uint32_t binding = 0; binding < fullscreenSampledImageCount; ++binding) {
+            layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(binding));
+        }
+        layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(fullscreenSamplerBinding));
+        layoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(fullscreenUniformBinding));
+        bindingLayout_ = device_.createBindingLayout(layoutDesc);
+        if (!bindingLayout_) {
+            throw std::runtime_error("Failed to create the fullscreen binding layout.");
+        }
 
         for (std::uint32_t frameIndex = 0; frameIndex < maxFramesInFlight; ++frameIndex) {
-            const TextureFrameResources& frame = frames_[frameIndex];
+            const TextureFrameResources& frameResources = frames_[frameIndex];
             const TextureFrameResources& previousFrame =
                 frames_[(frameIndex + maxFramesInFlight - 1) % maxFramesInFlight];
-            std::array<VkDescriptorImageInfo, sampledImageCount> images{};
-            const std::array<const VulkanImage*, 8> frameImages = {
-                &frame.position,           &frame.normalRoughness, &frame.albedo,          &frame.motion,
-                &frame.globalIllumination, &frame.lighting,        &previousFrame.history, &frame.taaResolved,
+            const std::array<const GpuTexture*, 8> frameTextures = {
+                &frameResources.position, &frameResources.normalRoughness,    &frameResources.albedo,
+                &frameResources.motion,   &frameResources.globalIllumination, &frameResources.lighting,
+                &previousFrame.history,   &frameResources.taaResolved,
             };
-            for (std::uint32_t index = 0; index < frameImages.size(); ++index) {
-                images[index] = VkDescriptorImageInfo{VK_NULL_HANDLE, frameImages[index]->view,
-                                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+
+            nvrhi::BindingSetDesc bindingDesc;
+            for (std::uint32_t binding = 0; binding < frameTextures.size(); ++binding) {
+                bindingDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(binding, frameTextures[binding]->texture));
             }
             for (std::uint32_t cascade = 0; cascade < shadowCascadeCount; ++cascade) {
-                images[8 + cascade] = VkDescriptorImageInfo{VK_NULL_HANDLE, frame.shadowCascades[cascade].view,
-                                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                bindingDesc.addItem(
+                    nvrhi::BindingSetItem::Texture_SRV(8 + cascade, frameResources.shadowCascades[cascade].texture));
             }
-            const VkDescriptorImageInfo samplerDescriptor{sampler_, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
-            const VkDescriptorBufferInfo uniformDescriptor{frame.postProcessUniform.buffer, 0,
-                                                           sizeof(PostProcessUniforms)};
-
-            std::array<VkWriteDescriptorSet, sampledImageCount + 2> writes{};
-            for (std::uint32_t binding = 0; binding < sampledImageCount; ++binding) {
-                writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                writes[binding].dstSet = descriptorSets_[frameIndex];
-                writes[binding].dstBinding = binding;
-                writes[binding].descriptorCount = 1;
-                writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-                writes[binding].pImageInfo = &images[binding];
+            bindingDesc.addItem(nvrhi::BindingSetItem::Sampler(fullscreenSamplerBinding, sampler_));
+            bindingDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(fullscreenUniformBinding,
+                                                                      frameResources.postProcessUniform.buffer));
+            bindingSets_[frameIndex] = device_.createBindingSet(bindingDesc, bindingLayout_);
+            if (!bindingSets_[frameIndex]) {
+                throw std::runtime_error("Failed to create a fullscreen binding set.");
             }
-            writes[samplerBinding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[samplerBinding].dstSet = descriptorSets_[frameIndex];
-            writes[samplerBinding].dstBinding = samplerBinding;
-            writes[samplerBinding].descriptorCount = 1;
-            writes[samplerBinding].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-            writes[samplerBinding].pImageInfo = &samplerDescriptor;
-
-            writes[uniformBinding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[uniformBinding].dstSet = descriptorSets_[frameIndex];
-            writes[uniformBinding].dstBinding = uniformBinding;
-            writes[uniformBinding].descriptorCount = 1;
-            writes[uniformBinding].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            writes[uniformBinding].pBufferInfo = &uniformDescriptor;
-
-            vkUpdateDescriptorSets(context_.device(), static_cast<std::uint32_t>(writes.size()), writes.data(), 0,
-                                   nullptr);
         }
     }
 

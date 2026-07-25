@@ -70,6 +70,39 @@ namespace {
         require(nearlyEqual(camera.position().z, -1.0f), "S must oppose W movement.");
     }
 
+    void testCameraProjectionMatchesNvrhiLogicalY() {
+        lumin::scene::Camera camera;
+        const glm::mat4 projection = camera.projectionMatrix(1.0f);
+        const glm::vec4 positiveViewYClip = projection * glm::vec4{0.0f, 0.25f, -1.0f, 1.0f};
+        require(positiveViewYClip.y / positiveViewYClip.w > 0.0f,
+                "Positive view-space Y must remain positive NDC Y for NvRHI's logical viewport.");
+
+        constexpr float renderHeight = 100.0f;
+        constexpr float jitterPixels = 0.25f;
+        glm::mat4 jitteredProjection = projection;
+        jitteredProjection[2][1] += (2.0f * jitterPixels) / renderHeight;
+        const glm::vec4 center{0.0f, 0.0f, -1.0f, 1.0f};
+        const glm::vec4 unjitteredClip = projection * center;
+        const glm::vec4 jitteredClip = jitteredProjection * center;
+        const auto logicalFramebufferY = [](float ndcY) {
+            return (1.0f - ndcY) * 0.5f * renderHeight;
+        };
+        const float framebufferShift = logicalFramebufferY(jitteredClip.y / jitteredClip.w) -
+                                       logicalFramebufferY(unjitteredClip.y / unjitteredClip.w);
+        require(nearlyEqual(framebufferShift, jitterPixels),
+                "A +0.25 projection jitter must move the NvRHI framebuffer sample +0.25 pixels downward.");
+
+        const auto logicalScreenV = [](float ndcY) {
+            return 0.5f - 0.5f * ndcY;
+        };
+        const float previousV = logicalScreenV(0.0f);
+        const float currentV = logicalScreenV(0.2f);
+        const float motionV = currentV - previousV;
+        require(nearlyEqual(previousV, 0.5f) && nearlyEqual(currentV, 0.4f) && nearlyEqual(motionV, -0.1f) &&
+                    nearlyEqual(currentV - motionV, previousV),
+                "NvRHI motion must be current minus previous screen UV and reproject to the previous sample.");
+    }
+
     void testLevelAndIndirectBatch() {
         lumin::scene::Level level;
         const auto triangle = level.addMesh(makeTriangle("triangle"));
@@ -97,15 +130,17 @@ namespace {
                     nearlyEqual(batch.objects[0].normalMatrix[2][2], 2.0f),
                 "Object data must use an inverse-transpose normal matrix for non-uniform scale.");
 
-        const VkDrawIndexedIndirectCommand& first = batch.commands[0];
-        const VkDrawIndexedIndirectCommand& second = batch.commands[1];
-        const VkDrawIndexedIndirectCommand& third = batch.commands[2];
-        require(first.indexCount == 3 && first.firstIndex == 0 && first.vertexOffset == 0 && first.firstInstance == 0,
+        const nvrhi::DrawIndexedIndirectArguments& first = batch.commands[0];
+        const nvrhi::DrawIndexedIndirectArguments& second = batch.commands[1];
+        const nvrhi::DrawIndexedIndirectArguments& third = batch.commands[2];
+        require(first.indexCount == 3 && first.startIndexLocation == 0 && first.baseVertexLocation == 0 &&
+                    first.startInstanceLocation == 0,
                 "First indirect command has incorrect offsets.");
-        require(second.indexCount == 6 && second.firstIndex == 3 && second.vertexOffset == 3 &&
-                    second.firstInstance == 0,
+        require(second.indexCount == 6 && second.startIndexLocation == 3 && second.baseVertexLocation == 3 &&
+                    second.startInstanceLocation == 0,
                 "Second indirect command has incorrect offsets.");
-        require(third.indexCount == 3 && third.firstIndex == 0 && third.vertexOffset == 0 && third.firstInstance == 0,
+        require(third.indexCount == 3 && third.startIndexLocation == 0 && third.baseVertexLocation == 0 &&
+                    third.startInstanceLocation == 0,
                 "Repeated meshes must reuse packed geometry.");
     }
 
@@ -769,6 +804,7 @@ namespace {
 int main() {
     try {
         testCameraMovement();
+        testCameraProjectionMatchesNvrhiLogicalY();
         testLevelAndIndirectBatch();
         testPbrAssetsAndMaterialBatch();
         testActorLifecycleAndDeferredChanges();

@@ -201,6 +201,9 @@ namespace lumin::editor {
         }
 
         void buildLayout(ImGuiID dockspace, const ImGuiViewport& viewport) {
+            if (viewport.WorkSize.x <= 0.0f || viewport.WorkSize.y <= 0.0f) {
+                return;
+            }
             const EditorLayoutMode mode = editorLayoutModeForViewportSize(viewport.Size.x, viewport.Size.y);
             const bool transition = layoutLifecycle.update(ImGui::GetCurrentContext(), mode, style::LayoutSchema);
             if (!transition && ImGui::DockBuilderGetNode(dockspace) != nullptr) {

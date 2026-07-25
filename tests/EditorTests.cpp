@@ -12,6 +12,9 @@
 #include <iostream>
 #include <stdexcept>
 
+#include <imgui.h>
+#include <imgui_internal.h>
+
 namespace {
 
     static_assert(requires(lumin::render::LevelRenderer& renderer, lumin::render::ImGuiContent* content) {
@@ -143,6 +146,46 @@ namespace {
                 "A layout schema change must rebuild the named dock layout.");
     }
 
+    void testDockLayoutSkipsNonpositiveWorkSizeAndBuildsAfterRestore() {
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+        io.IniFilename = nullptr;
+        io.LogFilename = nullptr;
+        io.DisplaySize = {1280.0f, 720.0f};
+        ImGui::ClearIniSettings();
+        unsigned char* fontPixels = nullptr;
+        int fontWidth = 0;
+        int fontHeight = 0;
+        io.Fonts->GetTexDataAsRGBA32(&fontPixels, &fontWidth, &fontHeight);
+        require(fontPixels != nullptr && fontWidth > 0 && fontHeight > 0,
+                "The docking regression requires a built ImGui font atlas.");
+
+        lumin::scene::Level level;
+        lumin::scene::Camera camera;
+        lumin::render::RenderSettings settings;
+        lumin::scripting::ScriptRuntime runtime;
+        auto editor = makeEditor(level, camera, settings, runtime);
+
+        const auto drawFrame = [&editor](const ImVec2 workSize) {
+            ImGui::NewFrame();
+            ImGuiViewport* viewport = ImGui::GetMainViewport();
+            viewport->WorkPos = {0.0f, 0.0f};
+            viewport->WorkSize = workSize;
+            editor.draw();
+            ImGui::EndFrame();
+        };
+
+        drawFrame({0.0f, 0.0f});
+        drawFrame({-1.0f, -1.0f});
+        drawFrame({1280.0f, 720.0f});
+
+        const ImGuiWindow* hierarchy = ImGui::FindWindowByName("Scene Hierarchy");
+        require(hierarchy != nullptr && hierarchy->DockId != 0,
+                "A restored positive viewport must build the production docking layout after skipped invalid extents.");
+        ImGui::DestroyContext();
+    }
+
     void testConsoleHistoryAndClearScopes() {
         lumin::scene::Level level;
         lumin::scene::Camera camera;
@@ -193,13 +236,13 @@ namespace {
     void testUninitializedBeginFrameIsSafe() {
         lumin::render::ImGuiLayer layer;
         layer.newFrame();
-        layer.render(VK_NULL_HANDLE);
+        require(!layer.initialized(), "A default ImGui layer must remain uninitialized after a no-op newFrame.");
 
         lumin::render::ImGuiManager manager;
         CountingContent content;
         manager.beginFrame(&content);
-        manager.record(VK_NULL_HANDLE, VK_NULL_HANDLE, {});
         require(content.drawCount == 0, "Uninitialized beginFrame must not draw content outside a valid ImGui frame.");
+        require(!manager.framePrepared(), "An uninitialized manager must not prepare a frame for recording.");
         require(!manager.captureState().uiClaimsInput(),
                 "An uninitialized manager must expose an empty capture state.");
     }
@@ -249,6 +292,7 @@ int main() {
         testExactInputCapturePolicy();
         testConsoleReturnsValues();
         testLayoutLifecycleTransitions();
+        testDockLayoutSkipsNonpositiveWorkSizeAndBuildsAfterRestore();
         testConsoleHistoryAndClearScopes();
         testFailedCommandAppearsOnce();
         testUninitializedBeginFrameIsSafe();

@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include <vulkan/vulkan.h>
+#include <nvrhi/nvrhi.h>
 
 namespace lumin::render {
 
@@ -31,7 +31,7 @@ namespace lumin::render {
     };
 
     struct FrameGraphResourceHandle {
-        static constexpr std::uint32_t invalidId = std::numeric_limits<std::uint32_t>::max();
+        static constexpr std::uint32_t invalidId = (std::numeric_limits<std::uint32_t>::max)();
 
         std::uint32_t id = invalidId;
 
@@ -39,7 +39,7 @@ namespace lumin::render {
     };
 
     struct FrameGraphPassHandle {
-        static constexpr std::uint32_t invalidId = std::numeric_limits<std::uint32_t>::max();
+        static constexpr std::uint32_t invalidId = (std::numeric_limits<std::uint32_t>::max)();
 
         std::uint32_t id = invalidId;
 
@@ -48,23 +48,16 @@ namespace lumin::render {
 
     struct FrameGraphBufferDesc {
         std::uint64_t size = 0;
-        VkBufferUsageFlags usage = 0;
-        VkBuffer buffer = VK_NULL_HANDLE;
+        nvrhi::IBuffer* buffer = nullptr;
+        nvrhi::ResourceStates initialState = nvrhi::ResourceStates::Common;
+        nvrhi::ResourceStates finalState = nvrhi::ResourceStates::Unknown;
     };
 
     struct FrameGraphTextureDesc {
-        std::uint32_t width = 1;
-        std::uint32_t height = 1;
-        std::uint32_t depth = 1;
-        std::uint32_t mipLevels = 1;
-        VkFormat format = VK_FORMAT_UNDEFINED;
-        VkImageUsageFlags usage = 0;
-        VkImage image = VK_NULL_HANDLE;
-        VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        VkImageLayout initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VkPipelineStageFlags initialStages = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-        VkAccessFlags initialAccess = 0;
-        VkImageLayout finalLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        nvrhi::ITexture* texture = nullptr;
+        nvrhi::TextureSubresourceSet subresources = nvrhi::AllSubresources;
+        nvrhi::ResourceStates initialState = nvrhi::ResourceStates::Common;
+        nvrhi::ResourceStates finalState = nvrhi::ResourceStates::Unknown;
     };
 
     struct FrameGraphResourceInfo {
@@ -73,11 +66,22 @@ namespace lumin::render {
         bool imported = false;
     };
 
+    class FrameGraphBarrierRecorder {
+    public:
+        virtual ~FrameGraphBarrierRecorder() = default;
+
+        virtual void beginTrackingTextureState(nvrhi::ITexture* texture, nvrhi::TextureSubresourceSet subresources,
+                                               nvrhi::ResourceStates state) = 0;
+        virtual void beginTrackingBufferState(nvrhi::IBuffer* buffer, nvrhi::ResourceStates state) = 0;
+        virtual void setTextureState(nvrhi::ITexture* texture, nvrhi::TextureSubresourceSet subresources,
+                                     nvrhi::ResourceStates state) = 0;
+        virtual void setBufferState(nvrhi::IBuffer* buffer, nvrhi::ResourceStates state) = 0;
+        virtual void commitBarriers() = 0;
+    };
+
     struct FrameGraphContext {
-        VkDevice device = VK_NULL_HANDLE;
-        VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-        PFN_vkCmdBeginDebugUtilsLabelEXT cmdBeginDebugUtilsLabel = nullptr;
-        PFN_vkCmdEndDebugUtilsLabelEXT cmdEndDebugUtilsLabel = nullptr;
+        nvrhi::ICommandList* commandList = nullptr;
+        FrameGraphBarrierRecorder* barriers = nullptr;
         std::uint32_t frameIndex = 0;
         std::ostream* log = nullptr;
     };
@@ -86,23 +90,22 @@ namespace lumin::render {
 
     class FrameGraphBuilder {
     public:
-        void read(FrameGraphResourceHandle resource, VkPipelineStageFlags stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                  VkAccessFlags access = VK_ACCESS_MEMORY_READ_BIT);
+        void read(FrameGraphResourceHandle resource,
+                  nvrhi::ResourceStates state = nvrhi::ResourceStates::ShaderResource);
 
-        void write(FrameGraphResourceHandle resource, VkPipelineStageFlags stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                   VkAccessFlags access = VK_ACCESS_MEMORY_WRITE_BIT);
+        void write(FrameGraphResourceHandle resource,
+                   nvrhi::ResourceStates state = nvrhi::ResourceStates::UnorderedAccess);
 
         void readWrite(FrameGraphResourceHandle resource,
-                       VkPipelineStageFlags stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                       VkAccessFlags access = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+                       nvrhi::ResourceStates state = nvrhi::ResourceStates::UnorderedAccess);
 
-        // 声明 texture 在当前 pass 中需要的 layout；实际 barrier 统一由 FrameGraph::execute 录制。
-        void readTexture(FrameGraphResourceHandle resource, VkImageLayout layout, VkPipelineStageFlags stages,
-                         VkAccessFlags access, VkImageAspectFlags aspectMask = 0);
+        void readTexture(FrameGraphResourceHandle resource,
+                         nvrhi::ResourceStates state = nvrhi::ResourceStates::ShaderResource,
+                         nvrhi::TextureSubresourceSet subresources = nvrhi::AllSubresources);
 
-        // 写入 color/depth 等 attachment 时只描述目标状态，不在业务渲染代码里手动发 barrier。
-        void writeTexture(FrameGraphResourceHandle resource, VkImageLayout layout, VkPipelineStageFlags stages,
-                          VkAccessFlags access, VkImageAspectFlags aspectMask = 0);
+        void writeTexture(FrameGraphResourceHandle resource,
+                          nvrhi::ResourceStates state = nvrhi::ResourceStates::RenderTarget,
+                          nvrhi::TextureSubresourceSet subresources = nvrhi::AllSubresources);
 
     private:
         friend class FrameGraph;
@@ -149,10 +152,8 @@ namespace lumin::render {
         struct ResourceUsage {
             FrameGraphResourceHandle resource;
             FrameGraphAccess access = FrameGraphAccess::Read;
-            VkPipelineStageFlags stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-            VkAccessFlags vkAccess = VK_ACCESS_MEMORY_READ_BIT;
-            VkImageLayout imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            VkImageAspectFlags aspectMask = 0;
+            nvrhi::ResourceStates state = nvrhi::ResourceStates::Unknown;
+            nvrhi::TextureSubresourceSet subresources = nvrhi::AllSubresources;
         };
 
         struct PassNode {

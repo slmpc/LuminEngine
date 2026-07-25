@@ -3,6 +3,9 @@
 #include "lumin/platform/Window.hpp"
 #include "lumin/render/VulkanContext.hpp"
 
+#include <stdexcept>
+#include <utility>
+
 #include <imgui.h>
 
 namespace lumin::render {
@@ -13,24 +16,30 @@ namespace lumin::render {
 
     void ImGuiManager::initialize(platform::Window& window, VulkanContext& context) {
         shutdown();
+
         ImGuiLayerConfig config;
-        config.apiVersion = context.apiVersion();
-        config.instance = context.instance();
-        config.physicalDevice = context.physicalDevice();
-        config.device = context.device();
-        config.queueFamily = context.graphicsQueueFamily();
-        config.queue = context.graphicsQueue();
-        config.minImageCount = context.swapchainMinImageCount();
-        config.imageCount = context.swapchainImageCount();
-        config.colorFormat = context.swapchainFormat();
-        config.depthFormat = VK_FORMAT_UNDEFINED;
+        config.device = context.rhiDevice();
+        config.colorFormat = context.swapchainRhiFormat();
+        config.shaderDirectory = LUMIN_SHADER_DIR;
         config.enableKeyboard = true;
         config.enableDocking = true;
         layer_.initialize(window, config);
+
+        framebuffers_.reserve(context.swapchainTextures().size());
+        for (const nvrhi::TextureHandle& texture : context.swapchainTextures()) {
+            nvrhi::FramebufferHandle framebuffer =
+                context.rhiDevice()->createFramebuffer(nvrhi::FramebufferDesc().addColorAttachment(texture));
+            if (!framebuffer) {
+                shutdown();
+                throw std::runtime_error("Failed to create NvRHI ImGui framebuffer.");
+            }
+            framebuffers_.push_back(std::move(framebuffer));
+        }
     }
 
     void ImGuiManager::shutdown() {
         cancelFrame();
+        framebuffers_.clear();
         layer_.shutdown();
     }
 
@@ -58,26 +67,12 @@ namespace lumin::render {
         framePrepared_ = false;
     }
 
-    void ImGuiManager::record(VkCommandBuffer commandBuffer, VkImageView targetView, VkExtent2D extent) {
-        if (!layer_.initialized() || !framePrepared_) {
+    void ImGuiManager::record(nvrhi::ICommandList& commandList, std::uint32_t imageIndex, std::uint32_t frameSlot) {
+        if (!layer_.initialized() || !framePrepared_ || imageIndex >= framebuffers_.size()) {
             return;
         }
-        VkRenderingAttachmentInfo colorAttachment{};
-        colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        colorAttachment.imageView = targetView;
-        colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        VkRenderingInfo renderingInfo{};
-        renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-        renderingInfo.renderArea.extent = extent;
-        renderingInfo.layerCount = 1;
-        renderingInfo.colorAttachmentCount = 1;
-        renderingInfo.pColorAttachments = &colorAttachment;
-        vkCmdBeginRendering(commandBuffer, &renderingInfo);
-        layer_.render(commandBuffer);
+        layer_.render(commandList, *framebuffers_[imageIndex], frameSlot);
         framePrepared_ = false;
-        vkCmdEndRendering(commandBuffer);
     }
 
     bool ImGuiManager::framePrepared() const noexcept {
@@ -88,4 +83,16 @@ namespace lumin::render {
         return layer_.captureState();
     }
 
-} // namespace lumin::render
+    nvrhi::ITexture* ImGuiManager::fontTexture() const noexcept {
+        return layer_.fontTexture();
+    }
+
+    nvrhi::ResourceStates ImGuiManager::fontTextureInitialState() const noexcept {
+        return layer_.fontTextureInitialState();
+    }
+
+    void ImGuiManager::markFontTextureInitialized() noexcept {
+        layer_.markFontTextureInitialized();
+    }
+
+}

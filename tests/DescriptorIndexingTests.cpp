@@ -71,90 +71,74 @@ namespace {
     }
 
     void testDescriptorLimitsRejectOversubscription() {
-        VkPhysicalDeviceLimits limits{};
-        limits.maxPerStageDescriptorSamplers = 1;
-        limits.maxPerStageDescriptorSampledImages = 64;
-        limits.maxDescriptorSetSamplers = 1;
-        limits.maxDescriptorSetSampledImages = 64;
-        limits.maxPerStageResources = 65;
+        lumin::render::detail::DescriptorIndexingLimits limits{};
+        limits.maxMaterialTextures = 32;
+        limits.maxDrawIndirectCount = 16;
         limits.maxImageDimension2D = 4096;
 
         const lumin::render::detail::DescriptorIndexingPlan plan =
-            lumin::render::detail::makeDescriptorIndexingPlan(limits, 2, 2, 4);
+            lumin::render::detail::makeDescriptorIndexingPlan(limits, 2, 2, 4, 3);
         require(plan.materialTextureCount == 3 && plan.gbufferSetCount == 2 && plan.shadowSetCount == 8 &&
                     plan.totalSetCount == 10 && plan.sampledImageDescriptorCount == 12 &&
                     plan.samplerDescriptorCount == 2,
                 "Descriptor planning must account for fallback, frame slots, and split shadow sets.");
 
-        limits.maxPerStageDescriptorSampledImages = 3;
+        limits.maxMaterialTextures = 2;
         requireThrows<std::length_error>(
             [&] {
-                (void)lumin::render::detail::makeDescriptorIndexingPlan(limits, 1, 2, 4);
+                (void)lumin::render::detail::makeDescriptorIndexingPlan(limits, 2, 2, 4, 3);
             },
-            "Per-stage sampled-image descriptor oversubscription must be rejected before Vulkan allocation.");
+            "NvRHI binding-array oversubscription must be rejected before binding layout creation.");
 
-        limits.maxPerStageDescriptorSampledImages = 64;
-        limits.maxDescriptorSetSampledImages = 3;
+        limits.maxMaterialTextures = 32;
+        limits.maxDrawIndirectCount = 2;
         requireThrows<std::length_error>(
             [&] {
-                (void)lumin::render::detail::makeDescriptorIndexingPlan(limits, 1, 2, 4);
+                (void)lumin::render::detail::makeDescriptorIndexingPlan(limits, 1, 2, 4, 3);
             },
-            "Per-set sampled-image descriptor oversubscription must be rejected before Vulkan allocation.");
+            "Indirect draw oversubscription must be rejected before buffer or pipeline creation.");
 
-        limits.maxDescriptorSetSampledImages = 64;
-        limits.maxPerStageResources = 4;
-        requireThrows<std::length_error>(
-            [&] {
-                (void)lumin::render::detail::makeDescriptorIndexingPlan(limits, 1, 2, 4);
-            },
-            "Fragment-stage resource oversubscription must be rejected before Vulkan allocation.");
-
-        limits.maxPerStageResources = 65;
-        limits.maxDescriptorSetSamplers = 0;
-        requireThrows<std::length_error>(
-            [&] {
-                (void)lumin::render::detail::makeDescriptorIndexingPlan(limits, 1, 2, 4);
-            },
-            "Missing sampler descriptor capacity must be rejected before Vulkan allocation.");
-
-        limits.maxDescriptorSetSamplers = 1;
-        limits.maxPerStageDescriptorSamplers = 0;
-        requireThrows<std::length_error>(
-            [&] {
-                (void)lumin::render::detail::makeDescriptorIndexingPlan(limits, 1, 2, 4);
-            },
-            "Missing per-stage sampler capacity must be rejected before Vulkan allocation.");
-
-        limits.maxPerStageDescriptorSamplers = 1;
+        limits.maxDrawIndirectCount = 16;
         requireThrows<std::length_error>(
             [&] {
                 (void)lumin::render::detail::makeDescriptorIndexingPlan(
-                    limits, lumin::render::detail::maxMaterialTextureDescriptorCount, 2, 4);
+                    limits, lumin::render::detail::maxMaterialTextureBindingArraySize, 2, 4, 1);
+            },
+            "The NvRHI uint16 binding-array representation must be enforced.");
+
+        limits.maxMaterialTextures = std::numeric_limits<std::uint32_t>::max();
+        requireThrows<std::length_error>(
+            [&] {
+                (void)lumin::render::detail::makeDescriptorIndexingPlan(
+                    limits, lumin::render::detail::maxMaterialTextureDescriptorCount, 2, 4, 1);
             },
             "Material descriptor indices that exceed exact float representation must be rejected.");
 
         requireThrows<std::overflow_error>(
             [&] {
-                (void)lumin::render::detail::makeDescriptorIndexingPlan(limits, 1,
-                                                                        std::numeric_limits<std::uint32_t>::max(), 4);
+                (void)lumin::render::detail::makeDescriptorIndexingPlan(
+                    limits, 1, std::numeric_limits<std::uint32_t>::max(), 4, 1);
             },
-            "Descriptor pool count overflow must be rejected before Vulkan allocation.");
+            "Binding set count overflow must be rejected before allocation.");
 
-        VkPhysicalDeviceLimits largeLimits = limits;
-        largeLimits.maxPerStageDescriptorSampledImages = std::numeric_limits<std::uint32_t>::max();
-        largeLimits.maxDescriptorSetSampledImages = std::numeric_limits<std::uint32_t>::max();
-        largeLimits.maxPerStageResources = std::numeric_limits<std::uint32_t>::max();
+        lumin::render::detail::DescriptorIndexingLimits largeLimits = limits;
         requireThrows<std::overflow_error>(
             [&] {
-                (void)lumin::render::detail::makeDescriptorIndexingPlan(largeLimits, 32767, 65536, 0);
+                (void)lumin::render::detail::makeDescriptorIndexingPlan(largeLimits, 32767, 65536, 1, 1);
             },
-            "Sampled-image descriptor pool overflow must be rejected before Vulkan allocation.");
+            "Sampled-image binding count overflow must be rejected before allocation.");
 
         requireThrows<std::invalid_argument>(
             [&] {
-                (void)lumin::render::detail::makeDescriptorIndexingPlan(limits, 1, 0, 4);
+                (void)lumin::render::detail::makeDescriptorIndexingPlan(limits, 1, 0, 4, 1);
             },
             "Zero frame slots must be rejected before descriptor planning.");
+
+        requireThrows<std::invalid_argument>(
+            [&] {
+                (void)lumin::render::detail::makeDescriptorIndexingPlan(limits, 1, 1, 0, 1);
+            },
+            "Zero shadow cascades must be rejected before descriptor planning.");
 
         requireThrows<std::length_error>(
             [&] {

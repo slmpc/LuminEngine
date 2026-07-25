@@ -30,12 +30,6 @@ namespace lumin::render {
             glm::vec4 splits{0.0f};
         };
 
-        void checkVk(VkResult result, const char* message) {
-            if (result != VK_SUCCESS) {
-                throw std::runtime_error(message);
-            }
-        }
-
         glm::vec3 normalizedLightDirection(glm::vec3 direction) {
             if (glm::dot(direction, direction) < 1e-6f) {
                 direction = glm::vec3{-0.45f, -0.8f, -0.35f};
@@ -52,11 +46,6 @@ namespace lumin::render {
                 index /= base;
             }
             return result;
-        }
-
-        bool isSrgbFormat(VkFormat format) {
-            return format == VK_FORMAT_R8G8B8A8_SRGB || format == VK_FORMAT_B8G8R8A8_SRGB ||
-                   format == VK_FORMAT_A8B8G8R8_SRGB_PACK32;
         }
 
         CascadeShadowData calculateCascadeShadows(const scene::Camera& camera, float aspectRatio,
@@ -129,61 +118,26 @@ namespace lumin::render {
                     glm::lookAt(snappedCenter - lightDirection * lightDistance, snappedCenter, lightUp);
                 glm::mat4 lightProjection =
                     glm::orthoRH_ZO(-radius, radius, -radius, radius, 0.1f, 2.0f * (radius + casterMargin));
-                lightProjection[1][1] *= -1.0f;
                 result.viewProjections[cascade] = lightProjection * lightView;
                 sliceNear = sliceFar;
             }
             return result;
         }
 
-        FrameGraphTextureDesc textureDesc(const VulkanImage& image, VkExtent2D extent, VkImageUsageFlags usage,
-                                          VkImageLayout initialLayout = VK_IMAGE_LAYOUT_UNDEFINED) {
+        FrameGraphTextureDesc textureDesc(const GpuTexture& image,
+                                          nvrhi::ResourceStates initialState = nvrhi::ResourceStates::Unknown) {
             FrameGraphTextureDesc desc;
-            desc.width = extent.width;
-            desc.height = extent.height;
-            desc.format = image.format;
-            desc.usage = usage;
-            desc.image = image.image;
-            desc.aspectMask = image.aspectMask;
-            desc.initialLayout = initialLayout;
-            if (initialLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-                desc.initialStages = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-                desc.initialAccess = VK_ACCESS_SHADER_READ_BIT;
-            }
+            desc.texture = image.texture;
+            desc.initialState = initialState;
             return desc;
         }
 
-        void setViewportAndScissor(VkCommandBuffer commandBuffer, VkExtent2D extent) {
-            const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height),
-                                      0.0f, 1.0f};
-            const VkRect2D scissor{{0, 0}, extent};
-            vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-            vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-        }
-
-        void recordFullscreen(VkCommandBuffer commandBuffer, VkImageView targetView, VkExtent2D extent,
-                              const GraphicsPipeline& pipeline, VkDescriptorSet descriptorSet,
-                              VkAttachmentLoadOp loadOp, VkClearColorValue clearColor = {}) {
-            VkRenderingAttachmentInfo colorAttachment{};
-            colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-            colorAttachment.imageView = targetView;
-            colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            colorAttachment.loadOp = loadOp;
-            colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            colorAttachment.clearValue.color = clearColor;
-            VkRenderingInfo renderingInfo{};
-            renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-            renderingInfo.renderArea.extent = extent;
-            renderingInfo.layerCount = 1;
-            renderingInfo.colorAttachmentCount = 1;
-            renderingInfo.pColorAttachments = &colorAttachment;
-            vkCmdBeginRendering(commandBuffer, &renderingInfo);
-            setViewportAndScissor(commandBuffer, extent);
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout, 0, 1,
-                                    &descriptorSet, 0, nullptr);
-            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
-            vkCmdEndRendering(commandBuffer);
+        nvrhi::FramebufferHandle createFramebuffer(nvrhi::IDevice& device, const nvrhi::FramebufferDesc& desc) {
+            nvrhi::FramebufferHandle framebuffer = device.createFramebuffer(desc);
+            if (!framebuffer) {
+                throw std::runtime_error("Failed to create an NvRHI LevelRenderer framebuffer.");
+            }
+            return framebuffer;
         }
 
     } // namespace
@@ -243,8 +197,28 @@ namespace lumin::render {
             return;
         }
 
-        recordCommandBuffer(frame->commandBuffer, frame->frameIndex, frame->imageIndex, camera, settings);
-        if (context_.submitFrame(*frame)) {
+        RecordedFrameState recorded;
+        try {
+            recorded = recordCommandList(*frame->commandList, frame->frameIndex, frame->imageIndex, camera, settings);
+        } catch (...) {
+            imgui_.cancelFrame();
+            context_.cancelFrame(*frame);
+            refreshSwapchainResources();
+            throw;
+        }
+
+        const bool recreate = context_.submitFrame(*frame);
+        textures_.markHistoryValid(frame->frameIndex);
+        frameResourcesInitialized_[frame->frameIndex] = true;
+        previousViewProjection_ = recorded.viewProjection;
+        previousCameraPosition_ = recorded.cameraPosition;
+        previousCameraForward_ = recorded.cameraForward;
+        previousFieldOfView_ = recorded.fieldOfView;
+        previousTaaEnabled_ = recorded.taaEnabled;
+        previousGlobalIlluminationEnabled_ = recorded.globalIlluminationEnabled;
+        hasPreviousCamera_ = true;
+        ++frameNumber_;
+        if (recreate) {
             refreshSwapchainResources();
         }
     }
@@ -270,28 +244,32 @@ namespace lumin::render {
     }
 
     void LevelRenderer::createRenderResources() {
-        const VkExtent2D extent = context_.swapchainExtent();
-        textures_.create(extent);
-        pipelines_.create(textures_.descriptorSetLayout(), textures_.lightingFormat(), context_.swapchainFormat());
+        const std::uint32_t width = context_.swapchainWidth();
+        const std::uint32_t height = context_.swapchainHeight();
+        textures_.create(width, height);
+        pipelines_.create(textures_.bindingLayout(), textures_.lightingFormat(), context_.swapchainRhiFormat());
 
         std::array<gi::FrameResources, TextureManager::maxFramesInFlight> giFrames{};
         for (std::uint32_t frameIndex = 0; frameIndex < giFrames.size(); ++frameIndex) {
             const TextureFrameResources& frame = textures_.frame(frameIndex);
-            giFrames[frameIndex].positionView = frame.position.view;
-            giFrames[frameIndex].normalRoughnessView = frame.normalRoughness.view;
-            giFrames[frameIndex].albedoMetallicView = frame.albedo.view;
-            giFrames[frameIndex].motionView = frame.motion.view;
-            giFrames[frameIndex].depthView = frame.depth.view;
+            giFrames[frameIndex].position = frame.position.texture;
+            giFrames[frameIndex].normalRoughness = frame.normalRoughness.texture;
+            giFrames[frameIndex].albedoMetallic = frame.albedo.texture;
+            giFrames[frameIndex].motion = frame.motion.texture;
+            giFrames[frameIndex].depth = frame.depth.texture;
             giFrames[frameIndex].uniformBuffer = frame.postProcessUniform.buffer;
-            giFrames[frameIndex].outputImage = frame.globalIllumination.image;
-            giFrames[frameIndex].outputView = frame.globalIllumination.view;
+            giFrames[frameIndex].output = frame.globalIllumination.texture;
         }
-        globalIllumination_->create(
-            gi::CreateInfo{context_, extent, textures_.globalIlluminationFormat(), textures_.sampler(), giFrames});
+        globalIllumination_->create(gi::CreateInfo{context_.rhiDevice(),
+                                                   {width, height},
+                                                   textures_.globalIlluminationFormat(),
+                                                   textures_.sampler(),
+                                                   giFrames});
         createModelRenderer();
         hasPreviousCamera_ = false;
         previousGlobalIlluminationEnabled_ = true;
         frameNumber_ = 0;
+        frameResourcesInitialized_.fill(false);
     }
 
     void LevelRenderer::createModelRenderer() {
@@ -300,11 +278,11 @@ namespace lumin::render {
             modelRenderer_.reset();
             return;
         }
-        const std::array<VkFormat, 4> colorFormats = {textures_.positionFormat(), textures_.normalFormat(),
-                                                      textures_.albedoFormat(), textures_.motionFormat()};
-        modelRenderer_ =
-            std::make_unique<ModelRenderer>(context_, level_, shaderDirectory_, colorFormats, textures_.depthFormat(),
-                                            textures_.shadowDepthFormat(), TextureManager::maxFramesInFlight);
+        const std::array<nvrhi::Format, 4> colorFormats = {textures_.positionFormat(), textures_.normalFormat(),
+                                                           textures_.albedoFormat(), textures_.motionFormat()};
+        modelRenderer_ = std::make_unique<ModelRenderer>(
+            context_, level_, shaderDirectory_, colorFormats, textures_.depthFormat(), textures_.shadowDepthFormat(),
+            TextureManager::maxFramesInFlight, context_.modelRendererCapabilities());
     }
 
     void LevelRenderer::destroyRenderResources() noexcept {
@@ -324,11 +302,17 @@ namespace lumin::render {
         swapchainGeneration_ = context_.swapchainGeneration();
     }
 
-    void LevelRenderer::recordCommandBuffer(VkCommandBuffer commandBuffer, std::uint32_t frameIndex,
-                                            std::uint32_t imageIndex, const scene::Camera& camera,
-                                            const RenderSettings& settings) {
-        const VkExtent2D extent = context_.swapchainExtent();
-        const float aspectRatio = static_cast<float>(extent.width) / static_cast<float>(std::max(1U, extent.height));
+    LevelRenderer::RecordedFrameState LevelRenderer::recordCommandList(nvrhi::ICommandList& commandList,
+                                                                       std::uint32_t frameIndex,
+                                                                       std::uint32_t imageIndex,
+                                                                       const scene::Camera& camera,
+                                                                       const RenderSettings& settings) {
+        const std::uint32_t width = context_.swapchainWidth();
+        const std::uint32_t height = context_.swapchainHeight();
+        if (width == 0 || height == 0) {
+            throw std::runtime_error("LevelRenderer cannot record a frame with a zero render extent.");
+        }
+        const float aspectRatio = static_cast<float>(width) / static_cast<float>(std::max(1U, height));
         const glm::mat4 view = camera.viewMatrix();
         const glm::mat4 unjitteredViewProjection = camera.projectionMatrix(aspectRatio) * view;
         const glm::vec3 cameraForward = camera.forward();
@@ -350,8 +334,8 @@ namespace lumin::render {
         if (settings.enableTaa) {
             const std::uint32_t jitterIndex = static_cast<std::uint32_t>(frameNumber_ % 8U) + 1U;
             const glm::vec2 jitter{halton(jitterIndex, 2U) - 0.5f, halton(jitterIndex, 3U) - 0.5f};
-            projection[2][0] += (2.0f * jitter.x) / static_cast<float>(extent.width);
-            projection[2][1] += (2.0f * jitter.y) / static_cast<float>(extent.height);
+            projection[2][0] += (2.0f * jitter.x) / static_cast<float>(width);
+            projection[2][1] += (2.0f * jitter.y) / static_cast<float>(height);
         }
         const glm::mat4 viewProjection = projection * view;
         const glm::mat4 previousViewProjection = cameraCut ? viewProjection : previousViewProjection_;
@@ -371,339 +355,296 @@ namespace lumin::render {
         uniforms.cameraPosition = glm::vec4{camera.position(), 1.0f};
         uniforms.cameraForward = glm::vec4{cameraForward, 0.0f};
         uniforms.lightDirection = glm::vec4{lightDirection, 0.0f};
-        uniforms.renderSize =
-            glm::vec4{static_cast<float>(extent.width), static_cast<float>(extent.height),
-                      1.0f / static_cast<float>(extent.width), 1.0f / static_cast<float>(extent.height)};
+        uniforms.renderSize = glm::vec4{static_cast<float>(width), static_cast<float>(height),
+                                        1.0f / static_cast<float>(width), 1.0f / static_cast<float>(height)};
         uniforms.renderOptions = glm::vec4{textures_.historyValid(historyReadIndex) ? 1.0f : 0.0f,
                                            settings.enableGlobalIllumination ? 1.0f : 0.0f,
                                            settings.enableShadows ? 1.0f : 0.0f, settings.enableTaa ? 1.0f : 0.0f};
         uniforms.tonemapOptions.x = settings.exposure;
-        uniforms.tonemapOptions.y = isSrgbFormat(context_.swapchainFormat()) ? 1.0f : 0.0f;
+        uniforms.tonemapOptions.y = context_.swapchainIsSrgb() ? 1.0f : 0.0f;
         textures_.updatePostProcessUniforms(frameIndex, uniforms);
-
-        VkCommandBufferBeginInfo beginInfo{};
-        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        checkVk(vkBeginCommandBuffer(commandBuffer, &beginInfo), "Failed to begin LevelRenderer command buffer.");
 
         const TextureFrameResources& frame = textures_.frame(frameIndex);
         const TextureFrameResources& historyReadFrame = textures_.frame(historyReadIndex);
         frameGraph_.reset();
 
         std::array<FrameGraphResourceHandle, shadowCascadeCount> shadows{};
-        const VkExtent2D shadowExtent{shadowMapResolution, shadowMapResolution};
+        const nvrhi::ResourceStates frameInitialState = frameResourcesInitialized_[frameIndex]
+                                                            ? nvrhi::ResourceStates::ShaderResource
+                                                            : nvrhi::ResourceStates::Common;
+        const nvrhi::ResourceStates depthInitialState = frameResourcesInitialized_[frameIndex]
+                                                            ? nvrhi::ResourceStates::DepthWrite
+                                                            : nvrhi::ResourceStates::Common;
         for (std::uint32_t cascade = 0; cascade < shadowCascadeCount; ++cascade) {
-            shadows[cascade] = frameGraph_.importTexture(
-                "shadow.cascade" + std::to_string(cascade),
-                textureDesc(frame.shadowCascades[cascade], shadowExtent,
-                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT));
+            shadows[cascade] = frameGraph_.importTexture("shadow.cascade" + std::to_string(cascade),
+                                                         textureDesc(frame.shadowCascades[cascade], frameInitialState));
         }
-        const auto position = frameGraph_.importTexture(
-            "gbuffer.position",
-            textureDesc(frame.position, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT));
-        const auto normal = frameGraph_.importTexture(
-            "gbuffer.normal", textureDesc(frame.normalRoughness, extent,
-                                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT));
-        const auto albedo = frameGraph_.importTexture(
-            "gbuffer.albedo",
-            textureDesc(frame.albedo, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT));
-        const auto motion = frameGraph_.importTexture(
-            "gbuffer.motion",
-            textureDesc(frame.motion, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT));
-        const auto depth = frameGraph_.importTexture(
-            "gbuffer.depth", textureDesc(frame.depth, extent, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT));
+        const auto position =
+            frameGraph_.importTexture("gbuffer.position", textureDesc(frame.position, frameInitialState));
+        const auto normal =
+            frameGraph_.importTexture("gbuffer.normal", textureDesc(frame.normalRoughness, frameInitialState));
+        const auto albedo = frameGraph_.importTexture("gbuffer.albedo", textureDesc(frame.albedo, frameInitialState));
+        const auto motion = frameGraph_.importTexture("gbuffer.motion", textureDesc(frame.motion, frameInitialState));
+        const auto depth = frameGraph_.importTexture("gbuffer.depth", textureDesc(frame.depth, depthInitialState));
         const auto globalIllumination = frameGraph_.importTexture(
-            "global-illumination.output",
-            textureDesc(frame.globalIllumination, extent,
-                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT));
-        const auto lighting = frameGraph_.importTexture(
-            "lighting.hdr",
-            textureDesc(frame.lighting, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT));
-        const auto taaResolved = frameGraph_.importTexture(
-            "taa.resolved", textureDesc(frame.taaResolved, extent,
-                                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT));
-        const VkImageLayout historyWriteInitial = textures_.historyInitialized(frameIndex)
-                                                      ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                                                      : VK_IMAGE_LAYOUT_UNDEFINED;
-        const VkImageLayout historyReadInitial = textures_.historyInitialized(historyReadIndex)
-                                                     ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                                                     : VK_IMAGE_LAYOUT_UNDEFINED;
+            "global-illumination.output", textureDesc(frame.globalIllumination, frameInitialState));
+        const auto lighting = frameGraph_.importTexture("lighting.hdr", textureDesc(frame.lighting, frameInitialState));
+        const auto taaResolved =
+            frameGraph_.importTexture("taa.resolved", textureDesc(frame.taaResolved, frameInitialState));
         const auto historyRead = frameGraph_.importTexture(
-            "taa.history.read",
-            textureDesc(historyReadFrame.history, extent, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                        historyReadInitial));
+            "taa.history.read", textureDesc(historyReadFrame.history, textures_.historyInitialState(historyReadIndex)));
         const auto historyWrite = frameGraph_.importTexture(
-            "taa.history.write",
-            textureDesc(frame.history, extent, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                        historyWriteInitial));
+            "taa.history.write", textureDesc(frame.history, textures_.historyInitialState(frameIndex)));
 
         FrameGraphTextureDesc swapDesc;
-        swapDesc.width = extent.width;
-        swapDesc.height = extent.height;
-        swapDesc.format = context_.swapchainFormat();
-        swapDesc.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        swapDesc.image = context_.swapchainImages()[imageIndex];
-        swapDesc.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        swapDesc.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        swapDesc.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        swapDesc.texture = context_.swapchainTextures().at(imageIndex);
+        swapDesc.initialState = context_.swapchainTextureInitialState(imageIndex);
+        if (swapDesc.initialState == nvrhi::ResourceStates::Unknown) {
+            swapDesc.initialState = nvrhi::ResourceStates::Common;
+        }
+        swapDesc.finalState = nvrhi::ResourceStates::Present;
         const auto swap = frameGraph_.importTexture("swapchain.color", swapDesc);
+        FrameGraphTextureDesc fontDesc;
+        fontDesc.texture = imgui_.fontTexture();
+        fontDesc.initialState = imgui_.fontTextureInitialState();
+        fontDesc.finalState = nvrhi::ResourceStates::ShaderResource;
+        const auto imguiFont = frameGraph_.importTexture("imgui.font", fontDesc);
+
+        nvrhi::IDevice& device = *context_.rhiDevice();
+        std::array<nvrhi::FramebufferHandle, shadowCascadeCount> shadowFramebuffers{};
+        for (std::uint32_t cascade = 0; cascade < shadowCascadeCount; ++cascade) {
+            shadowFramebuffers[cascade] = createFramebuffer(
+                device, nvrhi::FramebufferDesc().setDepthAttachment(frame.shadowCascades[cascade].texture));
+        }
+        nvrhi::FramebufferDesc gbufferDesc;
+        gbufferDesc.addColorAttachment(frame.position.texture)
+            .addColorAttachment(frame.normalRoughness.texture)
+            .addColorAttachment(frame.albedo.texture)
+            .addColorAttachment(frame.motion.texture)
+            .setDepthAttachment(frame.depth.texture);
+        const nvrhi::FramebufferHandle gbufferFramebuffer = createFramebuffer(device, gbufferDesc);
+        const nvrhi::FramebufferHandle lightingFramebuffer =
+            createFramebuffer(device, nvrhi::FramebufferDesc().addColorAttachment(frame.lighting.texture));
+        const nvrhi::FramebufferHandle taaFramebuffer =
+            createFramebuffer(device, nvrhi::FramebufferDesc().addColorAttachment(frame.taaResolved.texture));
+        const nvrhi::FramebufferHandle tonemapFramebuffer = createFramebuffer(
+            device, nvrhi::FramebufferDesc().addColorAttachment(context_.swapchainTextures().at(imageIndex)));
 
         for (std::uint32_t cascade = 0; cascade < shadowCascadeCount; ++cascade) {
             frameGraph_.addPass(
+                "CSM clear " + std::to_string(cascade), FrameGraphPassType::Transfer,
+                [shadow = shadows[cascade]](FrameGraphBuilder& builder) {
+                    builder.writeTexture(shadow, nvrhi::ResourceStates::CopyDest);
+                },
+                [texture = frame.shadowCascades[cascade].texture](const FrameGraphContext& context) {
+                    context.commandList->clearDepthStencilTexture(texture, nvrhi::AllSubresources, true, 1.0f, false,
+                                                                  0);
+                });
+            frameGraph_.addPass(
                 "CSM cascade " + std::to_string(cascade), FrameGraphPassType::Graphics,
                 [shadow = shadows[cascade]](FrameGraphBuilder& builder) {
-                    builder.writeTexture(shadow, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                                             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                                         VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                    builder.writeTexture(shadow, nvrhi::ResourceStates::DepthWrite);
                 },
-                [this, commandBuffer, frameIndex, cascade, &cascades](const FrameGraphContext&) {
-                    recordShadowPass(commandBuffer, frameIndex, cascade, cascades.viewProjections[cascade]);
+                [this, frameIndex, cascade, &cascades,
+                 framebuffer = shadowFramebuffers[cascade]](const FrameGraphContext& context) {
+                    recordShadowPass(*context.commandList, *framebuffer, frameIndex, cascade,
+                                     cascades.viewProjections[cascade]);
                 });
         }
 
         frameGraph_.addPass(
+            "G-buffer clear", FrameGraphPassType::Transfer,
+            [position, normal, albedo, motion, depth](FrameGraphBuilder& builder) {
+                for (FrameGraphResourceHandle color : {position, normal, albedo, motion}) {
+                    builder.writeTexture(color, nvrhi::ResourceStates::CopyDest);
+                }
+                builder.writeTexture(depth, nvrhi::ResourceStates::CopyDest);
+            },
+            [&frame](const FrameGraphContext& context) {
+                const std::array<nvrhi::Color, 4> colors = {
+                    nvrhi::Color{0.0f, 0.0f, 0.0f, 0.0f}, nvrhi::Color{0.0f, 0.0f, 1.0f, 1.0f},
+                    nvrhi::Color{0.0f, 0.0f, 0.0f, 1.0f}, nvrhi::Color{0.0f, 0.0f, 0.0f, 0.0f}};
+                const std::array<const GpuTexture*, 4> images = {&frame.position, &frame.normalRoughness,
+                                                                 &frame.albedo, &frame.motion};
+                for (std::uint32_t index = 0; index < images.size(); ++index) {
+                    context.commandList->clearTextureFloat(images[index]->texture, nvrhi::AllSubresources,
+                                                           colors[index]);
+                }
+                context.commandList->clearDepthStencilTexture(frame.depth.texture, nvrhi::AllSubresources, true,
+                                                              1.0f, false, 0);
+            });
+        frameGraph_.addPass(
             "G-buffer", FrameGraphPassType::Graphics,
             [position, normal, albedo, motion, depth](FrameGraphBuilder& builder) {
                 for (FrameGraphResourceHandle color : {position, normal, albedo, motion}) {
-                    builder.writeTexture(color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+                    builder.writeTexture(color, nvrhi::ResourceStates::RenderTarget);
                 }
-                builder.writeTexture(depth, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                     VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                                         VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                                     VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                builder.writeTexture(depth, nvrhi::ResourceStates::DepthWrite);
             },
-            [this, commandBuffer, frameIndex, viewProjection, previousViewProjection](const FrameGraphContext&) {
-                recordGBufferPass(commandBuffer, frameIndex, viewProjection, previousViewProjection);
+            [this, frameIndex, viewProjection, previousViewProjection,
+             framebuffer = gbufferFramebuffer](const FrameGraphContext& context) {
+                recordGBufferPass(*context.commandList, *framebuffer, frameIndex, viewProjection,
+                                  previousViewProjection);
             });
 
-        globalIllumination_->addPasses(
-            frameGraph_, gi::FrameInfo{level_, frameIndex, frameNumber_, settings.enableGlobalIllumination, cameraCut,
-                                       extent, position, normal, albedo, motion, depth, globalIllumination});
+        globalIllumination_->addPasses(frameGraph_, gi::FrameInfo{level_,
+                                                                  frameIndex,
+                                                                  frameNumber_,
+                                                                  settings.enableGlobalIllumination,
+                                                                  cameraCut,
+                                                                  {width, height},
+                                                                  position,
+                                                                  normal,
+                                                                  albedo,
+                                                                  motion,
+                                                                  depth,
+                                                                  globalIllumination});
 
         frameGraph_.addPass(
-            "Procedural sky", FrameGraphPassType::Graphics,
+            "Procedural sky clear", FrameGraphPassType::Transfer,
             [lighting](FrameGraphBuilder& builder) {
-                builder.writeTexture(lighting, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                     VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                builder.writeTexture(lighting, nvrhi::ResourceStates::CopyDest);
             },
-            [this, commandBuffer, frameIndex](const FrameGraphContext&) {
-                recordSkyPass(commandBuffer, frameIndex);
+            [texture = frame.lighting.texture](const FrameGraphContext& context) {
+                context.commandList->clearTextureFloat(texture, nvrhi::AllSubresources,
+                                                       nvrhi::Color{0.035f, 0.04f, 0.05f, 1.0f});
+            });
+        frameGraph_.addPass(
+            "Procedural sky", FrameGraphPassType::Graphics,
+            [globalIllumination, lighting](FrameGraphBuilder& builder) {
+                builder.readTexture(globalIllumination, nvrhi::ResourceStates::ShaderResource);
+                builder.writeTexture(lighting, nvrhi::ResourceStates::RenderTarget);
+            },
+            [this, frameIndex, framebuffer = lightingFramebuffer](const FrameGraphContext& context) {
+                recordFullscreenPass(*context.commandList, *framebuffer, pipelines_.sky(), frameIndex);
             });
 
         frameGraph_.addPass(
             "Deferred lighting", FrameGraphPassType::Graphics,
             [position, normal, albedo, globalIllumination, shadows, lighting](FrameGraphBuilder& builder) {
                 for (FrameGraphResourceHandle input : {position, normal, albedo, globalIllumination}) {
-                    builder.readTexture(input, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+                    builder.readTexture(input, nvrhi::ResourceStates::ShaderResource);
                 }
                 for (FrameGraphResourceHandle shadow : shadows) {
-                    builder.readTexture(shadow, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
-                                        VK_IMAGE_ASPECT_DEPTH_BIT);
+                    builder.readTexture(shadow, nvrhi::ResourceStates::ShaderResource);
                 }
-                builder.writeTexture(lighting, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                     VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                builder.writeTexture(lighting, nvrhi::ResourceStates::RenderTarget);
             },
-            [this, commandBuffer, frameIndex](const FrameGraphContext&) {
-                recordDeferredLightingPass(commandBuffer, frameIndex);
+            [this, frameIndex, framebuffer = lightingFramebuffer](const FrameGraphContext& context) {
+                recordFullscreenPass(*context.commandList, *framebuffer, pipelines_.deferredLighting(), frameIndex);
             });
 
+        frameGraph_.addPass(
+            "TAA clear", FrameGraphPassType::Transfer,
+            [taaResolved](FrameGraphBuilder& builder) {
+                builder.writeTexture(taaResolved, nvrhi::ResourceStates::CopyDest);
+            },
+            [texture = frame.taaResolved.texture](const FrameGraphContext& context) {
+                context.commandList->clearTextureFloat(texture, nvrhi::AllSubresources,
+                                                       nvrhi::Color{0.0f, 0.0f, 0.0f, 0.0f});
+            });
         frameGraph_.addPass(
             "TAA resolve", FrameGraphPassType::Graphics,
             [lighting, motion, historyRead, taaResolved](FrameGraphBuilder& builder) {
                 for (FrameGraphResourceHandle input : {lighting, motion, historyRead}) {
-                    builder.readTexture(input, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+                    builder.readTexture(input, nvrhi::ResourceStates::ShaderResource);
                 }
-                builder.writeTexture(taaResolved, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                     VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                builder.writeTexture(taaResolved, nvrhi::ResourceStates::RenderTarget);
             },
-            [this, commandBuffer, frameIndex](const FrameGraphContext&) {
-                recordTaaPass(commandBuffer, frameIndex);
+            [this, frameIndex, framebuffer = taaFramebuffer](const FrameGraphContext& context) {
+                recordFullscreenPass(*context.commandList, *framebuffer, pipelines_.taa(), frameIndex);
             });
 
         frameGraph_.addPass(
             "TAA history copy", FrameGraphPassType::Transfer,
             [taaResolved, historyWrite](FrameGraphBuilder& builder) {
-                builder.readTexture(taaResolved, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                    VK_ACCESS_TRANSFER_READ_BIT);
-                builder.writeTexture(historyWrite, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                     VK_ACCESS_TRANSFER_WRITE_BIT);
+                builder.readTexture(taaResolved, nvrhi::ResourceStates::CopySource);
+                builder.writeTexture(historyWrite, nvrhi::ResourceStates::CopyDest);
             },
-            [this, commandBuffer, frameIndex](const FrameGraphContext&) {
-                recordHistoryCopy(commandBuffer, frameIndex);
+            [this, frameIndex](const FrameGraphContext& context) {
+                recordHistoryCopy(*context.commandList, frameIndex);
             });
 
         frameGraph_.addPass(
             "TAA history ready", FrameGraphPassType::Transfer,
             [historyWrite](FrameGraphBuilder& builder) {
-                builder.readTexture(historyWrite, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+                builder.readTexture(historyWrite, nvrhi::ResourceStates::ShaderResource);
             },
             nullptr);
 
         frameGraph_.addPass(
             "Tonemap", FrameGraphPassType::Graphics,
-            [taaResolved, swap](FrameGraphBuilder& builder) {
-                builder.readTexture(taaResolved, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
-                builder.writeTexture(swap, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                     VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            [taaResolved, historyWrite, swap](FrameGraphBuilder& builder) {
+                builder.readTexture(taaResolved, nvrhi::ResourceStates::ShaderResource);
+                builder.readTexture(historyWrite, nvrhi::ResourceStates::ShaderResource);
+                builder.writeTexture(swap, nvrhi::ResourceStates::RenderTarget);
             },
-            [this, commandBuffer, frameIndex, imageIndex](const FrameGraphContext&) {
-                recordTonemapPass(commandBuffer, frameIndex, imageIndex);
+            [this, frameIndex, framebuffer = tonemapFramebuffer](const FrameGraphContext& context) {
+                recordFullscreenPass(*context.commandList, *framebuffer, pipelines_.tonemap(), frameIndex);
             });
 
         frameGraph_.addPass(
             "ImGui overlay", FrameGraphPassType::Graphics,
-            [swap](FrameGraphBuilder& builder) {
-                builder.writeTexture(swap, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                     VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            [swap, imguiFont](FrameGraphBuilder& builder) {
+                builder.readTexture(imguiFont, nvrhi::ResourceStates::ShaderResource);
+                builder.writeTexture(swap, nvrhi::ResourceStates::RenderTarget);
             },
-            [this, commandBuffer, imageIndex](const FrameGraphContext&) {
-                imgui_.record(commandBuffer, context_.swapchainImageViews()[imageIndex], context_.swapchainExtent());
+            [this, imageIndex, frameIndex](const FrameGraphContext& context) {
+                imgui_.record(*context.commandList, imageIndex, frameIndex);
             });
 
         frameGraph_.addPass(
             "Present", FrameGraphPassType::Present,
             [swap](FrameGraphBuilder& builder) {
-                builder.readTexture(swap, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0);
+                builder.readTexture(swap, nvrhi::ResourceStates::Present);
             },
             nullptr);
 
-        FrameGraphContext graphContext;
-        graphContext.device = context_.device();
-        graphContext.commandBuffer = commandBuffer;
-        graphContext.cmdBeginDebugUtilsLabel = context_.cmdBeginDebugUtilsLabel();
-        graphContext.cmdEndDebugUtilsLabel = context_.cmdEndDebugUtilsLabel();
-        graphContext.frameIndex = frameIndex;
-        frameGraph_.execute(graphContext);
-        checkVk(vkEndCommandBuffer(commandBuffer), "Failed to end LevelRenderer command buffer.");
-
-        textures_.markHistoryValid(frameIndex);
-        previousViewProjection_ = viewProjection;
-        previousCameraPosition_ = camera.position();
-        previousCameraForward_ = cameraForward;
-        previousFieldOfView_ = camera.fieldOfViewDegrees();
-        previousTaaEnabled_ = settings.enableTaa;
-        previousGlobalIlluminationEnabled_ = settings.enableGlobalIllumination;
-        hasPreviousCamera_ = true;
-        ++frameNumber_;
+        frameGraph_.execute(FrameGraphContext{&commandList, nullptr, frameIndex});
+        imgui_.markFontTextureInitialized();
+        return RecordedFrameState{viewProjection,     camera.position(),
+                                  cameraForward,      camera.fieldOfViewDegrees(),
+                                  settings.enableTaa, settings.enableGlobalIllumination};
     }
 
-    void LevelRenderer::recordShadowPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex,
-                                         std::uint32_t cascadeIndex, const glm::mat4& lightViewProjection) {
-        const TextureFrameResources& frame = textures_.frame(frameIndex);
-        VkRenderingAttachmentInfo depthAttachment{};
-        depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        depthAttachment.imageView = frame.shadowCascades[cascadeIndex].view;
-        depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        depthAttachment.clearValue.depthStencil = {1.0f, 0};
-        VkRenderingInfo renderingInfo{};
-        renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-        renderingInfo.renderArea.extent = VkExtent2D{shadowMapResolution, shadowMapResolution};
-        renderingInfo.layerCount = 1;
-        renderingInfo.pDepthAttachment = &depthAttachment;
-        vkCmdBeginRendering(commandBuffer, &renderingInfo);
-        setViewportAndScissor(commandBuffer, VkExtent2D{shadowMapResolution, shadowMapResolution});
+    void LevelRenderer::recordShadowPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
+                                         std::uint32_t frameIndex, std::uint32_t cascadeIndex,
+                                         const glm::mat4& lightViewProjection) {
         if (modelRenderer_ != nullptr) {
-            modelRenderer_->recordShadow(commandBuffer, frameIndex, cascadeIndex, lightViewProjection);
+            modelRenderer_->recordShadow(commandList, framebuffer, shadowMapResolution, shadowMapResolution,
+                                         frameIndex, cascadeIndex, lightViewProjection);
         }
-        vkCmdEndRendering(commandBuffer);
     }
 
-    void LevelRenderer::recordGBufferPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex,
-                                          const glm::mat4& viewProjection, const glm::mat4& previousViewProjection) {
-        const VkExtent2D extent = context_.swapchainExtent();
+    void LevelRenderer::recordGBufferPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
+                                          std::uint32_t frameIndex, const glm::mat4& viewProjection,
+                                          const glm::mat4& previousViewProjection) {
         const TextureFrameResources& frame = textures_.frame(frameIndex);
-        const std::array<VkClearValue, 4> colorClears = {
-            VkClearValue{.color = {{0.0f, 0.0f, 0.0f, 0.0f}}},
-            VkClearValue{.color = {{0.0f, 0.0f, 1.0f, 1.0f}}},
-            VkClearValue{.color = {{0.0f, 0.0f, 0.0f, 1.0f}}},
-            VkClearValue{.color = {{0.0f, 0.0f, 0.0f, 0.0f}}},
-        };
-        std::array<VkRenderingAttachmentInfo, 4> colorAttachments{};
-        const std::array<const VulkanImage*, 4> images = {&frame.position, &frame.normalRoughness, &frame.albedo,
-                                                          &frame.motion};
-        for (std::uint32_t index = 0; index < images.size(); ++index) {
-            colorAttachments[index].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-            colorAttachments[index].imageView = images[index]->view;
-            colorAttachments[index].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            colorAttachments[index].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-            colorAttachments[index].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            colorAttachments[index].clearValue = colorClears[index];
-        }
-        VkRenderingAttachmentInfo depthAttachment{};
-        depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        depthAttachment.imageView = frame.depth.view;
-        depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depthAttachment.clearValue.depthStencil = {1.0f, 0};
-
-        VkRenderingInfo renderingInfo{};
-        renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-        renderingInfo.renderArea.extent = extent;
-        renderingInfo.layerCount = 1;
-        renderingInfo.colorAttachmentCount = static_cast<std::uint32_t>(colorAttachments.size());
-        renderingInfo.pColorAttachments = colorAttachments.data();
-        renderingInfo.pDepthAttachment = &depthAttachment;
-        vkCmdBeginRendering(commandBuffer, &renderingInfo);
-        setViewportAndScissor(commandBuffer, extent);
         if (modelRenderer_ != nullptr) {
-            modelRenderer_->recordGBuffer(commandBuffer, frameIndex, viewProjection, previousViewProjection);
+            modelRenderer_->recordGBuffer(commandList, framebuffer, frame.position.width, frame.position.height,
+                                          frameIndex, viewProjection, previousViewProjection);
         }
-        vkCmdEndRendering(commandBuffer);
     }
 
-    void LevelRenderer::recordSkyPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex) {
+    void LevelRenderer::recordFullscreenPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
+                                             const nvrhi::GraphicsPipelineHandle& pipeline,
+                                             std::uint32_t frameIndex) {
+        const std::uint32_t width = context_.swapchainWidth();
+        const std::uint32_t height = context_.swapchainHeight();
+        nvrhi::GraphicsState state;
+        state.setPipeline(pipeline)
+            .setFramebuffer(&framebuffer)
+            .setViewport(nvrhi::ViewportState().addViewportAndScissorRect(
+                nvrhi::Viewport(static_cast<float>(width), static_cast<float>(height))))
+            .addBindingSet(textures_.bindingSet(frameIndex));
+        commandList.setGraphicsState(state);
+        commandList.draw(nvrhi::DrawArguments().setVertexCount(3));
+    }
+
+    void LevelRenderer::recordHistoryCopy(nvrhi::ICommandList& commandList, std::uint32_t frameIndex) {
         const TextureFrameResources& frame = textures_.frame(frameIndex);
-        recordFullscreen(commandBuffer, frame.lighting.view, context_.swapchainExtent(), pipelines_.sky(),
-                         textures_.descriptorSet(frameIndex), VK_ATTACHMENT_LOAD_OP_CLEAR,
-                         VkClearColorValue{{0.035f, 0.04f, 0.05f, 1.0f}});
-    }
-
-    void LevelRenderer::recordDeferredLightingPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex) {
-        const TextureFrameResources& frame = textures_.frame(frameIndex);
-        recordFullscreen(commandBuffer, frame.lighting.view, context_.swapchainExtent(), pipelines_.deferredLighting(),
-                         textures_.descriptorSet(frameIndex), VK_ATTACHMENT_LOAD_OP_LOAD);
-    }
-
-    void LevelRenderer::recordTaaPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex) {
-        const TextureFrameResources& frame = textures_.frame(frameIndex);
-        recordFullscreen(commandBuffer, frame.taaResolved.view, context_.swapchainExtent(), pipelines_.taa(),
-                         textures_.descriptorSet(frameIndex), VK_ATTACHMENT_LOAD_OP_CLEAR);
-    }
-
-    void LevelRenderer::recordHistoryCopy(VkCommandBuffer commandBuffer, std::uint32_t frameIndex) {
-        const VkExtent2D extent = context_.swapchainExtent();
-        const TextureFrameResources& frame = textures_.frame(frameIndex);
-        VkImageCopy copy{};
-        copy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        copy.srcSubresource.layerCount = 1;
-        copy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        copy.dstSubresource.layerCount = 1;
-        copy.extent = VkExtent3D{extent.width, extent.height, 1};
-        vkCmdCopyImage(commandBuffer, frame.taaResolved.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                       frame.history.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-    }
-
-    void LevelRenderer::recordTonemapPass(VkCommandBuffer commandBuffer, std::uint32_t frameIndex,
-                                          std::uint32_t imageIndex) {
-        recordFullscreen(commandBuffer, context_.swapchainImageViews()[imageIndex], context_.swapchainExtent(),
-                         pipelines_.tonemap(), textures_.descriptorSet(frameIndex), VK_ATTACHMENT_LOAD_OP_CLEAR,
-                         VkClearColorValue{{0.0f, 0.0f, 0.0f, 1.0f}});
+        commandList.copyTexture(frame.history.texture, nvrhi::TextureSlice{}, frame.taaResolved.texture,
+                                nvrhi::TextureSlice{});
     }
 
 } // namespace lumin::render

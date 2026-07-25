@@ -5,7 +5,7 @@
 #include <span>
 #include <string_view>
 
-#include <vulkan/vulkan.h>
+#include <nvrhi/nvrhi.h>
 
 #include "lumin/render/FrameGraph.hpp"
 
@@ -14,7 +14,7 @@ namespace lumin::scene {
 }
 
 namespace lumin::render {
-    class VulkanContext;
+    struct GraphicsPipelineDesc;
 }
 
 namespace lumin::render::gi {
@@ -29,23 +29,56 @@ namespace lumin::render::gi {
         bool hardwareRayTracing = false;
     };
 
-    struct FrameResources {
-        VkImageView positionView = VK_NULL_HANDLE;
-        VkImageView normalRoughnessView = VK_NULL_HANDLE;
-        VkImageView albedoMetallicView = VK_NULL_HANDLE;
-        VkImageView motionView = VK_NULL_HANDLE;
-        VkImageView depthView = VK_NULL_HANDLE;
-        VkBuffer uniformBuffer = VK_NULL_HANDLE;
-        VkImage outputImage = VK_NULL_HANDLE;
-        VkImageView outputView = VK_NULL_HANDLE;
+    struct RenderExtent {
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
     };
 
+    struct FrameResources {
+        nvrhi::TextureHandle position;
+        nvrhi::TextureHandle normalRoughness;
+        nvrhi::TextureHandle albedoMetallic;
+        nvrhi::TextureHandle motion;
+        nvrhi::TextureHandle depth;
+        nvrhi::BufferHandle uniformBuffer;
+        nvrhi::TextureHandle output;
+    };
+
+#if defined(LUMIN_GI_TESTING)
+    class SsaoCreationDriver {
+    public:
+        virtual ~SsaoCreationDriver() = default;
+
+        [[nodiscard]] virtual nvrhi::BufferHandle createUniform() = 0;
+        [[nodiscard]] virtual nvrhi::BindingLayoutHandle createBindingLayout(const nvrhi::BindingLayoutDesc& desc) = 0;
+        [[nodiscard]] virtual nvrhi::BindingSetHandle createBindingSet(const nvrhi::BindingSetDesc& desc,
+                                                                       nvrhi::IBindingLayout* layout) = 0;
+        [[nodiscard]] virtual nvrhi::FramebufferHandle createFramebuffer(const nvrhi::FramebufferDesc& desc) = 0;
+        [[nodiscard]] virtual nvrhi::GraphicsPipelineHandle
+        createPipeline(const lumin::render::GraphicsPipelineDesc& desc) = 0;
+    };
+
+    class SsaoRecordProbe {
+    public:
+        virtual ~SsaoRecordProbe() = default;
+
+        virtual void clearTextureFloat(nvrhi::ITexture* texture, nvrhi::TextureSubresourceSet subresources,
+                                       const nvrhi::Color& color) = 0;
+        virtual void setGraphicsState(const nvrhi::GraphicsState& state) = 0;
+        virtual void draw(const nvrhi::DrawArguments& arguments) = 0;
+    };
+#endif
+
     struct CreateInfo {
-        VulkanContext& context;
-        VkExtent2D extent{};
-        VkFormat outputFormat = VK_FORMAT_UNDEFINED;
-        VkSampler sampler = VK_NULL_HANDLE;
+        nvrhi::IDevice* device = nullptr;
+        RenderExtent extent{};
+        nvrhi::Format outputFormat = nvrhi::Format::UNKNOWN;
+        nvrhi::SamplerHandle sampler;
         std::span<const FrameResources> frames;
+#if defined(LUMIN_GI_TESTING)
+        SsaoCreationDriver* creationDriver = nullptr;
+        SsaoRecordProbe* recordProbe = nullptr;
+#endif
     };
 
     struct FrameInfo {
@@ -54,7 +87,7 @@ namespace lumin::render::gi {
         std::uint64_t frameNumber = 0;
         bool enabled = true;
         bool cameraCut = false;
-        VkExtent2D extent{};
+        RenderExtent extent{};
         FrameGraphResourceHandle position;
         FrameGraphResourceHandle normalRoughness;
         FrameGraphResourceHandle albedoMetallic;
@@ -73,6 +106,23 @@ namespace lumin::render::gi {
     [[nodiscard]] constexpr bool shouldInvalidateHistory(const HistoryInvalidationState& state) noexcept {
         return state.cameraCut || state.topologyChanged || state.backendReenabled || state.swapchainRecreated;
     }
+
+    namespace detail {
+
+        template <typename CommandList>
+        void recordSsaoClear(CommandList& commandList, nvrhi::ITexture* output) {
+            commandList.clearTextureFloat(
+                output, nvrhi::AllSubresources,
+                nvrhi::Color(neutralOutput[0], neutralOutput[1], neutralOutput[2], neutralOutput[3]));
+        }
+
+        template <typename CommandList>
+        void recordSsaoFullscreen(CommandList& commandList, const nvrhi::GraphicsState& state) {
+            commandList.setGraphicsState(state);
+            commandList.draw(nvrhi::DrawArguments().setVertexCount(3));
+        }
+
+    } // namespace detail
 
     class GlobalIlluminationBackend {
     public:

@@ -1,6 +1,10 @@
+#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
+
 #include "lumin/render/VulkanContext.hpp"
 
 #include "lumin/platform/Window.hpp"
+#include "lumin/render/BackendLifetime.hpp"
+#include "lumin/render/ModelRenderer.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -10,6 +14,10 @@
 #include <set>
 #include <stdexcept>
 #include <vector>
+
+#include <vulkan/vulkan.hpp>
+
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 namespace lumin::render {
     namespace {
@@ -21,6 +29,15 @@ namespace lumin::render {
         constexpr const char* deviceExtensions[] = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         };
+
+        class NvrhiMessageCallback final : public nvrhi::IMessageCallback {
+        public:
+            void message(nvrhi::MessageSeverity severity, const char* messageText) override {
+                std::cerr << "[nvrhi:" << static_cast<int>(severity) << "] " << messageText << '\n';
+            }
+        };
+
+        NvrhiMessageCallback nvrhiMessageCallback;
 
         VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
                                                      VkDebugUtilsMessageTypeFlagsEXT,
@@ -117,57 +134,93 @@ namespace lumin::render {
 
     VulkanContext::VulkanContext(platform::Window& window, const VulkanContextDesc& desc)
         : window_(window), desc_(desc) {
-        apiVersion_ = selectApiVersion();
-        if (apiVersion_ < VK_API_VERSION_1_3) {
-            throw std::runtime_error("Lumin Engine requires Vulkan 1.3 for Dynamic Rendering.");
-        }
-        validationEnabled_ = desc_.enableValidation && validationLayersAvailable();
-        debugUtilsEnabled_ = instanceExtensionAvailable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        try {
+            VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
+            apiVersion_ = selectApiVersion();
+            if (apiVersion_ < VK_API_VERSION_1_3) {
+                throw std::runtime_error("Lumin Engine requires Vulkan 1.3 for Dynamic Rendering.");
+            }
+            validationEnabled_ = desc_.enableValidation && validationLayersAvailable();
+            debugUtilsEnabled_ = instanceExtensionAvailable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
-        createInstance();
-        createDebugMessenger();
-        createSurface();
-        pickPhysicalDevice();
-        createDevice();
-        loadDebugUtilsFunctions();
-        createCommandPool();
-        createSwapchainResources();
-        createCommandBuffers();
-        createSyncObjects();
+            createInstance();
+            VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Instance(instance_));
+            createDebugMessenger();
+            createSurface();
+            pickPhysicalDevice();
+            createDevice();
+            VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Device(device_));
+            createRhiDevice();
+            loadDebugUtilsFunctions();
+            createSwapchainResources();
+            createFrameResources();
+        } catch (...) {
+            destroy();
+            throw;
+        }
     }
 
     VulkanContext::~VulkanContext() {
-        if (device_ != VK_NULL_HANDLE) {
-            vkDeviceWaitIdle(device_);
+        destroy();
+    }
 
-            cleanupSwapchainResources();
-            for (std::uint32_t index = 0; index < maxFramesInFlight; ++index) {
-                if (imageAvailableSemaphores_[index] != VK_NULL_HANDLE) {
-                    vkDestroySemaphore(device_, imageAvailableSemaphores_[index], nullptr);
+    void VulkanContext::destroy() noexcept {
+        detail::destroyBackendLifetime(
+            destroyed_,
+            detail::BackendLifetimeAvailability{
+                .children = true,
+                .swapchainWrappers = device_ != VK_NULL_HANDLE || !swapchainTextures_.empty(),
+                .rhiDevice = static_cast<bool>(rhiDevice_),
+                .vulkanDevice = device_ != VK_NULL_HANDLE,
+            },
+            [this] {
+                if (rhiDevice_) {
+                    rhiDevice_->waitForIdle();
                 }
-                if (inFlightFences_[index] != VK_NULL_HANDLE) {
-                    vkDestroyFence(device_, inFlightFences_[index], nullptr);
+                for (std::uint32_t index = 0; index < maxFramesInFlight; ++index) {
+                    commandLists_[index] = nullptr;
+                    frameQueries_[index] = nullptr;
                 }
-            }
-
-            if (commandPool_ != VK_NULL_HANDLE) {
-                vkDestroyCommandPool(device_, commandPool_, nullptr);
-            }
-
-            vkDestroyDevice(device_, nullptr);
-        }
+            },
+            [this] {
+                if (device_ != VK_NULL_HANDLE) {
+                    cleanupSwapchainResources();
+                    for (std::uint32_t index = 0; index < maxFramesInFlight; ++index) {
+                        if (imageAvailableSemaphores_[index] != VK_NULL_HANDLE) {
+                            vkDestroySemaphore(device_, imageAvailableSemaphores_[index], nullptr);
+                            imageAvailableSemaphores_[index] = VK_NULL_HANDLE;
+                        }
+                    }
+                } else {
+                    swapchainTextures_.clear();
+                    swapchainTextureInitialized_.clear();
+                }
+            },
+            [this] { rhiDevice_ = nullptr; },
+            [this] {
+                if (device_ != VK_NULL_HANDLE) {
+                    vkDestroyDevice(device_, nullptr);
+                    device_ = VK_NULL_HANDLE;
+                }
+            });
 
         if (surface_ != VK_NULL_HANDLE) {
             vkDestroySurfaceKHR(instance_, surface_, nullptr);
+            surface_ = VK_NULL_HANDLE;
         }
 
         if (debugMessenger_ != VK_NULL_HANDLE) {
             destroyDebugUtilsMessengerEXT(instance_, debugMessenger_, nullptr);
+            debugMessenger_ = VK_NULL_HANDLE;
         }
 
         if (instance_ != VK_NULL_HANDLE) {
             vkDestroyInstance(instance_, nullptr);
+            instance_ = VK_NULL_HANDLE;
         }
+        physicalDevice_ = VK_NULL_HANDLE;
+        graphicsQueue_ = VK_NULL_HANDLE;
+        presentQueue_ = VK_NULL_HANDLE;
     }
 
     VkInstance VulkanContext::instance() const noexcept {
@@ -194,10 +247,6 @@ namespace lumin::render {
         return presentQueue_;
     }
 
-    VkCommandPool VulkanContext::commandPool() const noexcept {
-        return commandPool_;
-    }
-
     std::uint32_t VulkanContext::graphicsQueueFamily() const noexcept {
         return queueFamilies_.graphics.value_or(0);
     }
@@ -222,6 +271,24 @@ namespace lumin::render {
         return swapchainExtent_;
     }
 
+    std::uint32_t VulkanContext::swapchainWidth() const noexcept {
+        return swapchainExtent_.width;
+    }
+
+    std::uint32_t VulkanContext::swapchainHeight() const noexcept {
+        return swapchainExtent_.height;
+    }
+
+    nvrhi::Format VulkanContext::swapchainRhiFormat() const noexcept {
+        return mapSwapchainFormat(swapchainImageFormat_);
+    }
+
+    bool VulkanContext::swapchainIsSrgb() const noexcept {
+        return swapchainImageFormat_ == VK_FORMAT_R8G8B8A8_SRGB ||
+               swapchainImageFormat_ == VK_FORMAT_B8G8R8A8_SRGB ||
+               swapchainImageFormat_ == VK_FORMAT_A8B8G8R8_SRGB_PACK32;
+    }
+
     std::uint32_t VulkanContext::swapchainMinImageCount() const noexcept {
         return minImageCount_;
     }
@@ -238,6 +305,32 @@ namespace lumin::render {
         return swapchainImageViews_;
     }
 
+    const nvrhi::vulkan::DeviceHandle& VulkanContext::rhiDevice() const noexcept {
+        return rhiDevice_;
+    }
+
+    const std::vector<nvrhi::TextureHandle>& VulkanContext::swapchainTextures() const noexcept {
+        return swapchainTextures_;
+    }
+
+    nvrhi::ResourceStates VulkanContext::swapchainTextureInitialState(std::uint32_t imageIndex) const {
+        if (imageIndex >= swapchainTextureInitialized_.size()) {
+            throw std::out_of_range("Swapchain image index is out of range.");
+        }
+        return swapchainTextureInitialized_[imageIndex] ? nvrhi::ResourceStates::Present
+                                                        : nvrhi::ResourceStates::Unknown;
+    }
+
+    ModelRendererCapabilities VulkanContext::modelRendererCapabilities() const noexcept {
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(physicalDevice_, &properties);
+        return ModelRendererCapabilities{
+            .maxMaterialTextureArrayLength = properties.limits.maxDescriptorSetSampledImages,
+            .maxDrawIndirectCount = properties.limits.maxDrawIndirectCount,
+            .maxImageDimension2D = properties.limits.maxImageDimension2D,
+        };
+    }
+
     std::uint64_t VulkanContext::swapchainGeneration() const noexcept {
         return swapchainGeneration_;
     }
@@ -251,8 +344,13 @@ namespace lumin::render {
     }
 
     std::optional<VulkanFrame> VulkanContext::beginFrame() {
-        checkVk(vkWaitForFences(device_, 1, &inFlightFences_[currentFrame_], VK_TRUE, UINT64_MAX),
-                "Failed to wait for the current frame fence.");
+        if (frameQueryPending_[currentFrame_]) {
+            if (!rhiDevice_->pollEventQuery(frameQueries_[currentFrame_])) {
+                rhiDevice_->waitEventQuery(frameQueries_[currentFrame_]);
+            }
+            rhiDevice_->resetEventQuery(frameQueries_[currentFrame_]);
+            frameQueryPending_[currentFrame_] = false;
+        }
 
         std::uint32_t imageIndex = 0;
         const VkResult result = vkAcquireNextImageKHR(
@@ -265,35 +363,32 @@ namespace lumin::render {
             throw std::runtime_error("Failed to acquire a swapchain image.");
         }
 
-        checkVk(vkResetFences(device_, 1, &inFlightFences_[currentFrame_]), "Failed to reset the frame fence.");
-        checkVk(vkResetCommandBuffer(commandBuffers_[currentFrame_], 0), "Failed to reset the frame command buffer.");
-        return VulkanFrame{commandBuffers_[currentFrame_], currentFrame_, imageIndex};
+        commandLists_[currentFrame_]->open();
+        commandLists_[currentFrame_]->setEnableAutomaticBarriers(false);
+        return VulkanFrame{commandLists_[currentFrame_], currentFrame_, imageIndex};
     }
 
     bool VulkanContext::submitFrame(const VulkanFrame& frame) {
         if (frame.frameIndex != currentFrame_) {
             throw std::invalid_argument("VulkanFrame does not belong to the current frame slot.");
         }
+        if (frame.commandList.Get() != commandLists_[currentFrame_].Get()) {
+            throw std::invalid_argument("VulkanFrame command list does not belong to the current frame slot.");
+        }
 
-        const VkSemaphore waitSemaphores[] = {imageAvailableSemaphores_[currentFrame_]};
-        const VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-        const VkSemaphore signalSemaphores[] = {renderFinishedSemaphores_[frame.imageIndex]};
-        VkSubmitInfo submitInfo{};
-        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = waitSemaphores;
-        submitInfo.pWaitDstStageMask = waitStages;
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &frame.commandBuffer;
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = signalSemaphores;
-        checkVk(vkQueueSubmit(graphicsQueue_, 1, &submitInfo, inFlightFences_[currentFrame_]),
-                "Failed to submit the Vulkan frame.");
+        frame.commandList->close();
+        const VkSemaphore renderFinished = renderFinishedSemaphores_[frame.imageIndex];
+        rhiDevice_->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, imageAvailableSemaphores_[currentFrame_], 0);
+        rhiDevice_->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, renderFinished, 0);
+        nvrhi::ICommandList* commandLists[] = {frame.commandList};
+        rhiDevice_->executeCommandLists(commandLists, std::size(commandLists), nvrhi::CommandQueue::Graphics);
+        rhiDevice_->setEventQuery(frameQueries_[currentFrame_], nvrhi::CommandQueue::Graphics);
+        frameQueryPending_[currentFrame_] = true;
 
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
         presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = signalSemaphores;
+        presentInfo.pWaitSemaphores = &renderFinished;
         presentInfo.swapchainCount = 1;
         presentInfo.pSwapchains = &swapchain_;
         presentInfo.pImageIndices = &frame.imageIndex;
@@ -304,6 +399,10 @@ namespace lumin::render {
             throw std::runtime_error("Failed to present the Vulkan frame.");
         }
 
+        if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
+            swapchainTextureInitialized_[frame.imageIndex] = true;
+        }
+
         currentFrame_ = (currentFrame_ + 1) % maxFramesInFlight;
         if (needsRecreate) {
             recreateSwapchain();
@@ -311,9 +410,29 @@ namespace lumin::render {
         return needsRecreate;
     }
 
+    void VulkanContext::cancelFrame(const VulkanFrame& frame) {
+        if (frame.frameIndex != currentFrame_ || frame.commandList.Get() != commandLists_[currentFrame_].Get()) {
+            throw std::invalid_argument("VulkanFrame does not belong to the current frame slot.");
+        }
+
+        frame.commandList->close();
+        nvrhi::CommandListHandle cancellation = rhiDevice_->createCommandList();
+        if (!cancellation) {
+            throw std::runtime_error("Failed to create an NvRHI frame-cancellation command list.");
+        }
+        cancellation->open();
+        cancellation->setEnableAutomaticBarriers(false);
+        cancellation->close();
+        rhiDevice_->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, imageAvailableSemaphores_[currentFrame_], 0);
+        nvrhi::ICommandList* cancellationLists[] = {cancellation};
+        rhiDevice_->executeCommandLists(cancellationLists, std::size(cancellationLists), nvrhi::CommandQueue::Graphics);
+        waitIdle();
+        recreateSwapchain();
+    }
+
     void VulkanContext::waitIdle() const {
-        if (device_ != VK_NULL_HANDLE) {
-            checkVk(vkDeviceWaitIdle(device_), "Failed to wait for the Vulkan device.");
+        if (rhiDevice_ && !rhiDevice_->waitForIdle()) {
+            throw std::runtime_error("Failed to wait for the NvRHI device.");
         }
     }
 
@@ -428,15 +547,17 @@ namespace lumin::render {
         vulkan12Features.descriptorIndexing = VK_TRUE;
         vulkan12Features.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
         vulkan12Features.runtimeDescriptorArray = VK_TRUE;
+        vulkan12Features.timelineSemaphore = VK_TRUE;
 
-        VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{};
-        dynamicRenderingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
-        dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
-        dynamicRenderingFeatures.pNext = &vulkan12Features;
+        VkPhysicalDeviceVulkan13Features vulkan13Features{};
+        vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+        vulkan13Features.dynamicRendering = VK_TRUE;
+        vulkan13Features.synchronization2 = VK_TRUE;
+        vulkan13Features.pNext = &vulkan12Features;
 
         VkDeviceCreateInfo createInfo;
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        createInfo.pNext = &dynamicRenderingFeatures;
+        createInfo.pNext = &vulkan13Features;
         createInfo.flags = 0;
         createInfo.queueCreateInfoCount = static_cast<std::uint32_t>(queueInfos.size());
         createInfo.pQueueCreateInfos = queueInfos.data();
@@ -460,6 +581,25 @@ namespace lumin::render {
         vkGetDeviceQueue(device_, queueFamilies_.present.value(), 0, &presentQueue_);
     }
 
+    void VulkanContext::createRhiDevice() {
+        const char* enabledDeviceExtensions[] = {
+            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        };
+        nvrhi::vulkan::DeviceDesc deviceDesc{};
+        deviceDesc.errorCB = &nvrhiMessageCallback;
+        deviceDesc.instance = instance_;
+        deviceDesc.physicalDevice = physicalDevice_;
+        deviceDesc.device = device_;
+        deviceDesc.graphicsQueue = graphicsQueue_;
+        deviceDesc.graphicsQueueIndex = static_cast<int>(graphicsQueueFamily());
+        deviceDesc.deviceExtensions = enabledDeviceExtensions;
+        deviceDesc.numDeviceExtensions = std::size(enabledDeviceExtensions);
+        rhiDevice_ = nvrhi::vulkan::createDevice(deviceDesc);
+        if (!rhiDevice_) {
+            throw std::runtime_error("Failed to create the NvRHI Vulkan device.");
+        }
+    }
+
     void VulkanContext::loadDebugUtilsFunctions() {
         if (!debugUtilsEnabled_) {
             return;
@@ -476,25 +616,16 @@ namespace lumin::render {
         }
     }
 
-    void VulkanContext::createCommandPool() {
-        VkCommandPoolCreateInfo createInfo;
-        createInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        createInfo.pNext = nullptr;
-        createInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        createInfo.queueFamilyIndex = queueFamilies_.graphics.value();
-
-        if (vkCreateCommandPool(device_, &createInfo, nullptr, &commandPool_) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create Vulkan command pool.");
-        }
-    }
-
     void VulkanContext::createSwapchainResources() {
         createSwapchain();
         createImageViews();
+        createSwapchainTextures();
         createRenderFinishedSemaphores();
     }
 
     void VulkanContext::cleanupSwapchainResources() {
+        swapchainTextures_.clear();
+        swapchainTextureInitialized_.clear();
         for (VkSemaphore semaphore : renderFinishedSemaphores_) {
             if (semaphore != VK_NULL_HANDLE) {
                 vkDestroySemaphore(device_, semaphore, nullptr);
@@ -621,27 +752,43 @@ namespace lumin::render {
         }
     }
 
-    void VulkanContext::createCommandBuffers() {
-        VkCommandBufferAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocateInfo.commandPool = commandPool_;
-        allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocateInfo.commandBufferCount = maxFramesInFlight;
-        checkVk(vkAllocateCommandBuffers(device_, &allocateInfo, commandBuffers_.data()),
-                "Failed to allocate Vulkan command buffers.");
+    void VulkanContext::createSwapchainTextures() {
+        const nvrhi::Format format = mapSwapchainFormat(swapchainImageFormat_);
+        if (format == nvrhi::Format::UNKNOWN) {
+            throw std::runtime_error("NvRHI does not support the selected Vulkan swapchain format.");
+        }
+
+        swapchainTextures_.reserve(swapchainImages_.size());
+        swapchainTextureInitialized_.assign(swapchainImages_.size(), false);
+        for (std::size_t index = 0; index < swapchainImages_.size(); ++index) {
+            nvrhi::TextureDesc textureDesc{};
+            textureDesc.width = swapchainExtent_.width;
+            textureDesc.height = swapchainExtent_.height;
+            textureDesc.format = format;
+            textureDesc.debugName = "Swapchain image " + std::to_string(index);
+            textureDesc.isShaderResource = false;
+            textureDesc.isRenderTarget = true;
+            textureDesc.initialState = nvrhi::ResourceStates::Unknown;
+            nvrhi::TextureHandle texture = rhiDevice_->createHandleForNativeTexture(
+                nvrhi::ObjectTypes::VK_Image, nvrhi::Object(swapchainImages_[index]), textureDesc);
+            if (!texture) {
+                throw std::runtime_error("Failed to wrap a Vulkan swapchain image with NvRHI.");
+            }
+            swapchainTextures_.push_back(std::move(texture));
+        }
     }
 
-    void VulkanContext::createSyncObjects() {
+    void VulkanContext::createFrameResources() {
         VkSemaphoreCreateInfo semaphoreInfo{};
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        VkFenceCreateInfo fenceInfo{};
-        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
         for (std::uint32_t index = 0; index < maxFramesInFlight; ++index) {
             checkVk(vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &imageAvailableSemaphores_[index]),
                     "Failed to create image-available semaphore.");
-            checkVk(vkCreateFence(device_, &fenceInfo, nullptr, &inFlightFences_[index]),
-                    "Failed to create in-flight fence.");
+            commandLists_[index] = rhiDevice_->createCommandList();
+            frameQueries_[index] = rhiDevice_->createEventQuery();
+            if (!commandLists_[index] || !frameQueries_[index]) {
+                throw std::runtime_error("Failed to create NvRHI frame resources.");
+            }
         }
     }
 
@@ -757,21 +904,25 @@ namespace lumin::render {
         vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
         vulkan12Features.pNext = &vulkan11Features;
 
-        VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{};
-        dynamicRenderingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
-        dynamicRenderingFeatures.pNext = &vulkan12Features;
+        VkPhysicalDeviceVulkan13Features vulkan13Features{};
+        vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+        vulkan13Features.pNext = &vulkan12Features;
 
         VkPhysicalDeviceFeatures2 features{};
         features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        features.pNext = &dynamicRenderingFeatures;
+        features.pNext = &vulkan13Features;
         vkGetPhysicalDeviceFeatures2(device, &features);
+
+        if (vulkan13Features.synchronization2 != VK_TRUE) {
+            std::cerr << "[vulkan] Rejecting Vulkan physical device without synchronization2 support.\n";
+        }
 
         return findQueueFamilies(device).complete() && deviceExtensionsAvailable(device) &&
                features.features.multiDrawIndirect == VK_TRUE && vulkan11Features.shaderDrawParameters == VK_TRUE &&
                vulkan12Features.descriptorIndexing == VK_TRUE &&
                vulkan12Features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE &&
-               vulkan12Features.runtimeDescriptorArray == VK_TRUE &&
-               dynamicRenderingFeatures.dynamicRendering == VK_TRUE;
+               vulkan12Features.runtimeDescriptorArray == VK_TRUE && vulkan12Features.timelineSemaphore == VK_TRUE &&
+               vulkan13Features.dynamicRendering == VK_TRUE && vulkan13Features.synchronization2 == VK_TRUE;
     }
 
 } // namespace lumin::render

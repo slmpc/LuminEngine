@@ -1,9 +1,9 @@
 #include "lumin/render/ShaderLibrary.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <fstream>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -25,24 +25,22 @@ namespace lumin::render {
 
     } // namespace
 
-    ShaderLibrary::ShaderLibrary(VkDevice device, std::filesystem::path shaderDirectory)
+    ShaderLibrary::ShaderLibrary(nvrhi::IDevice& device, std::filesystem::path shaderDirectory)
         : device_(device), shaderDirectory_(std::move(shaderDirectory)) {
     }
 
-    VkShaderModule ShaderLibrary::loadModule(const std::filesystem::path& fileName) const {
+    nvrhi::ShaderHandle ShaderLibrary::loadModule(const std::filesystem::path& fileName, nvrhi::ShaderType shaderType,
+                                                  std::string_view entryPoint) const {
         const std::vector<char> shaderCode = readBinaryFile(shaderDirectory_ / fileName);
 
-        VkShaderModuleCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        createInfo.codeSize = shaderCode.size();
-        createInfo.pCode = reinterpret_cast<const std::uint32_t*>(shaderCode.data());
-
-        VkShaderModule shaderModule = VK_NULL_HANDLE;
-        if (vkCreateShaderModule(device_, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create shader module: " + fileName.string());
+        nvrhi::ShaderDesc desc;
+        desc.setShaderType(shaderType).setEntryName(std::string(entryPoint)).setDebugName(fileName.string());
+        nvrhi::ShaderHandle shader = device_.createShader(desc, shaderCode.data(), shaderCode.size());
+        if (!shader) {
+            throw std::runtime_error("Failed to create shader: " + fileName.string());
         }
 
-        return shaderModule;
+        return shader;
     }
 
 } // namespace lumin::render

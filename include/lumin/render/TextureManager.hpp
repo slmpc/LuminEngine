@@ -2,11 +2,11 @@
 
 #include <array>
 #include <cstdint>
-#include <vector>
+#include <span>
 
 #include <glm/mat4x4.hpp>
 #include <glm/vec4.hpp>
-#include <vulkan/vulkan.h>
+#include <nvrhi/nvrhi.h>
 
 #include "lumin/render/VulkanResources.hpp"
 
@@ -16,6 +16,9 @@ namespace lumin::render {
 
     inline constexpr std::uint32_t shadowCascadeCount = 4;
     inline constexpr std::uint32_t shadowMapResolution = 2048;
+    inline constexpr std::uint32_t fullscreenSampledImageCount = 8 + shadowCascadeCount;
+    inline constexpr std::uint32_t fullscreenSamplerBinding = fullscreenSampledImageCount;
+    inline constexpr std::uint32_t fullscreenUniformBinding = fullscreenSampledImageCount + 1;
 
     struct alignas(16) PostProcessUniforms {
         glm::mat4 inverseViewProjection{1.0f};
@@ -34,17 +37,17 @@ namespace lumin::render {
     static_assert(alignof(PostProcessUniforms) == 16);
 
     struct TextureFrameResources {
-        VulkanImage position;
-        VulkanImage normalRoughness;
-        VulkanImage albedo;
-        VulkanImage motion;
-        VulkanImage depth;
-        VulkanImage globalIllumination;
-        VulkanImage lighting;
-        VulkanImage taaResolved;
-        VulkanImage history;
-        std::array<VulkanImage, shadowCascadeCount> shadowCascades{};
-        VulkanBuffer postProcessUniform;
+        GpuTexture position;
+        GpuTexture normalRoughness;
+        GpuTexture albedo;
+        GpuTexture motion;
+        GpuTexture depth;
+        GpuTexture globalIllumination;
+        GpuTexture lighting;
+        GpuTexture taaResolved;
+        GpuTexture history;
+        std::array<GpuTexture, shadowCascadeCount> shadowCascades{};
+        GpuBuffer postProcessUniform;
     };
 
     class TextureManager {
@@ -52,12 +55,13 @@ namespace lumin::render {
         static constexpr std::uint32_t maxFramesInFlight = 2;
 
         explicit TextureManager(VulkanContext& context);
+        explicit TextureManager(nvrhi::IDevice& device);
         ~TextureManager();
 
         TextureManager(const TextureManager&) = delete;
         TextureManager& operator=(const TextureManager&) = delete;
 
-        void create(VkExtent2D extent);
+        void create(std::uint32_t width, std::uint32_t height);
         void destroy() noexcept;
         void updatePostProcessUniforms(std::uint32_t frameIndex, const PostProcessUniforms& uniforms);
         void invalidateHistory() noexcept;
@@ -66,38 +70,40 @@ namespace lumin::render {
         [[nodiscard]] const TextureFrameResources& frame(std::uint32_t frameIndex) const;
         [[nodiscard]] bool historyValid(std::uint32_t frameIndex) const;
         [[nodiscard]] bool historyInitialized(std::uint32_t frameIndex) const;
-        [[nodiscard]] VkFormat positionFormat() const noexcept;
-        [[nodiscard]] VkFormat normalFormat() const noexcept;
-        [[nodiscard]] VkFormat albedoFormat() const noexcept;
-        [[nodiscard]] VkFormat motionFormat() const noexcept;
-        [[nodiscard]] VkFormat depthFormat() const noexcept;
-        [[nodiscard]] VkFormat globalIlluminationFormat() const noexcept;
-        [[nodiscard]] VkFormat lightingFormat() const noexcept;
-        [[nodiscard]] VkFormat shadowDepthFormat() const noexcept;
-        [[nodiscard]] VkSampler sampler() const noexcept;
-        [[nodiscard]] VkDescriptorSetLayout descriptorSetLayout() const noexcept;
-        [[nodiscard]] VkDescriptorSet descriptorSet(std::uint32_t frameIndex) const;
+        [[nodiscard]] nvrhi::ResourceStates historyInitialState(std::uint32_t frameIndex) const;
+        [[nodiscard]] nvrhi::Format positionFormat() const noexcept;
+        [[nodiscard]] nvrhi::Format normalFormat() const noexcept;
+        [[nodiscard]] nvrhi::Format albedoFormat() const noexcept;
+        [[nodiscard]] nvrhi::Format motionFormat() const noexcept;
+        [[nodiscard]] nvrhi::Format depthFormat() const noexcept;
+        [[nodiscard]] nvrhi::Format globalIlluminationFormat() const noexcept;
+        [[nodiscard]] nvrhi::Format lightingFormat() const noexcept;
+        [[nodiscard]] nvrhi::Format shadowDepthFormat() const noexcept;
+        [[nodiscard]] nvrhi::SamplerHandle sampler() const noexcept;
+        [[nodiscard]] nvrhi::BindingLayoutHandle bindingLayout() const noexcept;
+        [[nodiscard]] nvrhi::BindingSetHandle bindingSet(std::uint32_t frameIndex) const;
 
     private:
-        [[nodiscard]] VkFormat chooseFormat(const std::vector<VkFormat>& candidates) const;
-        void createImages(VkExtent2D extent);
-        void createSamplerAndDescriptors();
+        [[nodiscard]] nvrhi::Format chooseFormat(std::span<const nvrhi::Format> candidates,
+                                                 nvrhi::FormatSupport required) const;
+        [[nodiscard]] GpuTexture createTexture(const nvrhi::TextureDesc& desc) const;
+        void createImages(std::uint32_t width, std::uint32_t height);
+        void createSamplerAndBindings();
 
-        VulkanContext& context_;
-        VulkanResourceManager resources_;
+        nvrhi::IDevice& device_;
+        GpuResourceManager resources_;
         std::array<TextureFrameResources, maxFramesInFlight> frames_{};
-        VkFormat positionFormat_ = VK_FORMAT_UNDEFINED;
-        VkFormat normalFormat_ = VK_FORMAT_UNDEFINED;
-        VkFormat albedoFormat_ = VK_FORMAT_UNDEFINED;
-        VkFormat motionFormat_ = VK_FORMAT_UNDEFINED;
-        VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
-        VkFormat globalIlluminationFormat_ = VK_FORMAT_UNDEFINED;
-        VkFormat lightingFormat_ = VK_FORMAT_UNDEFINED;
-        VkFormat shadowDepthFormat_ = VK_FORMAT_UNDEFINED;
-        VkSampler sampler_ = VK_NULL_HANDLE;
-        VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;
-        VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
-        std::array<VkDescriptorSet, maxFramesInFlight> descriptorSets_{};
+        nvrhi::Format positionFormat_ = nvrhi::Format::UNKNOWN;
+        nvrhi::Format normalFormat_ = nvrhi::Format::UNKNOWN;
+        nvrhi::Format albedoFormat_ = nvrhi::Format::UNKNOWN;
+        nvrhi::Format motionFormat_ = nvrhi::Format::UNKNOWN;
+        nvrhi::Format depthFormat_ = nvrhi::Format::UNKNOWN;
+        nvrhi::Format globalIlluminationFormat_ = nvrhi::Format::UNKNOWN;
+        nvrhi::Format lightingFormat_ = nvrhi::Format::UNKNOWN;
+        nvrhi::Format shadowDepthFormat_ = nvrhi::Format::UNKNOWN;
+        nvrhi::SamplerHandle sampler_;
+        nvrhi::BindingLayoutHandle bindingLayout_;
+        std::array<nvrhi::BindingSetHandle, maxFramesInFlight> bindingSets_{};
         std::array<bool, maxFramesInFlight> historyValid_{};
         std::array<bool, maxFramesInFlight> historyInitialized_{};
     };

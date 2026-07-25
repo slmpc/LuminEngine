@@ -22,14 +22,14 @@ struct VertexOutput {
 VertexOutput vertexMain(uint vertexId : SV_VertexID) {
     float2 triangleUv = float2((vertexId << 1) & 2, vertexId & 2);
     VertexOutput output;
-    output.position = float4(triangleUv * 2.0 - 1.0, 0.0, 1.0);
+    output.position = float4(triangleUv.x * 2.0 - 1.0, 1.0 - triangleUv.y * 2.0, 0.0, 1.0);
     output.uv = triangleUv;
     return output;
 }
 
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target {
-    float2 clipPosition = input.uv * 2.0 - 1.0;
+    float2 clipPosition = float2(input.uv.x * 2.0 - 1.0, 1.0 - input.uv.y * 2.0);
     float4 worldFar = mul(frame.inverseViewProjection, float4(clipPosition, 1.0, 1.0));
     float3 rayDirection = normalize(worldFar.xyz / max(abs(worldFar.w), 1e-5) - frame.cameraPosition.xyz);
     float horizon = saturate(rayDirection.y * 0.5 + 0.5);

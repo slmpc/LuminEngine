@@ -1,19 +1,21 @@
 #pragma once
 
 #include <filesystem>
+#include <string_view>
 
-#include <vulkan/vulkan.h>
+#include <nvrhi/nvrhi.h>
 
 namespace lumin::render {
 
     class ShaderLibrary {
     public:
-        ShaderLibrary(VkDevice device, std::filesystem::path shaderDirectory);
+        ShaderLibrary(nvrhi::IDevice& device, std::filesystem::path shaderDirectory);
 
-        [[nodiscard]] VkShaderModule loadModule(const std::filesystem::path& fileName) const;
+        [[nodiscard]] nvrhi::ShaderHandle loadModule(const std::filesystem::path& fileName,
+                                                     nvrhi::ShaderType shaderType, std::string_view entryPoint) const;
 
     private:
-        VkDevice device_ = VK_NULL_HANDLE;
+        nvrhi::IDevice& device_;
         std::filesystem::path shaderDirectory_;
     };
 

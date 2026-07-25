@@ -93,6 +93,10 @@ Scene 面板选择仍引用同一个 `Level`。每帧渲染调用 `drawFrame(cam
 
 ## 运动矢量与 TAA
 
+场景投影矩阵保持 NDC 的正 Y 朝上，不在矩阵中预先翻转 Y。所有 `nvrhi::Viewport` 使用正的逻辑尺寸；NvRHI 的
+Vulkan 后端通过负物理 viewport 高度将正 NDC Y 映射到较小的屏幕 V。因此 NDC 到屏幕 UV 使用
+`(0.5 + 0.5 * x, 0.5 - 0.5 * y)`，全屏三角形则使用 `(2 * u - 1, 1 - 2 * v)` 生成裁剪坐标。
+
 `ObjectData` 包含当前及上一帧模型矩阵，以及用于非均匀缩放的逆转置法线矩阵。G-buffer 的帧 uniform 包含当前及
 上一帧带抖动的视图投影矩阵。运动附件存储 `currentUv - previousUv`；TAA 以 `currentUv - motion`
 重建上一帧的采样位置。
@@ -124,3 +128,35 @@ fence 后，才能更新帧槽。
 
 `FrameGraph` 当前仅调度和同步外部分配的资源，不负责分配瞬时图像或进行内存别名复用。因此，CSM 仍使用四张
 单层图像；若改用数组图像，还需要在 `FrameGraphTextureDesc` 中显式描述层范围。
+
+## NvRHI 与 Vulkan 平台边界
+
+渲染实现基于 NvRHI Vulkan 后端，并通过 NvRHI 使用 Vulkan 1.3 dynamic rendering；渲染器不创建
+`VkRenderPass` 或 `VkFramebuffer`。NvRHI 不负责创建交换链。`VulkanContext` 是唯一原生 Vulkan 边界，保留
+实例、物理/逻辑设备、队列、SDL surface、交换链与 image view、图像获取/呈现、二进制信号量、能力查询和
+NvRHI native interop。交换链图像对应的 NvRHI texture 是非拥有型包装，销毁顺序固定为 renderer 及其子句柄、
+交换链 NvRHI 包装、NvRHI device、`VkDevice`。正常销毁和构造中途失败共用幂等清理路径。
+
+`submitFrame` 在同一次图形队列提交中依次调用 `queueWaitForSemaphore`、`queueSignalSemaphore` 和
+`executeCommandLists`，随后设置当前帧槽的 `EventQuery`。每个帧槽只复用自己的查询；`beginFrame` 在再次使用该
+槽前轮询或等待并执行 `resetEventQuery`。获取/呈现仍由 `VulkanContext` 调用 Vulkan API。
+
+所有逐帧 command list 均调用 `setEnableAutomaticBarriers(false)`。材质纹理与 ImGui 字体使用专用初始化上传列表，
+这是仅有的 automatic barrier 例外；上传列表在关闭时把纹理恢复到 `ShaderResource`。只有
+`src/render/FrameGraph.cpp` 可以在运行时代码中调用 `beginTracking*State`、`set*State` 和 `commitBarriers`；首次使用的
+纹理以 NvRHI 支持的 `Common`（Vulkan `Undefined` 源布局）导入，离屏附件清理由显式声明 `CopyDest` 的 transfer pass
+完成，交换链则由全屏 Tonemap pass 直接覆盖。后续由 `FrameGraph` 转换到 `RenderTarget` 或 `DepthWrite`；同状态写依赖
+使用有效图像布局作为中间状态，绝不把 `Common` 用作 barrier 目标。`Unknown` 只作为“不生成最终转换”的哨兵。
+ImGui 每帧顶点和索引数据在对应帧槽 fence 完成后通过 CPU 映射缓冲更新，不进入逐帧上传命令列表。
+`historyValid` 表示历史内容能否参与混合，`historyInitialized` 表示持久纹理是否已有
+可延续的真实资源状态，两者必须分开维护。
+
+后端策略可按以下命令独立复验：
+
+```powershell
+$env:VCPKG_ROOT = "D:/Programs/vcpkg"
+cmake -S . -B out/build/nvrhi-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLUMIN_BUILD_TESTS=ON
+cmake --build out/build/nvrhi-debug --target lumin_render_backend_policy_tests lumin_render_engine
+ctest --test-dir out/build/nvrhi-debug --output-on-failure
+.\out\build\nvrhi-debug\LuminEngine.exe
+```

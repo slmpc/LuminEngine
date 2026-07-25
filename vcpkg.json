@@ -14,13 +14,13 @@
       "name": "imgui",
       "features": [
         "docking-experimental",
-        "sdl3-binding",
-        "vulkan-binding"
+        "sdl3-binding"
       ]
     },
     "lua",
     "sol2",
     "tinyobjloader",
+    "nvrhi",
     "vulkan-headers",
     "vulkan-loader",
     "stb"

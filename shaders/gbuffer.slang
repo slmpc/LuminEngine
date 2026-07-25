@@ -53,7 +53,7 @@ struct GBufferOutput {
 
 float2 clipToUv(float4 clipPosition) {
     float2 ndc = clipPosition.xy / max(clipPosition.w, 1e-5);
-    return ndc * 0.5 + 0.5;
+    return float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
 }
 
 float3 applyNormalMap(float3 geometricNormal, float3 worldPosition, float2 uv, float3 tangentNormal) {

@@ -75,10 +75,7 @@ namespace lumin::scene {
     }
 
     glm::mat4 Camera::projectionMatrix(float aspectRatio) const {
-        glm::mat4 projection =
-            glm::perspective(glm::radians(fieldOfViewDegrees_), std::max(aspectRatio, 0.001f), 0.05f, 200.0f);
-        projection[1][1] *= -1.0f;
-        return projection;
+        return glm::perspective(glm::radians(fieldOfViewDegrees_), std::max(aspectRatio, 0.001f), 0.05f, 200.0f);
     }
 
 }

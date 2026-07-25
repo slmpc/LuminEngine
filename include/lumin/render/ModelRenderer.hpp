@@ -8,7 +8,7 @@
 
 #include <glm/mat4x4.hpp>
 #include <glm/vec4.hpp>
-#include <vulkan/vulkan.h>
+#include <nvrhi/nvrhi.h>
 
 #include "lumin/assets/ObjLoader.hpp"
 
@@ -33,18 +33,41 @@ namespace lumin::render {
     static_assert(sizeof(ObjectData) == 224);
     static_assert(alignof(ObjectData) == 16);
 
+    struct ModelRendererCapabilities {
+        std::uint32_t maxMaterialTextureArrayLength = 1024;
+        std::uint32_t maxDrawIndirectCount = 65536;
+        std::uint32_t maxImageDimension2D = 8192;
+    };
+
     struct ModelBatch {
+        using Command = nvrhi::DrawIndexedIndirectArguments;
+
         std::vector<assets::Vertex> vertices;
         std::vector<std::uint32_t> indices;
-        std::vector<VkDrawIndexedIndirectCommand> commands;
+        std::vector<Command> commands;
         std::vector<ObjectData> objects;
     };
+
+    namespace detail {
+
+        template <typename CommandList>
+        void recordModelIndexedIndirect(CommandList& commandList, const nvrhi::GraphicsState& state,
+                                        std::uint32_t drawCount) {
+            if (drawCount == 0) {
+                return;
+            }
+            commandList.setGraphicsState(state);
+            commandList.drawIndexedIndirect(0, drawCount);
+        }
+
+    } // namespace detail
 
     class ModelRenderer {
     public:
         ModelRenderer(VulkanContext& context, const scene::Level& level, std::filesystem::path shaderDirectory,
-                      std::span<const VkFormat> colorFormats, VkFormat depthFormat, VkFormat shadowDepthFormat,
-                      std::uint32_t frameCount);
+                      std::span<const nvrhi::Format> colorFormats, nvrhi::Format depthFormat,
+                      nvrhi::Format shadowDepthFormat, std::uint32_t frameCount,
+                      ModelRendererCapabilities capabilities);
         ~ModelRenderer();
 
         ModelRenderer(const ModelRenderer&) = delete;
@@ -52,13 +75,24 @@ namespace lumin::render {
 
         [[nodiscard]] static ModelBatch buildBatch(const scene::Level& level);
         void sync(const scene::Level& level, std::uint32_t frameIndex, bool resetMotion);
-        void recordGBuffer(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, const glm::mat4& viewProjection,
+        void recordGBuffer(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer, std::uint32_t width,
+                           std::uint32_t height, std::uint32_t frameIndex, const glm::mat4& viewProjection,
                            const glm::mat4& previousViewProjection);
-        void recordShadow(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, std::uint32_t cascadeIndex,
+        void recordShadow(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer, std::uint32_t width,
+                          std::uint32_t height, std::uint32_t frameIndex, std::uint32_t cascadeIndex,
                           const glm::mat4& lightViewProjection);
-        void record(VkCommandBuffer commandBuffer, std::uint32_t frameIndex, const scene::Camera& camera,
-                    float aspectRatio);
+        void record(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer, std::uint32_t frameIndex,
+                    const scene::Camera& camera, float aspectRatio);
         [[nodiscard]] std::uint32_t drawCount() const noexcept;
+        [[nodiscard]] const nvrhi::BufferHandle& vertexBuffer() const noexcept;
+        [[nodiscard]] const nvrhi::BufferHandle& indexBuffer() const noexcept;
+        [[nodiscard]] const nvrhi::BufferHandle& indirectBuffer() const noexcept;
+        [[nodiscard]] const nvrhi::BufferHandle& objectBuffer(std::uint32_t frameIndex) const;
+        [[nodiscard]] const nvrhi::BufferHandle& frameUniformBuffer(std::uint32_t frameIndex) const;
+        [[nodiscard]] const nvrhi::BufferHandle& shadowUniformBuffer(std::uint32_t frameIndex,
+                                                                     std::uint32_t cascadeIndex) const;
+        [[nodiscard]] std::span<const nvrhi::TextureHandle> baseColorTextures() const noexcept;
+        [[nodiscard]] std::span<const nvrhi::TextureHandle> normalRoughnessTextures() const noexcept;
 
     private:
         struct Impl;
