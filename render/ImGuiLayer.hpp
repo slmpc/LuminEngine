@@ -28,6 +28,7 @@ namespace lumin::render {
         bool enableKeyboard = true;
         bool enableGamepad = false;
         bool enableDocking = true;
+        bool outputIsSrgb = false;
         float globalScale = 1.0f;
     };
 
@@ -115,6 +116,7 @@ namespace lumin::render {
         std::vector<FrameBuffers> frameBuffers_;
         bool contextCreated_ = false;
         bool sdlInitialized_ = false;
+        bool outputIsSrgb_ = false;
         bool initialized_ = false;
     };
 

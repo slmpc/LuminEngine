@@ -20,6 +20,7 @@ namespace lumin::render {
         struct ImGuiPushConstants {
             float scale[2];
             float translate[2];
+            float outputConfig[4];
         };
 
         [[nodiscard]] bool finiteRect(const ImVec4& rect) {
@@ -41,6 +42,7 @@ namespace lumin::render {
         device_ = config.device;
         shaderDirectory_ = config.shaderDirectory;
         window_ = &window;
+        outputIsSrgb_ = config.outputIsSrgb;
 
         try {
             IMGUI_CHECKVERSION();
@@ -216,6 +218,7 @@ namespace lumin::render {
         shaderDirectory_.clear();
         device_ = nullptr;
         window_ = nullptr;
+        outputIsSrgb_ = false;
         initialized_ = false;
     }
 
@@ -362,6 +365,7 @@ namespace lumin::render {
         const ImGuiPushConstants constants = {
             {projection.scaleX, projection.scaleY},
             {projection.translateX, projection.translateY},
+            {outputIsSrgb_ ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f},
         };
         commandList.setPushConstants(&constants, sizeof(constants));
     }

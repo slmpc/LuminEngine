@@ -20,6 +20,7 @@ namespace lumin::render {
         ImGuiLayerConfig config;
         config.device = context.rhiDevice();
         config.colorFormat = context.swapchainRhiFormat();
+        config.outputIsSrgb = context.swapchainIsSrgb();
         config.shaderDirectory = LUMIN_SHADER_DIR;
         config.enableKeyboard = true;
         config.enableDocking = true;

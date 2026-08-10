@@ -1,6 +1,8 @@
 struct PushConstants {
     float2 scale;
     float2 translate;
+    // x: target attachment performs sRGB encoding.
+    float4 outputConfig;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> constants;
@@ -28,5 +30,10 @@ VertexOutput vertexMain(VertexInput input) {
 }
 
 float4 fragmentMain(VertexOutput input) : SV_Target0 {
-    return input.color * fontTexture.Sample(fontSampler, input.uv);
+    float4 vertexColor = input.color;
+    if (constants.outputConfig.x > 0.5) {
+        vertexColor.rgb = select(vertexColor.rgb <= 0.04045, vertexColor.rgb / 12.92,
+                                 pow((vertexColor.rgb + 0.055) / 1.055, 2.4));
+    }
+    return vertexColor * fontTexture.Sample(fontSampler, input.uv);
 }

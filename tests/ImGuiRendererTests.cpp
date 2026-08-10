@@ -191,6 +191,14 @@ namespace {
         require(manager.find("if (!layer_.initialized() || !framePrepared_") != std::string::npos &&
                     manager.find("ImGui::EndFrame();") != std::string::npos,
                 "Unprepared record and cancel paths must preserve the established frame-state guards.");
+        require(manager.find("config.outputIsSrgb = context.swapchainIsSrgb()") != std::string::npos &&
+                    layer.find("outputIsSrgb_ = config.outputIsSrgb") != std::string::npos &&
+                    layer.find("outputIsSrgb_ ? 1.0f : 0.0f") != std::string::npos,
+                "ImGui must pass the swapchain transfer function to its fragment shader.");
+        const std::string shader = readText("shaders/imgui.slang");
+        require(shader.find("constants.outputConfig.x > 0.5") != std::string::npos &&
+                    shader.find("vertexColor.rgb <= 0.04045") != std::string::npos,
+                "ImGui vertex colors must be linearized exactly once for an sRGB attachment.");
         require(
             layer.find("reinterpret_cast<nvrhi::IBindingSet*>(event.textureId)") != std::string::npos &&
                 layer.find("setRenderState(commandList, framebuffer, *drawData, buffers, scissor, *textureBinding)") !=

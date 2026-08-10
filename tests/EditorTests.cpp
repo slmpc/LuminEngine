@@ -1,5 +1,6 @@
 #include "render/editor/Editor.hpp"
 #include "render/editor/EditorLayout.hpp"
+#include "render/editor/EditorStyle.hpp"
 
 #include "assets/ObjLoader.hpp"
 #include "render/ImGuiContent.hpp"
@@ -150,6 +151,27 @@ namespace {
                 "A recreated ImGui context must rebuild the named dock layout.");
         require(lifecycle.update(secondContext, EditorLayoutMode::Full, 2),
                 "A layout schema change must rebuild the named dock layout.");
+    }
+
+    void testEditorNeutralDarkTheme() {
+        ImGui::CreateContext();
+        lumin::editor::style::apply();
+        const ImVec4* colors = ImGui::GetStyle().Colors;
+        const ImVec4& window = colors[ImGuiCol_WindowBg];
+        const ImVec4& frame = colors[ImGuiCol_FrameBg];
+        const ImVec4& hovered = colors[ImGuiCol_FrameBgHovered];
+        const ImVec4& checkMark = colors[ImGuiCol_CheckMark];
+
+        require(nearlyEqual(window.x, 25.0f / 255.0f) && nearlyEqual(window.y, 27.0f / 255.0f) &&
+                    nearlyEqual(window.z, 29.0f / 255.0f),
+                "The editor window must use the neutral near-black reference palette.");
+        require(frame.x > window.x && hovered.x > frame.x &&
+                    colors[ImGuiCol_Border].x < colors[ImGuiCol_TextDisabled].x,
+                "Frames, hover states, and borders must preserve readable dark-surface hierarchy.");
+        require(checkMark.x > checkMark.y && checkMark.y > checkMark.z &&
+                    nearlyEqual(colors[ImGuiCol_SliderGrab].x, checkMark.x),
+                "Sparse interactive accents must use the shared warm highlight color.");
+        ImGui::DestroyContext();
     }
 
     void testDockLayoutSkipsNonpositiveWorkSizeAndBuildsAfterRestore() {
@@ -324,6 +346,7 @@ int main() {
         testExactInputCapturePolicy();
         testConsoleReturnsValues();
         testLayoutLifecycleTransitions();
+        testEditorNeutralDarkTheme();
         testDockLayoutSkipsNonpositiveWorkSizeAndBuildsAfterRestore();
         testConsoleHistoryAndClearScopes();
         testFailedCommandAppearsOnce();

@@ -132,7 +132,7 @@
       },
       {
         "name": "PushConstants",
-        "size": 16,
+        "size": 32,
         "fields": [
           {
             "name": "scale",
@@ -143,6 +143,11 @@
             "name": "translate",
             "offset": 8,
             "size": 8
+          },
+          {
+            "name": "outputConfig",
+            "offset": 16,
+            "size": 16
           }
         ]
       },
