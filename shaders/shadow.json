@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "source": "shadow.slang",
+  "entries": [
+    {
+      "name": "shadow.vertex",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "shadow.vert.spv",
+      "reflection": "reflection/shadow.vert.json",
+      "depfile": "deps/shadow.vert.d",
+      "bindings": [
+        {
+          "name": "shadow",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "objects",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 1
+        }
+      ],
+      "abiStructs": [
+        "ShadowUniforms",
+        "ObjectData"
+      ]
+    }
+  ]
+}

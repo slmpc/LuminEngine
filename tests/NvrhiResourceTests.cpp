@@ -49,7 +49,7 @@ namespace {
 
     void verifyUploadResourceContract() {
         const std::filesystem::path sourcePath =
-            std::filesystem::path(__FILE__).parent_path().parent_path() / "src/render/VulkanResources.cpp";
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "render/VulkanResources.cpp";
         std::ifstream source(sourcePath);
         const std::string contents{std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>()};
         require(!contents.empty(), "VulkanResources.cpp must be available to the resource contract test.");

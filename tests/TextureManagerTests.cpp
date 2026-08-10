@@ -549,7 +549,7 @@ namespace {
 
     void verifyForbiddenTokens() {
         const std::string production =
-            readSource("src/render/TextureManager.hpp") + readSource("src/render/TextureManager.cpp");
+            readSource("render/TextureManager.hpp") + readSource("render/TextureManager.cpp");
         constexpr const char* forbidden[] = {"VkDescriptor",    "VkSampler",     "VkImage",   "VkImageView",
                                              "vkCreate",        "vkUpdate",      "vkDestroy", "beginTracking",
                                              "setTextureState", "commitBarriers"};

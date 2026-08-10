@@ -276,7 +276,7 @@ namespace {
     }
 
     void verifyNvrhiYCoordinateConvention(const std::string& level) {
-        const std::string camera = readSource("src/scene/Camera.cpp");
+        const std::string camera = readSource("core/scene/Camera.cpp");
         require(camera.find("projection[1][1] *= -1.0f") == std::string::npos,
                 "Camera projection must not duplicate NvRHI Vulkan's viewport Y inversion.");
         require(level.find("lightProjection[1][1] *= -1.0f") == std::string::npos,
@@ -311,10 +311,10 @@ namespace {
 
 int main() {
     try {
-        const std::string level = readSource("src/render/LevelRenderer.cpp");
-        const std::string context = readSource("src/render/VulkanContext.cpp");
-        const std::string deferredPipeline = readSource("src/render/DeferredRenderPipeline.cpp");
-        const std::string deferredHeader = readSource("src/render/DeferredRenderPipeline.hpp");
+        const std::string level = readSource("render/LevelRenderer.cpp");
+        const std::string context = readSource("render/VulkanContext.cpp");
+        const std::string deferredPipeline = readSource("render/DeferredRenderPipeline.cpp");
+        const std::string deferredHeader = readSource("render/DeferredRenderPipeline.hpp");
         verifyPassOrder(level, deferredPipeline);
         verifyNvrhiRecording(level);
         verifyHistoryAndErrorPaths(level);

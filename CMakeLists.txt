@@ -23,6 +23,9 @@ endif()
 
 project(LuminEngine VERSION 0.1.0 LANGUAGES CXX)
 
+# 模块在各自的 CMakeLists.txt 中发现依赖；将 imported targets 提升到目录树全局，供 tests/apps 复用。
+set(CMAKE_FIND_PACKAGE_TARGETS_GLOBAL ON)
+
 option(LUMIN_BUILD_SANDBOX "Build the sandbox executable." ON)
 option(LUMIN_BUILD_TESTS "Build the engine tests." ON)
 
@@ -38,25 +41,40 @@ include(LuminRayTracing)
 set(LUMIN_GENERATED_INCLUDE_DIR "${PROJECT_BINARY_DIR}/generated/include")
 lumin_configure_ray_tracing_policy(OUTPUT_DIRECTORY "${LUMIN_GENERATED_INCLUDE_DIR}")
 
-find_package(Vulkan REQUIRED)
-find_package(SDL3 CONFIG REQUIRED)
-find_package(glm CONFIG REQUIRED)
-find_package(imgui CONFIG REQUIRED)
-find_package(nvrhi CONFIG REQUIRED)
-find_package(tinyobjloader CONFIG REQUIRED)
-find_package(Stb REQUIRED)
-find_package(Lua REQUIRED)
-find_package(sol2 CONFIG REQUIRED)
-
 set(LUMIN_SHADER_SOURCE_DIR "${PROJECT_SOURCE_DIR}/shaders")
 set(LUMIN_SHADER_OUTPUT_DIR "${PROJECT_BINARY_DIR}/generated/shaders")
+set(LUMIN_SHADER_MANIFEST "${LUMIN_SHADER_OUTPUT_DIR}/shader-manifest.json" CACHE INTERNAL
+    "Generated shader manifest used by ABI validation")
 set(LUMIN_ASSET_DIR "${PROJECT_SOURCE_DIR}/assets")
 file(TO_CMAKE_PATH "${LUMIN_SHADER_OUTPUT_DIR}" LUMIN_SHADER_OUTPUT_DIR_CMAKE)
 file(TO_CMAKE_PATH "${LUMIN_ASSET_DIR}" LUMIN_ASSET_DIR_CMAKE)
 
 add_subdirectory(thirdparty)
 add_subdirectory(shaders)
-add_subdirectory(src)
+add_subdirectory(core)
+add_subdirectory(render)
+
+# Application 是组合层：它可以同时看到 Core 和 Render，但 Render 永远不反向依赖它。
+add_library(lumin_application STATIC
+    application/Application.cpp
+)
+add_library(Lumin::Application ALIAS lumin_application)
+add_library(Lumin::GameEngine ALIAS lumin_application)
+lumin_configure_library(lumin_application)
+target_link_libraries(lumin_application
+    PUBLIC
+        Lumin::Core
+        Lumin::Render
+)
+target_compile_definitions(lumin_application
+    PRIVATE
+        $<$<CONFIG:Debug>:LUMIN_ENABLE_VALIDATION>
+        LUMIN_SHADER_DIR="${LUMIN_SHADER_OUTPUT_DIR_CMAKE}"
+)
+
+add_library(lumin_engine INTERFACE)
+add_library(Lumin::Engine ALIAS lumin_engine)
+target_link_libraries(lumin_engine INTERFACE Lumin::Application)
 
 if(LUMIN_BUILD_SANDBOX)
     add_subdirectory(apps/sandbox)

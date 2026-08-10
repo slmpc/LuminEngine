@@ -1,5 +1,8 @@
 function(lumin_configure_test target)
-    target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/src")
+    target_include_directories(${target} PRIVATE
+        "${PROJECT_SOURCE_DIR}"
+        "${PROJECT_SOURCE_DIR}/core"
+    )
     target_compile_features(${target} PRIVATE cxx_std_20)
     if(MSVC)
         target_compile_options(${target} PRIVATE /utf-8)
@@ -137,7 +140,7 @@ lumin_register_test(lumin_shader_cpu_abi_tests ShaderCpuAbi LABELS shader raytra
 add_test(
     NAME ShaderReflectionAbi
     COMMAND "${CMAKE_COMMAND}"
-            "-DLUMIN_SHADER_MANIFEST=${PROJECT_SOURCE_DIR}/shaders/shader-manifest.json"
+            "-DLUMIN_SHADER_MANIFEST=${LUMIN_SHADER_MANIFEST}"
             "-DLUMIN_SHADER_REFLECTION_DIR=${LUMIN_SHADER_OUTPUT_DIR}"
             "-DLUMIN_SHADER_SOURCE_DIR=${LUMIN_SHADER_SOURCE_DIR}"
             "-DLUMIN_SHADER_ENABLE_RAY_TRACING=${LUMIN_RAY_TRACING_IMPLEMENTATION_AVAILABLE}"
@@ -149,8 +152,8 @@ set_tests_properties(ShaderReflectionAbi PROPERTIES LABELS "cpu;shader;raytracin
 
 add_executable(lumin_render_pipeline_contract_tests
     RenderPipelineContractsTests.cpp
-    "${PROJECT_SOURCE_DIR}/src/render/PipelineFactory.cpp"
-    "${PROJECT_SOURCE_DIR}/src/render/ShaderLibrary.cpp"
+    "${PROJECT_SOURCE_DIR}/render/PipelineFactory.cpp"
+    "${PROJECT_SOURCE_DIR}/render/ShaderLibrary.cpp"
 )
 lumin_configure_test(lumin_render_pipeline_contract_tests)
 target_link_libraries(lumin_render_pipeline_contract_tests PRIVATE nvrhi)
@@ -158,9 +161,9 @@ lumin_register_test(lumin_render_pipeline_contract_tests RenderPipelineContracts
 
 add_executable(lumin_imgui_renderer_tests
     ImGuiRendererTests.cpp
-    "${PROJECT_SOURCE_DIR}/src/platform/Window.cpp"
-    "${PROJECT_SOURCE_DIR}/src/render/ImGuiLayer.cpp"
-    "${PROJECT_SOURCE_DIR}/src/render/ShaderLibrary.cpp"
+    "${PROJECT_SOURCE_DIR}/render/platform/Window.cpp"
+    "${PROJECT_SOURCE_DIR}/render/ImGuiLayer.cpp"
+    "${PROJECT_SOURCE_DIR}/render/ShaderLibrary.cpp"
 )
 lumin_configure_test(lumin_imgui_renderer_tests)
 target_link_libraries(lumin_imgui_renderer_tests PRIVATE Vulkan::Vulkan SDL3::SDL3 imgui::imgui nvrhi)
@@ -194,16 +197,15 @@ lumin_register_test(lumin_render_backend_policy_tests RenderBackendPolicy LABELS
 
 add_executable(lumin_descriptor_indexing_tests DescriptorIndexingTests.cpp)
 lumin_configure_test(lumin_descriptor_indexing_tests)
-target_include_directories(lumin_descriptor_indexing_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(lumin_descriptor_indexing_tests PRIVATE Lumin::Rendering)
 lumin_register_test(lumin_descriptor_indexing_tests DescriptorIndexing LABELS raster unit contract)
 
 add_executable(lumin_gi_tests
     GlobalIlluminationTests.cpp
-    "${PROJECT_SOURCE_DIR}/src/render/FrameGraph.cpp"
-    "${PROJECT_SOURCE_DIR}/src/render/gi/SsaoBackend.cpp"
-    "${PROJECT_SOURCE_DIR}/src/render/PipelineFactory.cpp"
-    "${PROJECT_SOURCE_DIR}/src/render/ShaderLibrary.cpp"
+    "${PROJECT_SOURCE_DIR}/render/FrameGraph.cpp"
+    "${PROJECT_SOURCE_DIR}/render/gi/SsaoBackend.cpp"
+    "${PROJECT_SOURCE_DIR}/render/PipelineFactory.cpp"
+    "${PROJECT_SOURCE_DIR}/render/ShaderLibrary.cpp"
 )
 lumin_configure_test(lumin_gi_tests)
 target_link_libraries(lumin_gi_tests PRIVATE Lumin::RenderCore nvrhi)
@@ -242,10 +244,9 @@ endif()
 
 add_executable(lumin_model_renderer_nvrhi_tests
     ModelRendererNvrhiTests.cpp
-    "${PROJECT_SOURCE_DIR}/src/render/DescriptorIndexingLimits.cpp"
+    "${PROJECT_SOURCE_DIR}/render/DescriptorIndexingLimits.cpp"
 )
 lumin_configure_test(lumin_model_renderer_nvrhi_tests)
-target_include_directories(lumin_model_renderer_nvrhi_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(lumin_model_renderer_nvrhi_tests PRIVATE glm::glm nvrhi)
 lumin_register_test(lumin_model_renderer_nvrhi_tests ModelRendererNvrhi LABELS raster unit contract)
 
@@ -256,8 +257,8 @@ lumin_register_test(lumin_scripting_tests Scripting LABELS unit)
 
 add_executable(lumin_texture_manager_tests
     TextureManagerTests.cpp
-    "${PROJECT_SOURCE_DIR}/src/render/TextureManager.cpp"
-    "${PROJECT_SOURCE_DIR}/src/render/VulkanResources.cpp"
+    "${PROJECT_SOURCE_DIR}/render/TextureManager.cpp"
+    "${PROJECT_SOURCE_DIR}/render/VulkanResources.cpp"
 )
 lumin_configure_test(lumin_texture_manager_tests)
 target_compile_definitions(lumin_texture_manager_tests

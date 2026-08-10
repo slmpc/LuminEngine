@@ -1,0 +1,507 @@
+{
+  "schemaVersion": 1,
+  "compiler": {
+    "target": "spirv",
+    "profile": "spirv_1_5",
+    "matrixLayout": "column-major",
+    "warningsAsErrors": "all",
+    "includeDirectories": [
+      "include"
+    ]
+  },
+  "abi": {
+    "structs": [
+      {
+        "name": "PostProcessUniforms",
+        "size": 496,
+        "fields": [
+          {
+            "name": "inverseViewProjection",
+            "offset": 0,
+            "size": 64
+          },
+          {
+            "name": "viewProjection",
+            "offset": 64,
+            "size": 64
+          },
+          {
+            "name": "cascadeViewProjections",
+            "offset": 128,
+            "size": 256
+          },
+          {
+            "name": "cascadeSplits",
+            "offset": 384,
+            "size": 16
+          },
+          {
+            "name": "cameraPosition",
+            "offset": 400,
+            "size": 16
+          },
+          {
+            "name": "cameraForward",
+            "offset": 416,
+            "size": 16
+          },
+          {
+            "name": "lightDirection",
+            "offset": 432,
+            "size": 16
+          },
+          {
+            "name": "renderSize",
+            "offset": 448,
+            "size": 16
+          },
+          {
+            "name": "renderOptions",
+            "offset": 464,
+            "size": 16
+          },
+          {
+            "name": "tonemapOptions",
+            "offset": 480,
+            "size": 16
+          }
+        ]
+      },
+      {
+        "name": "FrameUniforms",
+        "size": 128,
+        "fields": [
+          {
+            "name": "viewProjection",
+            "offset": 0,
+            "size": 64
+          },
+          {
+            "name": "previousViewProjection",
+            "offset": 64,
+            "size": 64
+          }
+        ]
+      },
+      {
+        "name": "ObjectData",
+        "size": 240,
+        "fields": [
+          {
+            "name": "model",
+            "offset": 0,
+            "size": 64
+          },
+          {
+            "name": "previousModel",
+            "offset": 64,
+            "size": 64
+          },
+          {
+            "name": "normalMatrix",
+            "offset": 128,
+            "size": 64
+          },
+          {
+            "name": "baseColorMetallic",
+            "offset": 192,
+            "size": 16
+          },
+          {
+            "name": "materialParameters",
+            "offset": 208,
+            "size": 16
+          },
+          {
+            "name": "metadata",
+            "offset": 224,
+            "size": 16
+          }
+        ]
+      },
+      {
+        "name": "ShadowUniforms",
+        "size": 64,
+        "fields": [
+          {
+            "name": "lightViewProjection",
+            "offset": 0,
+            "size": 64
+          }
+        ]
+      },
+      {
+        "name": "PushConstants",
+        "size": 16,
+        "fields": [
+          {
+            "name": "scale",
+            "offset": 0,
+            "size": 8
+          },
+          {
+            "name": "translate",
+            "offset": 8,
+            "size": 8
+          }
+        ]
+      },
+      {
+        "name": "GpuPackedVertex",
+        "size": 32,
+        "fields": [
+          {
+            "name": "position",
+            "offset": 0,
+            "size": 12
+          },
+          {
+            "name": "positionPadding",
+            "offset": 12,
+            "size": 4
+          },
+          {
+            "name": "normal",
+            "offset": 16,
+            "size": 12
+          },
+          {
+            "name": "normalPadding",
+            "offset": 28,
+            "size": 4
+          }
+        ]
+      },
+      {
+        "name": "GpuInstanceData",
+        "size": 144,
+        "fields": [
+          {
+            "name": "model",
+            "offset": 0,
+            "size": 64
+          },
+          {
+            "name": "normalMatrix",
+            "offset": 64,
+            "size": 64
+          },
+          {
+            "name": "metadata",
+            "offset": 128,
+            "size": 16
+          }
+        ]
+      },
+      {
+        "name": "GpuMaterialData",
+        "size": 64,
+        "fields": [
+          {
+            "name": "baseColorMetallic",
+            "offset": 0,
+            "size": 16
+          },
+          {
+            "name": "specularColorShininess",
+            "offset": 16,
+            "size": 16
+          },
+          {
+            "name": "surfaceParameters",
+            "offset": 32,
+            "size": 16
+          },
+          {
+            "name": "metadata",
+            "offset": 48,
+            "size": 16
+          }
+        ]
+      },
+      {
+        "name": "RayTracedGiConstants",
+        "size": 96,
+        "fields": [
+          {
+            "name": "cameraPosition",
+            "offset": 0,
+            "size": 16
+          },
+          {
+            "name": "cameraForward",
+            "offset": 16,
+            "size": 16
+          },
+          {
+            "name": "toSunWorld",
+            "offset": 32,
+            "size": 16
+          },
+          {
+            "name": "sunRadiance",
+            "offset": 48,
+            "size": 16
+          },
+          {
+            "name": "renderSize",
+            "offset": 64,
+            "size": 16
+          },
+          {
+            "name": "traceParameters",
+            "offset": 80,
+            "size": 16
+          }
+        ]
+      },
+      {
+        "name": "RayTracedDiConstants",
+        "size": 224,
+        "fields": [
+          {
+            "name": "inverseViewProjection",
+            "offset": 0,
+            "size": 64
+          },
+          {
+            "name": "previousViewProjection",
+            "offset": 64,
+            "size": 64
+          },
+          {
+            "name": "cameraPosition",
+            "offset": 128,
+            "size": 16
+          },
+          {
+            "name": "cameraForward",
+            "offset": 144,
+            "size": 16
+          },
+          {
+            "name": "toSunWorld",
+            "offset": 160,
+            "size": 16
+          },
+          {
+            "name": "sunRadiance",
+            "offset": 176,
+            "size": 16
+          },
+          {
+            "name": "renderSize",
+            "offset": 192,
+            "size": 16
+          },
+          {
+            "name": "traceParameters",
+            "offset": 208,
+            "size": 16
+          }
+        ]
+      },
+      {
+        "name": "GiCompositeConstants",
+        "size": 32,
+        "fields": [
+          {
+            "name": "cameraPosition",
+            "offset": 0,
+            "size": 16
+          },
+          {
+            "name": "renderInfo",
+            "offset": 16,
+            "size": 16
+          }
+        ]
+      },
+      {
+        "name": "HybridLightingCompositeConstants",
+        "size": 16,
+        "fields": [
+          {
+            "name": "renderInfo",
+            "offset": 0,
+            "size": 16
+          }
+        ]
+      },
+      {
+        "name": "SharcGpuConstants",
+        "size": 128,
+        "fields": [
+          {
+            "name": "cameraPositionSceneScale",
+            "offset": 0,
+            "size": 16
+          },
+          {
+            "name": "previousCameraPositionLogarithmBase",
+            "offset": 16,
+            "size": 16
+          },
+          {
+            "name": "toSunWorldRadianceScale",
+            "offset": 32,
+            "size": 16
+          },
+          {
+            "name": "sunRadiance",
+            "offset": 48,
+            "size": 16
+          },
+          {
+            "name": "traceParameters",
+            "offset": 64,
+            "size": 16
+          },
+          {
+            "name": "cacheParameters",
+            "offset": 80,
+            "size": 16
+          },
+          {
+            "name": "renderParameters",
+            "offset": 96,
+            "size": 16
+          },
+          {
+            "name": "reserved",
+            "offset": 112,
+            "size": 16
+          }
+        ]
+      },
+      {
+        "name": "SharcAccumulationData",
+        "size": 16,
+        "fields": [
+          {
+            "name": "data",
+            "offset": 0,
+            "size": 16
+          }
+        ]
+      },
+      {
+        "name": "SharcPackedData",
+        "size": 16,
+        "fields": [
+          {
+            "name": "radianceData",
+            "offset": 0,
+            "size": 8
+          },
+          {
+            "name": "sampleData",
+            "offset": 8,
+            "size": 4
+          },
+          {
+            "name": "sampleDataExt",
+            "offset": 12,
+            "size": 4
+          }
+        ]
+      },
+      {
+        "name": "AtmosphereGpuConstants",
+        "size": 528,
+        "fields": [
+          {
+            "name": "view",
+            "offset": 0,
+            "size": 64
+          },
+          {
+            "name": "projection",
+            "offset": 64,
+            "size": 64
+          },
+          {
+            "name": "inverseView",
+            "offset": 128,
+            "size": 64
+          },
+          {
+            "name": "inverseProjection",
+            "offset": 192,
+            "size": 64
+          },
+          {
+            "name": "inverseViewProjection",
+            "offset": 256,
+            "size": 64
+          },
+          {
+            "name": "cameraPositionWorld",
+            "offset": 320,
+            "size": 16
+          },
+          {
+            "name": "cameraPlanetPositionKm",
+            "offset": 336,
+            "size": 16
+          },
+          {
+            "name": "toSunWorld",
+            "offset": 352,
+            "size": 16
+          },
+          {
+            "name": "sunColorIlluminanceLux",
+            "offset": 368,
+            "size": 16
+          },
+          {
+            "name": "atmosphereRadiiKm",
+            "offset": 384,
+            "size": 16
+          },
+          {
+            "name": "worldMappingAndClipKm",
+            "offset": 400,
+            "size": 16
+          },
+          {
+            "name": "renderExtent",
+            "offset": 416,
+            "size": 16
+          },
+          {
+            "name": "rayleighScatteringAndInvScaleHeight",
+            "offset": 432,
+            "size": 16
+          },
+          {
+            "name": "mieScatteringAndInvScaleHeight",
+            "offset": 448,
+            "size": 16
+          },
+          {
+            "name": "mieAbsorptionAndPhaseG",
+            "offset": 464,
+            "size": 16
+          },
+          {
+            "name": "ozoneAbsorptionPerKm",
+            "offset": 480,
+            "size": 16
+          },
+          {
+            "name": "ozoneDensityProfileKm",
+            "offset": 496,
+            "size": 16
+          },
+          {
+            "name": "groundAlbedoAndEnabled",
+            "offset": 512,
+            "size": 16
+          }
+        ]
+      }
+    ]
+  }
+}

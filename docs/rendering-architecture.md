@@ -2,8 +2,9 @@
 
 ## 应用与游戏边界
 
-依赖方向固定为 `Lumin::Runtime` -> `Lumin::Rendering` -> `Lumin::GameEngine`。`Lumin::Scripting` 基于 Runtime，
-`Lumin::Editor` 基于 Rendering 与 Scripting；Rendering 不依赖 Editor、Scripting 或 GameEngine。`Application` 的公共头
+依赖方向固定为 `Lumin::Core` -> `Lumin::Render` -> `Lumin::Application`。Core 不依赖 Vulkan、SDL、NvRHI 或渲染器；
+Render 只读取 Core 的场景和资产接口，Application 是唯一同时组合两者的宿主。旧的 `Runtime`、`Rendering`、`Editor`
+和 `GameEngine` 名称仅作为迁移期 alias 保留。`Application` 的公共头
 使用 PImpl，只公开窗口配置、脚本配置和 `Game` 注入点，不泄露 SDL、Vulkan、renderer 或场景的具体所有权。
 
 `Application` 拥有窗口、Vulkan 上下文、`Level`、`Camera`、`ScriptRuntime`、`LevelRenderer` 和 `Editor`。
@@ -49,7 +50,7 @@ UI 未捕获输入时才更新相机和派发 `GameInput`，随后始终调用 `
 
 ## 表面材质与 GPU ABI
 
-`scene::Material` 位于 `src/scene/Material.hpp`，通过 `SurfaceModel` 逐材质选择
+`scene::Material` 位于 `core/scene/Material.hpp`，通过 `SurfaceModel` 逐材质选择
 `MetallicRoughness` 或 `BlinnPhong`。枚举使用固定的 `uint32_t` 数值 `0/1`，会直接进入 GPU material buffer；
 后续只能追加新值，不能重新排序。材质同时保留两套模型参数，因此编辑器切换模型不会丢失原有调参：
 Metallic-Roughness 使用 `roughness/metallic`，Blinn-Phong 使用 `specularColor/shininess`，两者共享 base color、
@@ -173,7 +174,7 @@ NvRHI native interop。交换链图像对应的 NvRHI texture 是非拥有型包
 
 所有逐帧 command list 均调用 `setEnableAutomaticBarriers(false)`。材质纹理与 ImGui 字体使用专用初始化上传列表，
 这是仅有的 automatic barrier 例外；上传列表在关闭时把纹理恢复到 `ShaderResource`。只有
-`src/render/FrameGraph.cpp` 可以在运行时代码中调用 `beginTracking*State`、`set*State` 和 `commitBarriers`；首次使用的
+`render/FrameGraph.cpp` 可以在运行时代码中调用 `beginTracking*State`、`set*State` 和 `commitBarriers`；首次使用的
 纹理以 NvRHI 支持的 `Common`（Vulkan `Undefined` 源布局）导入，离屏附件清理由显式声明 `CopyDest` 的 transfer pass
 完成，交换链则由全屏 Tonemap pass 直接覆盖。后续由 `FrameGraph` 转换到 `RenderTarget` 或 `DepthWrite`；同状态写依赖
 使用有效图像布局作为中间状态，绝不把 `Common` 用作 barrier 目标。`Unknown` 只作为“不生成最终转换”的哨兵。

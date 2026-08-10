@@ -1,6 +1,6 @@
 #include "SandboxGame.hpp"
 
-#include "core/Application.hpp"
+#include "application/Application.hpp"
 
 #include <cstdlib>
 #include <exception>

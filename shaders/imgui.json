@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "source": "imgui.slang",
+  "entries": [
+    {
+      "name": "imgui.vertex",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "imgui.vert.spv",
+      "reflection": "reflection/imgui.vert.json",
+      "depfile": "deps/imgui.vert.d",
+      "bindings": [
+        {
+          "name": "constants",
+          "kind": "pushConstant",
+          "binding": 0
+        },
+        {
+          "name": "fontTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "fontSampler",
+          "kind": "sampler",
+          "set": 0,
+          "binding": 128
+        }
+      ],
+      "abiStructs": [
+        "PushConstants"
+      ]
+    },
+    {
+      "name": "imgui.fragment",
+      "entry": "fragmentMain",
+      "stage": "fragment",
+      "output": "imgui.frag.spv",
+      "reflection": "reflection/imgui.frag.json",
+      "depfile": "deps/imgui.frag.d",
+      "bindings": [
+        {
+          "name": "constants",
+          "kind": "pushConstant",
+          "binding": 0
+        },
+        {
+          "name": "fontTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "fontSampler",
+          "kind": "sampler",
+          "set": 0,
+          "binding": 128
+        }
+      ],
+      "abiStructs": [
+        "PushConstants"
+      ]
+    }
+  ]
+}

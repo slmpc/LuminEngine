@@ -1,5 +1,5 @@
-#include "editor/Editor.hpp"
-#include "editor/EditorLayout.hpp"
+#include "render/editor/Editor.hpp"
+#include "render/editor/EditorLayout.hpp"
 
 #include "assets/ObjLoader.hpp"
 #include "render/ImGuiContent.hpp"

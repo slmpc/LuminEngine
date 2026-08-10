@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "source": "atmosphere/AerialPerspectiveLut.slang",
+  "entries": [
+    {
+      "name": "atmosphere.aerial-perspective",
+      "entry": "aerialPerspectiveMain",
+      "stage": "compute",
+      "output": "atmosphere.aerial-perspective.comp.spv",
+      "reflection": "reflection/atmosphere.aerial-perspective.comp.json",
+      "depfile": "deps/atmosphere.aerial-perspective.comp.d",
+      "bindings": [
+        {
+          "name": "atmosphere",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "transmittanceLut",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 1
+        },
+        {
+          "name": "multiScatteringLut",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 2
+        },
+        {
+          "name": "atmosphereSampler",
+          "kind": "sampler",
+          "set": 0,
+          "binding": 3
+        },
+        {
+          "name": "aerialPerspectiveOutput",
+          "kind": "storageImage3D",
+          "set": 0,
+          "binding": 4
+        }
+      ],
+      "abiStructs": [
+        "AtmosphereGpuConstants"
+      ]
+    }
+  ]
+}

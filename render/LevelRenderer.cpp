@@ -1,6 +1,6 @@
 #include "render/LevelRenderer.hpp"
 
-#include "platform/Window.hpp"
+#include "render/platform/Window.hpp"
 #include "render/VulkanContext.hpp"
 #include "render/gi/SsaoBackend.hpp"
 #include "render/gpu/GpuScene.hpp"

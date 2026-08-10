@@ -15,13 +15,18 @@ Lumin Engine 是一个使用 C++20、SDL3、Slang 和动态渲染构建的紧凑
 ## 目录结构
 
 - `apps/sandbox`：可运行的示例程序。
-- `src`：引擎头文件与实现，不再维护独立的公共 `include` 树。
+- `core`：不依赖图形 API 的场景、资产、脚本和 Game API。
+- `render`：独立渲染模块，包含 Vulkan/NvRHI、FrameGraph、GPU Scene、GI、Atmosphere 和编辑器 UI。
+- `application`：连接 Core 与 Render 的应用组合层；游戏逻辑不会反向进入 Render。
 - `assets/models`：实验时放置 OBJ 文件的目录。
 - `assets/materials`：本地 PBR 材质贴图目录，由下载脚本生成且不纳入版本控制。
 - `scripts`：资源下载等项目辅助脚本。
 - `shaders`：着色器源码。
-- `cmake`：项目的 CMake 辅助模块。
+- `cmake`：仅保留依赖策略、目标公共设置和 shader 工具发现等少量 CMake 辅助模块。
 - `docs`：简要架构说明。
+
+模块边界、target alias、CMake 入口和 shader companion JSON 约定见
+[`docs/module-architecture.md`](docs/module-architecture.md)。
 
 ## 依赖项
 
@@ -40,7 +45,7 @@ Lumin Engine 是一个使用 C++20、SDL3、Slang 和动态渲染构建的紧凑
 ## 构建
 
 ```powershell
-cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --preset debug
 cmake --build out/build/debug
 ```
 

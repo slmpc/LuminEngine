@@ -1,8 +1,8 @@
-#include "core/Application.hpp"
+#include "application/Application.hpp"
 
-#include "editor/Editor.hpp"
-#include "platform/RenderDocAttachment.hpp"
-#include "platform/Window.hpp"
+#include "render/editor/Editor.hpp"
+#include "render/platform/RenderDocAttachment.hpp"
+#include "render/platform/Window.hpp"
 #include "render/LevelRenderer.hpp"
 #include "render/VulkanContext.hpp"
 #include "scene/CameraController.hpp"

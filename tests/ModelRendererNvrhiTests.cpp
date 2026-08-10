@@ -134,25 +134,25 @@ namespace {
 
     void testViewportExtentContract() {
         const std::filesystem::path sourcePath =
-            std::filesystem::path(__FILE__).parent_path().parent_path() / "src/render/ModelRenderer.cpp";
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "render/ModelRenderer.cpp";
         std::ifstream source(sourcePath, std::ios::binary);
         const std::string contents{std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>()};
         require(contents.find("nvrhi::Viewport(static_cast<float>(width), static_cast<float>(height))") !=
                     std::string::npos,
                 "ModelRenderer graphics state must set one viewport and scissor from the requested extent.");
-        require(contents.find("recordGBuffer(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,\n"
-                              "                                      std::uint32_t width, std::uint32_t height") !=
-                    std::string::npos,
+        require(contents.find("recordGBuffer(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,") !=
+                    std::string::npos &&
+                    contents.find("std::uint32_t width, std::uint32_t height") != std::string::npos,
                 "G-buffer recording must accept the current frame extent.");
-        require(contents.find("recordShadow(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,\n"
-                              "                                     std::uint32_t width, std::uint32_t height") !=
-                    std::string::npos,
+        require(contents.find("recordShadow(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,") !=
+                    std::string::npos &&
+                    contents.find("std::uint32_t width, std::uint32_t height") != std::string::npos,
                 "Shadow recording must accept the shadow-map extent.");
     }
 
     void testStaticBufferStateContract() {
         const std::filesystem::path sourcePath =
-            std::filesystem::path(__FILE__).parent_path().parent_path() / "src/render/ModelRenderer.cpp";
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "render/ModelRenderer.cpp";
         std::ifstream source(sourcePath, std::ios::binary);
         const std::string contents{std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>()};
         for (const char* state :
@@ -164,7 +164,7 @@ namespace {
 
     void testSubmittedMotionHistoryContract() {
         const std::filesystem::path sourcePath =
-            std::filesystem::path(__FILE__).parent_path().parent_path() / "src/render/ModelRenderer.cpp";
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "render/ModelRenderer.cpp";
         std::ifstream source(sourcePath, std::ios::binary);
         const std::string contents{std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>()};
         const std::size_t sync = contents.find("void ModelRenderer::sync");

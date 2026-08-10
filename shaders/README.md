@@ -3,18 +3,23 @@
 Slang 着色器二进制与 reflection JSON 由 CMake 生成到
 `out/build/<preset>/generated/shaders`。这些文件属于构建产物，请勿提交 SPIR-V、reflection JSON 或 depfile。
 
-`shader-manifest.json` 是 shader 构建与 ABI 的机器可读清单。每个 entry 都必须声明：
+每个 Slang 源文件都有一个同名 companion JSON，例如 `rt_di.slang` 配套 `rt_di.json`。
+配置文件只描述这个源文件的入口，必须声明：
 
 - Slang 源文件、entry point、stage、SPIR-V 输出和 reflection 输出；
 - 需要显式启用的 capability；
 - descriptor set、binding、资源类型以及参与校验的结构布局。
+
+所有公共 ABI 和默认 `slangc` 编译选项集中在 `shader-abi.json`。这不是入口清单；构建时
+`scripts/shader_manifest.py` 会扫描这些小配置，校验重复输出和依赖 feature，并在构建目录生成
+临时的 `shader-manifest.json` 与 `shader-targets.cmake`。源码目录不再维护巨型总 manifest。
 
 CMake 对每个 entry 启用 `-warnings-as-errors all`，并把 Slang `-depfile` 交给 Ninja。修改
 `shaders/include` 下的公共文件会只重编依赖该文件的 shader。`gbuffer.fragment` 使用的额外 SPIR-V
 capability 在 manifest 中逐项列出；不要使用 `-ignore-capabilities` 或全局关闭 capability 诊断。
 
 `include/PostProcessUniforms.slang` 是全屏通道共享的 GPU ABI 定义。其布局必须与 CPU
-`lumin::render::PostProcessUniforms` 保持一致：总大小为 496 字节，字段 offset 由 manifest、Slang
+`lumin::render::PostProcessUniforms` 保持一致：总大小为 496 字节，字段 offset 由生成 manifest、Slang
 reflection 校验和 `ShaderCpuAbi` 测试共同锁定。
 
 可单独构建并重复运行 ABI 校验：

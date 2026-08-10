@@ -1,7 +1,7 @@
-#include "editor/Editor.hpp"
+#include "render/editor/Editor.hpp"
 
 #include "EditorStyle.hpp"
-#include "editor/EditorLayout.hpp"
+#include "render/editor/EditorLayout.hpp"
 
 #include <algorithm>
 #include <array>

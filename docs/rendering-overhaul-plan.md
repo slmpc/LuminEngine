@@ -66,6 +66,14 @@
 
 ## 阶段与状态
 
+### 本轮架构重构执行记录（2026-08-11）
+
+- [x] 将 CPU 侧源码移动到 `core/`，GPU、平台和 Editor 源码移动到 `render/`，组合宿主移动到 `application/`。
+- [x] 以 `Lumin::Core`、`Lumin::Render` 和 `Lumin::Application` 固定依赖方向，旧 target 名仅保留 alias。
+- [x] 删除未使用的小型 CMake 模块；根、Core、Render、Shaders、Sandbox、Tests 各自只保留一个入口。
+- [x] 用 `scripts/shader_manifest.py` 扫描每个 shader companion JSON，生成 build-tree manifest、custom commands 和 ABI 校验输入。
+- [x] 完成 Debug 全量构建、35 项 CTest，以及 `LUMIN_RAY_TRACING=OFF` 的 configure/Core 构建验证。
+
 ### 0. 基线与审计
 
 - [x] 完成现有模块、场景 revision、shader ABI、同步和构建测试审计。

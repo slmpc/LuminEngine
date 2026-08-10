@@ -2,7 +2,7 @@
 
 #include "render/VulkanContext.hpp"
 
-#include "platform/Window.hpp"
+#include "render/platform/Window.hpp"
 #include "render/BackendLifetime.hpp"
 #include "render/ModelRenderer.hpp"
 #include "render/RayTracingBuildConfiguration.hpp"

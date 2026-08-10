@@ -1,6 +1,6 @@
 #include "game/Game.hpp"
 
-#include "core/Application.hpp"
+#include "application/Application.hpp"
 
 #include <chrono>
 #include <filesystem>

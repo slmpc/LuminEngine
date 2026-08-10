@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "source": "atmosphere/MultiScatteringLut.slang",
+  "entries": [
+    {
+      "name": "atmosphere.multi-scattering",
+      "entry": "multiScatteringMain",
+      "stage": "compute",
+      "output": "atmosphere.multi-scattering.comp.spv",
+      "reflection": "reflection/atmosphere.multi-scattering.comp.json",
+      "depfile": "deps/atmosphere.multi-scattering.comp.d",
+      "bindings": [
+        {
+          "name": "atmosphere",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "transmittanceLut",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 1
+        },
+        {
+          "name": "atmosphereSampler",
+          "kind": "sampler",
+          "set": 0,
+          "binding": 3
+        },
+        {
+          "name": "multiScatteringOutput",
+          "kind": "storageImage",
+          "set": 0,
+          "binding": 4
+        }
+      ],
+      "abiStructs": [
+        "AtmosphereGpuConstants"
+      ]
+    }
+  ]
+}

@@ -7,7 +7,9 @@
 Lumin Engine 是一个使用 C++20、Vulkan 1.3、SDL3 和 Slang 构建的紧凑型渲染器与场景沙盒。
 主要代码位于：
 
-- `src`：引擎头文件与实现。
+- `core`：不依赖图形 API 的场景、资产、脚本和 Game API。
+- `render`：独立渲染模块及其编辑器 UI。
+- `application`：连接 Core 与 Render 的宿主组合层。
 - `apps/sandbox`：可运行的示例程序。
 - `shaders`：Slang 着色器源码。
 - `tests`：引擎测试。

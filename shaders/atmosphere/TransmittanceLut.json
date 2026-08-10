@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "source": "atmosphere/TransmittanceLut.slang",
+  "entries": [
+    {
+      "name": "atmosphere.transmittance",
+      "entry": "transmittanceMain",
+      "stage": "compute",
+      "output": "atmosphere.transmittance.comp.spv",
+      "reflection": "reflection/atmosphere.transmittance.comp.json",
+      "depfile": "deps/atmosphere.transmittance.comp.d",
+      "bindings": [
+        {
+          "name": "atmosphere",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "transmittanceOutput",
+          "kind": "storageImage",
+          "set": 0,
+          "binding": 4
+        }
+      ],
+      "abiStructs": [
+        "AtmosphereGpuConstants"
+      ]
+    }
+  ]
+}
