@@ -536,9 +536,9 @@ namespace lumin::render::gpu {
                                                     .finalState = nvrhi::ResourceStates::AccelStructRead});
             ticket.topLevelAccelerationStructureResource_ = tlasResource;
 
-            ticket.accelerationStructurePass_ = frameGraph.addPass(
-                "gpu-scene-build-acceleration-structures", FrameGraphPassType::Compute,
-                [accelerationStructureInputs, blasResources, tlasResource](FrameGraphBuilder& builder) {
+            const FrameGraphPassHandle bottomLevelBuildPass = frameGraph.addPass(
+                "gpu-scene-build-bottom-level-acceleration-structures", FrameGraphPassType::Compute,
+                [accelerationStructureInputs, blasResources](FrameGraphBuilder& builder) {
                     for (const FrameGraphResourceHandle resource : accelerationStructureInputs) {
                         builder.read(resource, nvrhi::ResourceStates::AccelStructBuildInput);
                     }
@@ -547,7 +547,6 @@ namespace lumin::render::gpu {
                             builder.writeAccelerationStructure(resource);
                         }
                     }
-                    builder.writeAccelerationStructure(tlasResource);
                 },
                 [this, version](const FrameGraphContext& context) {
                     const auto flags = nvrhi::rt::AccelStructBuildFlags::AllowUpdate |
@@ -558,6 +557,24 @@ namespace lumin::render::gpu {
                                                       version->blasGeometry[index], flags);
                         }
                     }
+                });
+
+            ticket.accelerationStructurePass_ = frameGraph.addPass(
+                "gpu-scene-build-top-level-acceleration-structure", FrameGraphPassType::Compute,
+                [bottomLevelBuildPass, blasResources, tlasResource](FrameGraphBuilder& builder) {
+                    builder.dependsOn(bottomLevelBuildPass);
+                    // TLAS 构建会读取 BLAS 的设备地址和构建结果。单独声明 read 可强制 FrameGraph 在两个
+                    // build pass 之间提交 AccelStructWrite -> AccelStructRead 内存屏障。
+                    for (const FrameGraphResourceHandle resource : blasResources) {
+                        if (resource.isValid()) {
+                            builder.readAccelerationStructure(resource);
+                        }
+                    }
+                    builder.writeAccelerationStructure(tlasResource);
+                },
+                [this, version](const FrameGraphContext& context) {
+                    const auto flags = nvrhi::rt::AccelStructBuildFlags::AllowUpdate |
+                                       nvrhi::rt::AccelStructBuildFlags::PreferFastTrace;
                     backend_.buildTopLevel(context.commandList, version->descriptors.tlas, version->tlasInstances,
                                            flags);
                 });

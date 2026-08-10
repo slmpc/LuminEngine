@@ -93,6 +93,14 @@ set，避免环境输入在三条路径中漂移。
 槽只把现有 buffer 与 TLAS 重新导入 `FrameGraph`，不再创建资源、上传数据或重建 AS。候选版本仅在 queue submit 成功后
 发布；录制或提交失败会丢弃候选并保留旧版本，因此其他 in-flight 帧始终引用有效对象。
 
+`VulkanContext::beginFrame()` 在等待当前 frame slot 的 event query 后调用一次
+`IDevice::runGarbageCollection()`。NvRHI command buffer 会强引用录制期间使用的 framebuffer、binding set、buffer、
+texture 和 AS；该回收是逐帧资源生命周期的一部分，不能仅依赖 C++ handle 离开作用域或最终 device 析构。
+
+新物理版本的 AS 构建固定拆为两个 `FrameGraph` pass：第一个 pass 写入全部活动 BLAS，第二个 pass 将这些 BLAS 声明为
+`AccelStructRead` 后再写入 TLAS。两者之间的 `AccelStructWrite -> AccelStructRead` 屏障保证大型 BLAS 的构建结果在 TLAS
+读取其设备地址和内容前可见；不得仅依靠命令录制顺序、CPU fence 或捕获工具带来的隐式串行化。
+
 `TextureManager` 为每个帧槽拥有一张标准 RGBA 全局光照图像。RGB 保存线性间接辐射亮度，alpha 保存环境可见度；
 禁用全局光照时的中性值为 `{0, 0, 0, 1}`。默认 SSAO 后端写入 `{0, 0, 0, ao}`，延迟光照按
 `legacyAmbient * globalIllumination.a + globalIllumination.rgb` 合成环境光。该图像同时支持颜色附件、采样和存储图像

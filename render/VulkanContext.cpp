@@ -364,6 +364,10 @@ namespace lumin::render {
             frameQueryPending_[currentFrame_] = false;
         }
 
+        // NvRHI 会让已提交 command buffer 强引用本帧使用过的 framebuffer、binding set 和资源。
+        // 帧槽完成后必须主动退休这些 command buffer，否则每帧临时对象会永久滞留在驱动/CPU 堆中。
+        rhiDevice_->runGarbageCollection();
+
         std::uint32_t imageIndex = 0;
         const VkResult result = vkAcquireNextImageKHR(
             device_, swapchain_, UINT64_MAX, imageAvailableSemaphores_[currentFrame_], VK_NULL_HANDLE, &imageIndex);

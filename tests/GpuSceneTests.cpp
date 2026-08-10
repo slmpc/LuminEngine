@@ -142,6 +142,8 @@ namespace {
         std::unordered_map<std::string, std::vector<std::byte>> writes;
         std::size_t blasBuilds = 0;
         std::size_t tlasBuilds = 0;
+        std::vector<std::vector<nvrhi::rt::InstanceDesc>> tlasBuildInstances;
+        std::vector<std::string> executionEvents;
 
         [[nodiscard]] nvrhi::BufferHandle createBuffer(const nvrhi::BufferDesc& desc) override {
             bufferDescs.push_back(desc);
@@ -171,6 +173,7 @@ namespace {
                     "BLAS build must consume the shared packed-vertex ABI.");
             require((flags & nvrhi::rt::AccelStructBuildFlags::AllowUpdate) != nvrhi::rt::AccelStructBuildFlags::None,
                     "Copy-on-write BLAS builds must retain future update compatibility.");
+            executionEvents.emplace_back("blas-build");
             ++blasBuilds;
         }
 
@@ -178,6 +181,8 @@ namespace {
                            std::span<const nvrhi::rt::InstanceDesc> instances,
                            nvrhi::rt::AccelStructBuildFlags) override {
             require(tlas != nullptr && !instances.empty(), "TLAS build must reference active BLAS instances.");
+            tlasBuildInstances.emplace_back(instances.begin(), instances.end());
+            executionEvents.emplace_back("tlas-build");
             ++tlasBuilds;
         }
 
@@ -203,6 +208,9 @@ namespace {
 
     class RecordingGpuSceneBarriers final : public lumin::render::FrameGraphBarrierRecorder {
     public:
+        explicit RecordingGpuSceneBarriers(std::vector<std::string>* events = nullptr) : events_(events) {
+        }
+
         std::size_t copyDestBuffers = 0;
         std::size_t accelerationStructureInputs = 0;
         std::size_t shaderResourceBuffers = 0;
@@ -223,9 +231,18 @@ namespace {
         void setAccelerationStructureState(nvrhi::rt::IAccelStruct*, nvrhi::ResourceStates state) override {
             accelerationStructureWrites += state == nvrhi::ResourceStates::AccelStructWrite ? 1U : 0U;
             accelerationStructureReads += state == nvrhi::ResourceStates::AccelStructRead ? 1U : 0U;
+            if (events_ != nullptr && state == nvrhi::ResourceStates::AccelStructRead) {
+                events_->emplace_back("as-read-barrier");
+            }
         }
         void commitBarriers() override {
+            if (events_ != nullptr) {
+                events_->emplace_back("commit-barriers");
+            }
         }
+
+    private:
+        std::vector<std::string>* events_ = nullptr;
     };
 
     void testSurfaceModelGpuContract() {
@@ -736,7 +753,7 @@ namespace {
                 traceObservedCompletedBuilds = backend.blasBuilds == 2 && backend.tlasBuilds == 1;
             });
 
-        RecordingGpuSceneBarriers barriers;
+        RecordingGpuSceneBarriers barriers(&backend.executionEvents);
         graph.execute({.barriers = &barriers});
         require(backend.blasBuilds == 2 && backend.tlasBuilds == 1 && traceObservedCompletedBuilds,
                 "The candidate trace pass must execute only after every active BLAS and the TLAS are built.");
@@ -744,6 +761,16 @@ namespace {
                     barriers.shaderResourceBuffers == 8 && barriers.accelerationStructureWrites == 3 &&
                     barriers.accelerationStructureReads == 3,
                 "FrameGraph must exclusively transition eight uploads, four geometry inputs, and three BLAS/TLAS.");
+        const auto firstBlas = std::ranges::find(backend.executionEvents, std::string{"blas-build"});
+        const auto tlas = std::ranges::find(backend.executionEvents, std::string{"tlas-build"});
+        const auto lastBlas = firstBlas == backend.executionEvents.end()
+                                  ? backend.executionEvents.end()
+                                  : std::ranges::find(firstBlas + 1, backend.executionEvents.end(),
+                                                      std::string{"blas-build"});
+        require(lastBlas != backend.executionEvents.end() && tlas != backend.executionEvents.end() && lastBlas < tlas &&
+                    std::ranges::find(lastBlas + 1, tlas, std::string{"as-read-barrier"}) != tlas &&
+                    std::ranges::find(lastBlas + 1, tlas, std::string{"commit-barriers"}) != tlas,
+                "TLAS build must execute only after a committed BLAS write-to-read memory barrier.");
         const auto instances = backend.records<lumin::render::gpu::GpuInstanceData>("GpuScene.InstanceRecords");
         for (const auto model : {fixture.model, secondModel}) {
             const auto* binding = plan.targetLayout().findInstance(RenderInstanceId{model});
@@ -769,6 +796,42 @@ namespace {
                 "Successful RT submission must publish the same ordered candidate descriptors consumed this frame.");
     }
 
+    void testSharedBlasInstancesRemainDistinctAcrossFrameSlots() {
+        Fixture fixture;
+        lumin::scene::Transform rightTransform;
+        rightTransform.position = {2.0F, 0.0F, 0.0F};
+        const auto rightModel = fixture.level.addModel(fixture.mesh, rightTransform);
+        const GpuSceneUpdatePlan plan = fixture.planner.plan(fixture.world.sync(fixture.level));
+        FakeGpuSceneBackend backend;
+        lumin::render::gpu::GpuSceneResources resources(backend, {.frameSlotCount = 2, .rayTracingEnabled = true});
+
+        for (std::uint32_t slot = 0; slot < 2; ++slot) {
+            lumin::render::FrameGraph graph;
+            const auto update = resources.recordUpdate(graph, plan, FrameSlotIndex{slot}, true);
+            graph.execute({});
+            resources.finishUpdate(update, true);
+        }
+
+        require(backend.blasBuilds == 2 && backend.tlasBuilds == 2 && backend.tlasBuildInstances.size() == 2,
+                "Each frame slot must build one shared BLAS and a TLAS containing both instances.");
+        const auto* leftBinding = plan.targetLayout().findInstance(RenderInstanceId{fixture.model});
+        const auto* rightBinding = plan.targetLayout().findInstance(RenderInstanceId{rightModel});
+        require(leftBinding != nullptr && rightBinding != nullptr &&
+                    leftBinding->instanceIndex != rightBinding->instanceIndex,
+                "Models sharing a mesh must keep distinct stable instance IDs.");
+
+        for (const auto& instances : backend.tlasBuildInstances) {
+            require(instances.size() == 2 && instances[0].bottomLevelAS != nullptr &&
+                        instances[0].bottomLevelAS == instances[1].bottomLevelAS,
+                    "Both TLAS instances must reference the same live BLAS.");
+            require(instances[0].instanceID != instances[1].instanceID,
+                    "Shared-BLAS TLAS entries must not overwrite each other's InstanceID.");
+            const auto& right = instances[instances[0].instanceID == rightBinding->instanceIndex.value() ? 0U : 1U];
+            require(right.instanceID == rightBinding->instanceIndex.value() && std::abs(right.transform[3] - 2.0F) < 1e-6F,
+                    "The second shared-BLAS instance must preserve its independent world transform.");
+        }
+    }
+
 } // namespace
 
 int main() {
@@ -788,6 +851,7 @@ int main() {
         testPlannerResetInvalidatesOutstandingPlans();
         testPhysicalResourcesFallbackAndSubmissionTransaction();
         testPhysicalResourcesRecordBindlessGeometryAndAsPass();
+        testSharedBlasInstancesRemainDistinctAcrossFrameSlots();
         std::puts("GpuScene PASS");
         return 0;
     } catch (const std::exception& error) {

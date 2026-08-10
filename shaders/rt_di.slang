@@ -182,9 +182,9 @@ void primaryClosestHitMain(inout PrimaryPayload payload, BuiltInTriangleIntersec
 
     GpuMaterialData material = materials[instance.metadata.x];
     float3 direct = evaluateDirect(material, normal, toView, toLight, float(shadowPayload.visibility));
-    // Current UV comes from the dispatch pixel; previous UV is reconstructed from the hit and previous camera matrix.
-    // projection jitter 对 UV 的偏移为 (-jitter.x/width, jitter.y/height)，由 renderSize.zw 传入。
-    float2 currentUv = (float2(pixel) + 0.5) / float2(extent) + frame.renderSize.zw;
+    // 光线由当前抖动投影生成，dispatch 像素中心已经是当前采样位置，不能再次叠加 jitter。
+    // previousViewProjection 保留上一帧抖动，因此两者相减会自然得到 TAA 所需的 previous-current motion。
+    float2 currentUv = (float2(pixel) + 0.5) / float2(extent);
     float4 previousClip = mul(frame.previousViewProjection, float4(hitPosition, 1.0));
     float2 previousUv = clipToUv(previousClip);
     float depth = max(dot(hitPosition - frame.cameraPosition.xyz, frame.cameraForward.xyz), 0.0);

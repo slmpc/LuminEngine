@@ -112,8 +112,9 @@ void rayGenerationMain() {
     float4 positionSample = positionTexture.Load(int3(pixel, 0));
     float4 normalRoughness = normalRoughnessTexture.Load(int3(pixel, 0));
     float2 motion = motionTexture.Load(int3(pixel, 0));
-    // surface motion 统一为 previousUv - currentUv，直接交给 NRD。
-    denoiserMotion[pixel] = motion;
+    // RT surface motion 包含投影 jitter；NRD 要求 previous-current 且不含 jitter。
+    // renderSize.zw 是 currentEffectiveJitter - previousEffectiveJitter，正好抵消 surface motion 中的抖动差。
+    denoiserMotion[pixel] = motion + frame.renderSize.zw;
 
     // RT surface 将命中距离写入 position.w；miss 为负值，不能用小于 0.5 判断有效性。
     if (positionSample.w <= 0.0) {

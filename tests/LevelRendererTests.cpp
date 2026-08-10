@@ -265,6 +265,12 @@ namespace {
         const std::size_t nativeSwapchain = context.find("vkDestroySwapchainKHR", wrappers);
         require(wrappers < views && views < nativeSwapchain,
                 "Swapchain wrappers must be released before native image views and swapchain.");
+        const std::size_t beginFrame = context.find("std::optional<VulkanFrame> VulkanContext::beginFrame()");
+        const std::size_t garbageCollection = context.find("rhiDevice_->runGarbageCollection()", beginFrame);
+        const std::size_t acquire = context.find("vkAcquireNextImageKHR", beginFrame);
+        require(beginFrame != std::string::npos && garbageCollection != std::string::npos && acquire != std::string::npos &&
+                    beginFrame < garbageCollection && garbageCollection < acquire,
+                "Each frame must retire completed NvRHI command buffers before acquiring and recording new work.");
         std::size_t cancellation = context.find("void VulkanContext::cancelFrame");
         cancellation = requireAfter(context, "frame.commandList->close()", cancellation);
         cancellation = requireAfter(context, "setEnableAutomaticBarriers(false)", cancellation);
@@ -307,6 +313,18 @@ namespace {
         std::cout << "NVRHI_Y_CONVENTION=projection,fullscreen,motion,sky,shadow\n";
     }
 
+    void verifyHybridMotionContract() {
+        const std::string rtDirect = readSource("shaders/rt_di.slang");
+        require(rtDirect.find("float2 currentUv = (float2(pixel) + 0.5) / float2(extent);") != std::string::npos &&
+                    rtDirect.find("float2 currentUv = (float2(pixel) + 0.5) / float2(extent) +") == std::string::npos,
+                "RTDI current UV must use the jittered dispatch sample exactly once.");
+
+        const std::string rtGi = readSource("shaders/rt_gi.slang");
+        require(rtGi.find("denoiserMotion[pixel] = motion + frame.renderSize.zw;") != std::string::npos,
+                "RTGI must remove projection jitter before handing motion to NRD.");
+        std::cout << "HYBRID_MOTION=RTDI-jitter-once;NRD=non-jittered-previous-minus-current\n";
+    }
+
 } // namespace
 
 int main() {
@@ -323,6 +341,7 @@ int main() {
         verifyFeaturePipelineContract(level, deferredPipeline, deferredHeader);
         verifySwapchainLifecycle(context);
         verifyNvrhiYCoordinateConvention(level);
+        verifyHybridMotionContract();
         std::cout << "LEVEL_RENDERER_RECORDER=PASS\n";
         return 0;
     } catch (const std::exception& exception) {
