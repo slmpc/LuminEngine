@@ -13,6 +13,9 @@
         "rayTracing",
         "nrd"
       ],
+      "includeDirectories": [
+        "../thirdparty/nrd/Shaders"
+      ],
       "bindings": [
         {
           "name": "denoisedDiffuseRadianceHitDistance",

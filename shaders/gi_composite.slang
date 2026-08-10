@@ -1,4 +1,5 @@
 #include "GpuScene.slang"
+#include "NRD.hlsli"
 
 struct GiCompositeConstants {
     float4 cameraPosition;
@@ -27,6 +28,11 @@ float3 fresnelSchlick(float normalDotView, float3 reflectanceAtNormal) {
     return reflectanceAtNormal + (1.0 - reflectanceAtNormal) * pow(1.0 - saturate(normalDotView), 5.0);
 }
 
+float3 unpackReblurRadiance(float4 packedSignal) {
+    // Raw RT GI 与 NRD 输出都使用 REBLUR 的 YCoCg signal contract。
+    return max(REBLUR_BackEnd_UnpackRadianceAndNormHitDist(packedSignal).rgb, 0.0);
+}
+
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void compositeMain(uint3 dispatchThreadId : SV_DispatchThreadID) {
@@ -45,8 +51,10 @@ void compositeMain(uint3 dispatchThreadId : SV_DispatchThreadID) {
     }
 
     GpuMaterialData material = materials[materialId];
-    float3 diffuseRadiance = max(denoisedDiffuseRadianceHitDistance.Load(int3(pixel, 0)).rgb, 0.0);
-    float3 specularRadiance = max(denoisedSpecularRadianceHitDistance.Load(int3(pixel, 0)).rgb, 0.0);
+    float3 diffuseRadiance =
+        unpackReblurRadiance(denoisedDiffuseRadianceHitDistance.Load(int3(pixel, 0)));
+    float3 specularRadiance =
+        unpackReblurRadiance(denoisedSpecularRadianceHitDistance.Load(int3(pixel, 0)));
     float4 albedoMetallic = albedoMetallicTexture.Load(int3(pixel, 0));
     float3 albedo = saturate(albedoMetallic.rgb);
     float metallic = saturate(albedoMetallic.a);

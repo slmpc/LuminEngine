@@ -325,12 +325,16 @@ namespace {
             std::filesystem::path(__FILE__).parent_path().parent_path() / "shaders/gi_composite.slang";
         std::ifstream shader(shaderPath, std::ios::binary);
         const std::string source{std::istreambuf_iterator<char>(shader), std::istreambuf_iterator<char>()};
-        require(source.find("globalIlluminationOutput[pixel] = kNeutralOutput") != std::string::npos &&
+        require(source.find("#include \"NRD.hlsli\"") != std::string::npos &&
+                    source.find("REBLUR_BackEnd_UnpackRadianceAndNormHitDist(packedSignal)") != std::string::npos &&
+                    source.find("unpackReblurRadiance(denoisedDiffuseRadianceHitDistance.Load") != std::string::npos &&
+                    source.find("unpackReblurRadiance(denoisedSpecularRadianceHitDistance.Load") != std::string::npos &&
+                    source.find("globalIlluminationOutput[pixel] = kNeutralOutput") != std::string::npos &&
                     source.find("material.metadata.x == kBlinnPhongSurfaceModel") != std::string::npos &&
                     source.find("diffuseRadiance * albedo * diffuseWeight + specularRadiance * fresnel") !=
                         std::string::npos &&
                     source.find("float4(indirectRadiance, 0.0)") != std::string::npos,
-                "GI composite shader must preserve neutral background and both material modulation paths.");
+                "GI composite shader must decode REBLUR signals before both material modulation paths.");
     }
 
 } // namespace
