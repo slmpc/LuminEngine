@@ -71,6 +71,23 @@ namespace {
         require(nearlyEqual(camera.position().z, -1.0f), "S must oppose W movement.");
     }
 
+    void testCameraMouseLook() {
+        lumin::scene::Camera camera;
+        camera.setOrientation(-90.0f, 0.0f);
+
+        lumin::scene::CameraController::update(
+            camera, {.lookDeltaX = 10.0f, .lookDeltaY = -20.0f, .lookSensitivity = 0.5f}, 0.0f);
+        require(nearlyEqual(camera.yawDegrees(), -85.0f) && nearlyEqual(camera.pitchDegrees(), 10.0f),
+                "Relative mouse motion must rotate yaw and pitch without depending on delta time.");
+
+        lumin::scene::CameraController::update(camera, {.lookDeltaY = -1'000.0f, .lookSensitivity = 1.0f}, 0.0f);
+        require(nearlyEqual(camera.pitchDegrees(), 89.0f), "Mouse look must preserve the camera pitch clamp.");
+
+        const std::uint64_t revision = camera.revision();
+        lumin::scene::CameraController::update(camera, {}, 1.0f);
+        require(camera.revision() == revision, "Zero camera input must not advance the camera revision.");
+    }
+
     void testCameraProjectionMatchesNvrhiLogicalY() {
         lumin::scene::Camera camera;
         const glm::mat4 projection = camera.projectionMatrix(1.0f);
@@ -861,6 +878,7 @@ namespace {
 int main() {
     try {
         testCameraMovement();
+        testCameraMouseLook();
         testCameraProjectionMatchesNvrhiLogicalY();
         testCameraRenderRevisionAndExplicitCut();
         testEnvironmentRevisionsAreSeparated();

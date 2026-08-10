@@ -22,6 +22,15 @@ namespace lumin::platform {
         Escape,
     };
 
+    enum class MouseButton {
+        Right,
+    };
+
+    struct MouseDelta {
+        float x = 0.0f;
+        float y = 0.0f;
+    };
+
     struct WindowDesc {
         int width = 1280;
         int height = 720;
@@ -49,6 +58,11 @@ namespace lumin::platform {
         [[nodiscard]] VkSurfaceKHR createSurface(VkInstance instance) const;
         [[nodiscard]] SDL_Window* nativeHandle() const noexcept;
         [[nodiscard]] bool isKeyDown(Key key) const noexcept;
+        [[nodiscard]] bool isMouseButtonDown(MouseButton button) const noexcept;
+        [[nodiscard]] MouseDelta mouseDelta() const noexcept;
+        /** relative mode 会隐藏鼠标并把移动限制在当前窗口。 */
+        void setRelativeMouseMode(bool enabled);
+        [[nodiscard]] bool relativeMouseMode() const noexcept;
 
         void resetFramebufferResized() noexcept;
 
@@ -61,6 +75,8 @@ namespace lumin::platform {
         EventCallback eventCallback_;
         bool shouldClose_ = false;
         bool framebufferResized_ = false;
+        bool relativeMouseMode_ = false;
+        MouseDelta mouseDelta_;
         static int windowCount_;
     };
 

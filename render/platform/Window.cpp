@@ -27,6 +27,10 @@ namespace lumin::platform {
 
     Window::~Window() {
         if (window_ != nullptr) {
+            if (relativeMouseMode_) {
+                static_cast<void>(SDL_SetWindowRelativeMouseMode(window_, false));
+                relativeMouseMode_ = false;
+            }
             SDL_DestroyWindow(window_);
             window_ = nullptr;
             --windowCount_;
@@ -36,6 +40,7 @@ namespace lumin::platform {
     }
 
     void Window::pollEvents() {
+        mouseDelta_ = {};
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             processEvent(event);
@@ -43,6 +48,7 @@ namespace lumin::platform {
     }
 
     void Window::waitEvents() {
+        mouseDelta_ = {};
         SDL_Event event;
         if (SDL_WaitEvent(&event)) {
             processEvent(event);
@@ -130,6 +136,34 @@ namespace lumin::platform {
         return scancode != SDL_SCANCODE_UNKNOWN && keyboard[scancode];
     }
 
+    bool Window::isMouseButtonDown(MouseButton button) const noexcept {
+        const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
+        switch (button) {
+        case MouseButton::Right:
+            return (buttons & SDL_BUTTON_RMASK) != 0;
+        }
+        return false;
+    }
+
+    MouseDelta Window::mouseDelta() const noexcept {
+        return mouseDelta_;
+    }
+
+    void Window::setRelativeMouseMode(bool enabled) {
+        if (relativeMouseMode_ == enabled) {
+            return;
+        }
+        if (!SDL_SetWindowRelativeMouseMode(window_, enabled)) {
+            throw std::runtime_error("Failed to update SDL relative mouse mode: " + std::string(SDL_GetError()));
+        }
+        relativeMouseMode_ = enabled;
+        mouseDelta_ = {};
+    }
+
+    bool Window::relativeMouseMode() const noexcept {
+        return relativeMouseMode_;
+    }
+
     void Window::resetFramebufferResized() noexcept {
         framebufferResized_ = false;
     }
@@ -150,6 +184,11 @@ namespace lumin::platform {
 
         if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED && event.window.windowID == SDL_GetWindowID(window_)) {
             framebufferResized_ = true;
+        }
+
+        if (event.type == SDL_EVENT_MOUSE_MOTION && event.motion.windowID == SDL_GetWindowID(window_)) {
+            mouseDelta_.x += event.motion.xrel;
+            mouseDelta_.y += event.motion.yrel;
         }
     }
 

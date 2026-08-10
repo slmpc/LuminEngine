@@ -66,6 +66,9 @@ namespace lumin::render {
         [[nodiscard]] std::uint32_t mdiDrawCount() const noexcept;
         [[nodiscard]] gi::BackendInfo globalIlluminationBackendInfo() const noexcept;
         [[nodiscard]] ImGuiCaptureState imguiCaptureState() const noexcept;
+        /** 请求按 Viewport 内容区物理像素重建渲染资源。连续 resize 会等待尺寸稳定后应用。 */
+        void requestViewportExtent(std::uint32_t width, std::uint32_t height) noexcept;
+        [[nodiscard]] ImGuiViewportImage viewportImage() const noexcept;
 
     private:
         struct FeatureConfigurationState {
@@ -103,6 +106,8 @@ namespace lumin::render {
         void destroyHybridGiResources() noexcept;
         void destroyRenderResources() noexcept;
         void refreshSwapchainResources();
+        void applyPendingViewportExtent();
+        void createViewportOutput();
         void commitSubmittedRuntimeFrame(const core::RenderFrameIdentity& identity);
         void discardPendingRuntimeFrame() noexcept;
         [[nodiscard]] RecordedFrameState recordCommandList(nvrhi::ICommandList& commandList,
@@ -145,6 +150,11 @@ namespace lumin::render {
         PipelineManager pipelines_;
         std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination_;
         ImGuiManager imgui_;
+        GpuTexture viewportOutput_;
+        core::RenderExtent renderExtent_{1, 1};
+        core::RenderExtent requestedRenderExtent_{1, 1};
+        std::uint32_t requestedExtentStableFrames_ = 0;
+        bool viewportOutputInitialized_ = false;
         FrameGraph frameGraph_;
         world::RenderWorldCache renderWorld_;
         atmosphere::AtmosphereLutScheduler atmosphereLutScheduler_;

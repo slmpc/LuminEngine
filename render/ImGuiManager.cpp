@@ -1,7 +1,7 @@
 #include "render/ImGuiManager.hpp"
 
-#include "render/platform/Window.hpp"
 #include "render/VulkanContext.hpp"
+#include "render/platform/Window.hpp"
 
 #include <stdexcept>
 #include <utility>
@@ -39,6 +39,7 @@ namespace lumin::render {
 
     void ImGuiManager::shutdown() {
         cancelFrame();
+        viewportBindingSet_ = nullptr;
         framebuffers_.clear();
         layer_.shutdown();
     }
@@ -95,4 +96,15 @@ namespace lumin::render {
         layer_.markFontTextureInitialized();
     }
 
-}
+    void ImGuiManager::setViewportTexture(nvrhi::ITexture* texture) {
+        viewportBindingSet_ = texture != nullptr ? layer_.createTextureBinding(texture) : nvrhi::BindingSetHandle{};
+        if (texture != nullptr && !viewportBindingSet_) {
+            throw std::runtime_error("Failed to create the ImGui Viewport texture binding.");
+        }
+    }
+
+    std::uintptr_t ImGuiManager::viewportTextureId() const noexcept {
+        return reinterpret_cast<std::uintptr_t>(viewportBindingSet_.Get());
+    }
+
+} // namespace lumin::render

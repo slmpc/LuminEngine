@@ -11,6 +11,7 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -51,11 +52,16 @@ namespace {
     }
 
     lumin::editor::Editor makeEditor(lumin::scene::Level& level, lumin::scene::Camera& camera,
-                                     lumin::render::RenderSettings& settings,
-                                     lumin::scripting::ScriptRuntime& runtime) {
-        return lumin::editor::Editor{level, camera, settings, runtime, [] {
+                                     lumin::render::RenderSettings& settings, lumin::scripting::ScriptRuntime& runtime,
+                                     lumin::editor::ViewportImageProvider viewportImage = {}) {
+        return lumin::editor::Editor{level,
+                                     camera,
+                                     settings,
+                                     runtime,
+                                     [] {
                                          return lumin::render::gi::BackendInfo{"SSAO", false, false};
-                                     }};
+                                     },
+                                     std::move(viewportImage)};
     }
 
     void testEmptyAndStaleSelection() {
@@ -165,7 +171,11 @@ namespace {
         lumin::scene::Camera camera;
         lumin::render::RenderSettings settings;
         lumin::scripting::ScriptRuntime runtime;
-        auto editor = makeEditor(level, camera, settings, runtime);
+        bool viewportImageRequested = false;
+        auto editor = makeEditor(level, camera, settings, runtime, [&viewportImageRequested] {
+            viewportImageRequested = true;
+            return lumin::render::ImGuiViewportImage{0x1234U, 640, 360};
+        });
 
         const auto drawFrame = [&editor](const ImVec2 workSize) {
             ImGui::NewFrame();
@@ -183,6 +193,16 @@ namespace {
         const ImGuiWindow* hierarchy = ImGui::FindWindowByName("Scene Hierarchy");
         require(hierarchy != nullptr && hierarchy->DockId != 0,
                 "A restored positive viewport must build the production docking layout after skipped invalid extents.");
+        const ImGuiWindow* viewportWindow = ImGui::FindWindowByName("Viewport");
+        require(viewportWindow != nullptr && viewportWindow->DockId != 0 && viewportImageRequested,
+                "Viewport must be an independent dock window backed by the renderer image provider.");
+        const auto viewportState = editor.viewportInteraction();
+        const std::uint32_t expectedWidth = static_cast<std::uint32_t>(
+            std::max(viewportWindow->ContentRegionRect.GetWidth() * io.DisplayFramebufferScale.x, 1.0f));
+        const std::uint32_t expectedHeight = static_cast<std::uint32_t>(
+            std::max(viewportWindow->ContentRegionRect.GetHeight() * io.DisplayFramebufferScale.y, 1.0f));
+        require(viewportState.width == expectedWidth && viewportState.height == expectedHeight,
+                "Viewport interaction extent must match the dock content region in physical pixels.");
         ImGui::DestroyContext();
     }
 

@@ -103,7 +103,9 @@ Debug 配置过程还会生成 `out/build/debug/compile_commands.json`。本地 
 cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
-使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。编辑器面板可选择 Actor、模型或脚本，修改变换与材质，调整相机、
+场景画面位于独立的 `Viewport` dock window，渲染分辨率会跟随其内容区物理像素尺寸。鼠标悬停在 Viewport 上时，
+按住右键会隐藏并捕获鼠标，通过相对移动旋转视角；同时使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。松开右键会恢复
+普通鼠标模式。编辑器面板可选择 Actor、模型或脚本，修改变换与材质，调整相机、
 CSM、全局光照、TAA、曝光和太阳方向，并在 Lua 控制台执行表达式（例如 `return 6 * 7`）。当编辑器正在接收键盘、
 鼠标或文本输入时，应用会抑制 `Escape` 和相机控制，但不会暂停 `Game::tick`、`Level::tick` 或 Lua 生命周期。
 

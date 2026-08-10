@@ -1,10 +1,10 @@
 #include "application/Application.hpp"
 
+#include "render/LevelRenderer.hpp"
+#include "render/VulkanContext.hpp"
 #include "render/editor/Editor.hpp"
 #include "render/platform/RenderDocAttachment.hpp"
 #include "render/platform/Window.hpp"
-#include "render/LevelRenderer.hpp"
-#include "render/VulkanContext.hpp"
 #include "scene/CameraController.hpp"
 
 #include <algorithm>
@@ -57,9 +57,9 @@ namespace lumin::core {
               vulkan(window, render::VulkanContextDesc{.applicationName = config.title,
                                                        .enableValidation =
 #if defined(LUMIN_ENABLE_VALIDATION)
-                                                       true,
+                                                           true,
 #else
-                                                       false,
+                                                           false,
 #endif
                                                        .rayTracing = {}}),
               scripts(scripting::ScriptRuntimeOptions{.scriptRoot = config.scriptRoot,
@@ -83,9 +83,14 @@ namespace lumin::core {
 #endif
             renderer = std::make_unique<render::LevelRenderer>(window, vulkan, level, shaderDirectory);
             RendererIdleGuard idleGuard{*renderer};
-            editor = std::make_unique<editor::Editor>(level, camera, renderSettings, scripts, [this] {
-                return renderer->globalIlluminationBackendInfo();
-            });
+            editor = std::make_unique<editor::Editor>(
+                level, camera, renderSettings, scripts,
+                [this] {
+                    return renderer->globalIlluminationBackendInfo();
+                },
+                [this] {
+                    return renderer->viewportImage();
+                });
 
             std::cout << "Level renderer ready: models=" << renderer->modelCount()
                       << " mdiDraws=" << renderer->mdiDrawCount()
@@ -95,9 +100,21 @@ namespace lumin::core {
             while (!window.shouldClose()) {
                 window.pollEvents();
                 renderer->beginUiFrame(editor.get());
+                const editor::ViewportInteractionState viewport = editor->viewportInteraction();
+                if (viewport.hasRenderableExtent()) {
+                    renderer->requestViewportExtent(viewport.width, viewport.height);
+                }
+                const bool rightMouseDown = window.isMouseButtonDown(platform::MouseButton::Right);
+                if (!viewportLookActive && rightMouseDown && viewport.hovered) {
+                    window.setRelativeMouseMode(true);
+                    viewportLookActive = true;
+                } else if (viewportLookActive && !rightMouseDown) {
+                    window.setRelativeMouseMode(false);
+                    viewportLookActive = false;
+                }
                 const render::ImGuiCaptureState capture = renderer->imguiCaptureState();
-                const game::InputRoutingDecision routing =
-                    game::routeInput(capture.uiClaimsInput(), window.isKeyDown(platform::Key::Escape));
+                const game::InputRoutingDecision routing = game::routeInput(
+                    !viewportLookActive && capture.uiClaimsInput(), window.isKeyDown(platform::Key::Escape));
                 if (routing.exitOnEscape) {
                     renderer->cancelUiFrame();
                     break;
@@ -118,9 +135,15 @@ namespace lumin::core {
                                static_cast<float>(window.isKeyDown(platform::Key::LeftControl));
                 }
                 if (routing.updateCamera) {
-                    scene::CameraController::update(
-                        camera, scene::CameraInput{.forward = input.forward, .right = input.right, .up = input.up},
-                        deltaSeconds);
+                    const platform::MouseDelta mouseDelta =
+                        viewportLookActive ? window.mouseDelta() : platform::MouseDelta{};
+                    scene::CameraController::update(camera,
+                                                    scene::CameraInput{.forward = input.forward,
+                                                                       .right = input.right,
+                                                                       .up = input.up,
+                                                                       .lookDeltaX = mouseDelta.x,
+                                                                       .lookDeltaY = mouseDelta.y},
+                                                    deltaSeconds);
                 }
 
                 game::advanceGameFrame(*game, context,
@@ -143,6 +166,7 @@ namespace lumin::core {
         std::unique_ptr<render::LevelRenderer> renderer;
         std::unique_ptr<editor::Editor> editor;
         std::optional<scripting::ScriptHandle> startupScript;
+        bool viewportLookActive = false;
     };
 
     Application::Application(ApplicationConfig config, std::unique_ptr<game::Game> game)

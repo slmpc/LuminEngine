@@ -52,6 +52,9 @@ namespace {
                 "Sky must read the GI output to preserve its FrameGraph dependency.");
         require(level.find("builder.readTexture(data.historyWrite") != std::string::npos,
                 "Tonemap must read historyWrite to preserve history-ready ordering.");
+        require(level.find("builder.readTexture(data.viewportOutput, nvrhi::ResourceStates::ShaderResource)") !=
+                    std::string::npos,
+                "ImGui must sample the completed Viewport output before presentation.");
 
         position = 0;
         for (const std::string& feature :
@@ -98,13 +101,19 @@ namespace {
             require(copyDest != std::string::npos && (addPassEnd == std::string::npos || copyDest < addPassEnd),
                     "Runtime clear passes must declare their textures as CopyDest.");
         }
-        require(level.find("Tonemap clear") == std::string::npos,
-                "Swapchain images do not guarantee transfer-destination usage and must not be transfer-cleared.");
+        require(level.find("UI background clear") == std::string::npos &&
+                    level.find("builder.writeTexture(data.swap, nvrhi::ResourceStates::CopyDest)") == std::string::npos,
+                "Swapchain images only guarantee color-attachment usage and must not be transfer-cleared.");
         const std::size_t tonemap = level.find("\"Tonemap\", FrameGraphPassType::Graphics");
         const std::size_t tonemapRenderTarget =
-            level.find("builder.writeTexture(data.swap, nvrhi::ResourceStates::RenderTarget)", tonemap);
+            level.find("builder.writeTexture(data.viewportOutput, nvrhi::ResourceStates::RenderTarget)", tonemap);
         require(tonemap != std::string::npos && tonemapRenderTarget != std::string::npos,
-                "Tonemap must cover the swapchain directly as a render target.");
+                "Tonemap must write the renderer-owned Viewport output.");
+        const std::size_t imgui = level.find("\"ImGui overlay\", FrameGraphPassType::Graphics", tonemap);
+        const std::size_t imguiSwap =
+            level.find("builder.writeTexture(data.swap, nvrhi::ResourceStates::RenderTarget)", imgui);
+        require(imgui != std::string::npos && imguiSwap != std::string::npos,
+                "Only the ImGui composition pass may write the swapchain render target.");
         for (const std::string& forbidden :
              std::vector<std::string>{"vkCmd", "VkRendering", "VkDescriptorSet", "VkPipeline", "VkCommandBuffer"}) {
             require(level.find(forbidden) == std::string::npos,
@@ -145,6 +154,8 @@ namespace {
                 "LevelRenderer must not retain ad hoc TAA or GI invalidation decisions.");
         require(countOccurrences(level, "renderPipeline_->discardFrame") >= 3,
                 "Record, submit and swapchain-rebuild paths must all discard pending Feature work.");
+        require(level.find("viewportOutput_.format != context_.swapchainRhiFormat()") != std::string::npos,
+                "Swapchain resize must preserve Viewport render resources unless the surface format changes.");
         require(level.find("context_.cancelFrame") != std::string::npos,
                 "Record failure must cancel the acquired frame through VulkanContext.");
         require(level.find("imgui_.cancelFrame") != std::string::npos,

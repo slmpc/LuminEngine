@@ -48,6 +48,7 @@ namespace lumin::render {
         std::uint32_t elementCount = 0;
         std::uint32_t indexOffset = 0;
         std::uint32_t vertexOffset = 0;
+        std::uintptr_t textureId = 0;
     };
 
     struct ImGuiProjection {
@@ -75,6 +76,8 @@ namespace lumin::render {
         [[nodiscard]] nvrhi::ITexture* fontTexture() const noexcept;
         [[nodiscard]] nvrhi::ResourceStates fontTextureInitialState() const noexcept;
         void markFontTextureInitialized() noexcept;
+        /** 为 ImGui::Image 创建使用共享 clamp sampler 的纹理 binding。 */
+        [[nodiscard]] nvrhi::BindingSetHandle createTextureBinding(nvrhi::ITexture* texture) const;
 
         [[nodiscard]] static std::size_t growBufferCapacity(std::size_t currentCapacity, std::size_t requiredCapacity,
                                                             std::size_t minimumCapacity) noexcept;
@@ -94,7 +97,8 @@ namespace lumin::render {
         void createFontResources();
         void ensureBuffers(FrameBuffers& buffers, std::size_t vertexCount, std::size_t indexCount);
         void setRenderState(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
-                            const ImDrawData& drawData, const FrameBuffers& buffers, const nvrhi::Rect& scissor);
+                            const ImDrawData& drawData, const FrameBuffers& buffers, const nvrhi::Rect& scissor,
+                            nvrhi::IBindingSet& textureBinding);
 
         platform::Window* window_ = nullptr;
         nvrhi::IDevice* device_ = nullptr;

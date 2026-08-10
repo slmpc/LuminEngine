@@ -1,7 +1,7 @@
 #include "render/ImGuiLayer.hpp"
 
-#include "render/platform/Window.hpp"
 #include "render/ShaderLibrary.hpp"
+#include "render/platform/Window.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -298,6 +298,7 @@ namespace lumin::render {
                 event.elementCount = command.ElemCount;
                 event.indexOffset = globalIndexOffset + command.IdxOffset;
                 event.vertexOffset = globalVertexOffset + command.VtxOffset;
+                event.textureId = static_cast<std::uintptr_t>(command.GetTexID());
                 events.push_back(event);
             }
             globalIndexOffset += static_cast<std::uint32_t>(list->IdxBuffer.Size);
@@ -337,8 +338,8 @@ namespace lumin::render {
     }
 
     void ImGuiLayer::setRenderState(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
-                                    const ImDrawData& drawData, const FrameBuffers& buffers,
-                                    const nvrhi::Rect& scissor) {
+                                    const ImDrawData& drawData, const FrameBuffers& buffers, const nvrhi::Rect& scissor,
+                                    nvrhi::IBindingSet& textureBinding) {
         const float framebufferWidth = drawData.DisplaySize.x * drawData.FramebufferScale.x;
         const float framebufferHeight = drawData.DisplaySize.y * drawData.FramebufferScale.y;
         nvrhi::ViewportState viewport;
@@ -348,7 +349,7 @@ namespace lumin::render {
         state.setPipeline(pipeline_)
             .setFramebuffer(&framebuffer)
             .setViewport(viewport)
-            .addBindingSet(bindingSet_)
+            .addBindingSet(&textureBinding)
             .addVertexBuffer(nvrhi::VertexBufferBinding().setBuffer(buffers.vertexBuffer).setSlot(0).setOffset(0))
             .setIndexBuffer(nvrhi::IndexBufferBinding()
                                 .setBuffer(buffers.indexBuffer)
@@ -403,16 +404,20 @@ namespace lumin::render {
         const int framebufferWidth = static_cast<int>(drawData->DisplaySize.x * drawData->FramebufferScale.x);
         const int framebufferHeight = static_cast<int>(drawData->DisplaySize.y * drawData->FramebufferScale.y);
         const nvrhi::Rect fullScissor(framebufferWidth, framebufferHeight);
-        setRenderState(commandList, framebuffer, *drawData, buffers, fullScissor);
+        setRenderState(commandList, framebuffer, *drawData, buffers, fullScissor, *bindingSet_);
 
         for (const ImGuiDrawEvent& event : buildDrawEvents(*drawData)) {
             if (event.type == ImGuiDrawEvent::Type::ResetRenderState) {
-                setRenderState(commandList, framebuffer, *drawData, buffers, fullScissor);
+                setRenderState(commandList, framebuffer, *drawData, buffers, fullScissor, *bindingSet_);
             } else if (event.type == ImGuiDrawEvent::Type::UserCallback) {
                 event.command->UserCallback(event.list, event.command);
             } else {
                 const nvrhi::Rect scissor(event.scissorLeft, event.scissorRight, event.scissorTop, event.scissorBottom);
-                setRenderState(commandList, framebuffer, *drawData, buffers, scissor);
+                nvrhi::IBindingSet* textureBinding = reinterpret_cast<nvrhi::IBindingSet*>(event.textureId);
+                if (textureBinding == nullptr) {
+                    textureBinding = bindingSet_;
+                }
+                setRenderState(commandList, framebuffer, *drawData, buffers, scissor, *textureBinding);
                 nvrhi::DrawArguments arguments;
                 arguments.setVertexCount(event.elementCount)
                     .setStartIndexLocation(event.indexOffset)
@@ -444,6 +449,17 @@ namespace lumin::render {
 
     void ImGuiLayer::markFontTextureInitialized() noexcept {
         fontTextureInitialized_ = true;
+    }
+
+    nvrhi::BindingSetHandle ImGuiLayer::createTextureBinding(nvrhi::ITexture* texture) const {
+        if (!initialized_ || texture == nullptr || !bindingLayout_ || !fontSampler_) {
+            return {};
+        }
+        nvrhi::BindingSetDesc desc;
+        desc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(ImGuiPushConstants)))
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, texture))
+            .addItem(nvrhi::BindingSetItem::Sampler(0, fontSampler_));
+        return device_->createBindingSet(desc, bindingLayout_);
     }
 
 } // namespace lumin::render

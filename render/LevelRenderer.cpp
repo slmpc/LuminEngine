@@ -84,6 +84,7 @@ namespace lumin::render {
             FrameGraphResourceHandle taaResolved;
             FrameGraphResourceHandle historyRead;
             FrameGraphResourceHandle historyWrite;
+            FrameGraphResourceHandle viewportOutput;
             FrameGraphResourceHandle swap;
             FrameGraphResourceHandle imguiFont;
             std::optional<atmosphere::AtmosphereLutGraphRecord> atmosphereLuts;
@@ -270,11 +271,14 @@ namespace lumin::render {
         if (globalIllumination_ == nullptr) {
             globalIllumination_ = gi::makeSsaoBackend(shaderDirectory_);
         }
+        renderExtent_ = core::RenderExtent{context_.swapchainWidth(), context_.swapchainHeight()};
+        requestedRenderExtent_ = renderExtent_;
         static_cast<void>(renderWorld_.sync(level_));
         createRenderResources();
         // 先创建 RT 资源，再根据真实的 device/scene capability 选择固定的帧图拓扑。
         createRenderFeaturePipeline();
         imgui_.initialize(window_, context_);
+        imgui_.setViewportTexture(viewportOutput_.texture);
         swapchainGeneration_ = context_.swapchainGeneration();
     }
 
@@ -288,6 +292,7 @@ namespace lumin::render {
         if (swapchainGeneration_ != context_.swapchainGeneration()) {
             refreshSwapchainResources();
         }
+        applyPendingViewportExtent();
         imgui_.beginFrame(content);
     }
 
@@ -298,6 +303,9 @@ namespace lumin::render {
     void LevelRenderer::drawFrame(scene::Camera& camera, RenderSettings& settings, ImGuiContent* content) {
         if (swapchainGeneration_ != context_.swapchainGeneration()) {
             refreshSwapchainResources();
+        }
+        if (!imgui_.framePrepared()) {
+            applyPendingViewportExtent();
         }
         const world::SceneDelta sceneDelta = renderWorld_.sync(level_);
         pendingFrameChanges_.merge(core::frameChangesFromScene(sceneDelta.changes));
@@ -344,7 +352,7 @@ namespace lumin::render {
             core::FrameSlotIndex{frame->frameIndex},
             core::SwapImageIndex{frame->imageIndex},
             core::RenderSequence{nextRenderSequence_},
-            core::RenderExtent{context_.swapchainWidth(), context_.swapchainHeight()},
+            renderExtent_,
         };
         RecordedFrameState recorded;
         try {
@@ -398,6 +406,27 @@ namespace lumin::render {
 
     ImGuiCaptureState LevelRenderer::imguiCaptureState() const noexcept {
         return imgui_.captureState();
+    }
+
+    void LevelRenderer::requestViewportExtent(std::uint32_t width, std::uint32_t height) noexcept {
+        if (width == 0 || height == 0) {
+            return;
+        }
+        constexpr std::uint32_t maximumViewportDimension = 16'384;
+        const core::RenderExtent requested{std::clamp(width, 1U, maximumViewportDimension),
+                                           std::clamp(height, 1U, maximumViewportDimension)};
+        if (requested != requestedRenderExtent_) {
+            requestedRenderExtent_ = requested;
+            requestedExtentStableFrames_ = 1;
+            return;
+        }
+        if (requestedExtentStableFrames_ < std::numeric_limits<std::uint32_t>::max()) {
+            ++requestedExtentStableFrames_;
+        }
+    }
+
+    ImGuiViewportImage LevelRenderer::viewportImage() const noexcept {
+        return {imgui_.viewportTextureId(), viewportOutput_.width, viewportOutput_.height};
     }
 
     std::uint32_t LevelRenderer::modelCount() const noexcept {
@@ -475,6 +504,7 @@ namespace lumin::render {
         };
         callbacks.uiPresent.onSubmitted = [this](const core::RenderFrameIdentity&) {
             imgui_.markFontTextureInitialized();
+            viewportOutputInitialized_ = true;
         };
 
         core::RenderDeviceCapabilities capabilities;
@@ -501,9 +531,10 @@ namespace lumin::render {
     }
 
     void LevelRenderer::createRenderResources() {
-        const std::uint32_t width = context_.swapchainWidth();
-        const std::uint32_t height = context_.swapchainHeight();
+        const std::uint32_t width = renderExtent_.width;
+        const std::uint32_t height = renderExtent_.height;
         textures_.create(width, height);
+        createViewportOutput();
         createDirectLightingBindingLayout();
         atmosphereLutGpu_ = std::make_unique<atmosphere::AtmosphereLutGpu>(atmosphere::AtmosphereLutGpuCreateInfo{
             .device = context_.rhiDevice(),
@@ -535,6 +566,26 @@ namespace lumin::render {
         createModelRenderer();
         createHybridGiResources();
         frameResourcesInitialized_.fill(false);
+    }
+
+    void LevelRenderer::createViewportOutput() {
+        nvrhi::TextureDesc desc;
+        desc.setWidth(renderExtent_.width)
+            .setHeight(renderExtent_.height)
+            .setFormat(context_.swapchainRhiFormat())
+            .setDebugName("Editor Viewport output")
+            .setIsRenderTarget(true)
+            .setInitialState(nvrhi::ResourceStates::Common)
+            .setKeepInitialState(false);
+        viewportOutput_.texture = context_.rhiDevice()->createTexture(desc);
+        if (!viewportOutput_.texture) {
+            throw std::runtime_error("Failed to create the editor Viewport output texture.");
+        }
+        viewportOutput_.format = desc.format;
+        viewportOutput_.width = desc.width;
+        viewportOutput_.height = desc.height;
+        viewportOutput_.initialState = desc.initialState;
+        viewportOutputInitialized_ = false;
     }
 
     void LevelRenderer::createModelRenderer() {
@@ -657,8 +708,8 @@ namespace lumin::render {
             std::make_unique<gi::RayTracedDirectLightingPass>(gi::RayTracedDirectLightingPass::CreateInfo{
                 .device = context_.rhiDevice(),
                 .shaderDirectory = shaderDirectory_,
-                .width = context_.swapchainWidth(),
-                .height = context_.swapchainHeight(),
+                .width = renderExtent_.width,
+                .height = renderExtent_.height,
                 .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
                 .maxMaterialTextureDescriptors = materialTextureDescriptorCapacity,
                 .atmosphereBindingLayout = atmosphereConsumerBindingLayout_,
@@ -695,8 +746,8 @@ namespace lumin::render {
         runtime->rayTracedGi = std::make_unique<gi::RayTracedGiPass>(gi::RayTracedGiCreateInfo{
             .device = context_.rhiDevice(),
             .shaderDirectory = shaderDirectory_,
-            .width = context_.swapchainWidth(),
-            .height = context_.swapchainHeight(),
+            .width = renderExtent_.width,
+            .height = renderExtent_.height,
             .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
             .maxMaterialTextureDescriptors = materialTextureDescriptorCapacity,
             .atmosphereBindingLayout = atmosphereConsumerBindingLayout_,
@@ -705,7 +756,7 @@ namespace lumin::render {
         });
         runtime->nrd = std::make_unique<gi::NrdDenoiser>(gi::NrdDenoiserCreateInfo{
             .device = context_.rhiDevice(),
-            .extent = core::RenderExtent{context_.swapchainWidth(), context_.swapchainHeight()},
+            .extent = renderExtent_,
             .frameSlotCount = TextureManager::maxFramesInFlight,
         });
         if (runtime->rayTracedGi->formats().normalRoughness != runtime->nrd->expectedNormalRoughnessFormat()) {
@@ -714,14 +765,14 @@ namespace lumin::render {
         runtime->composite = std::make_unique<gi::GiCompositePass>(gi::GiCompositeCreateInfo{
             .device = context_.rhiDevice(),
             .shaderDirectory = shaderDirectory_,
-            .extent = core::RenderExtent{context_.swapchainWidth(), context_.swapchainHeight()},
+            .extent = renderExtent_,
             .frameSlotCount = TextureManager::maxFramesInFlight,
         });
         runtime->lightingComposite =
             std::make_unique<gi::HybridLightingCompositePass>(gi::HybridLightingCompositeCreateInfo{
                 .device = context_.rhiDevice(),
                 .shaderDirectory = shaderDirectory_,
-                .extent = core::RenderExtent{context_.swapchainWidth(), context_.swapchainHeight()},
+                .extent = renderExtent_,
                 .frameSlotCount = TextureManager::maxFramesInFlight,
             });
         hybridGi_ = std::move(runtime);
@@ -774,17 +825,38 @@ namespace lumin::render {
         globalIllumination_->destroy();
         destroyDirectLightingBindings();
         textures_.destroy();
+        viewportOutput_ = {};
+        viewportOutputInitialized_ = false;
+    }
+
+    void LevelRenderer::applyPendingViewportExtent() {
+        if (requestedExtentStableFrames_ < 2 || requestedRenderExtent_ == renderExtent_) {
+            return;
+        }
+        discardPendingRuntimeFrame();
+        renderPipeline_->discardFrame();
+        context_.waitIdle();
+        imgui_.setViewportTexture(nullptr);
+        destroyRenderResources();
+        renderExtent_ = requestedRenderExtent_;
+        pendingFrameChanges_.add(core::HistoryReason::RenderExtentChanged);
+        createRenderResources();
+        imgui_.setViewportTexture(viewportOutput_.texture);
     }
 
     void LevelRenderer::refreshSwapchainResources() {
         discardPendingRuntimeFrame();
         renderPipeline_->discardFrame();
-        pendingFrameChanges_.add(core::HistoryReason::SwapchainRecreated | core::HistoryReason::RenderExtentChanged);
+        pendingFrameChanges_.add(core::HistoryReason::SwapchainRecreated);
         context_.waitIdle();
+        const bool viewportFormatChanged = viewportOutput_.format != context_.swapchainRhiFormat();
         imgui_.shutdown();
-        destroyRenderResources();
-        createRenderResources();
+        if (viewportFormatChanged) {
+            destroyRenderResources();
+            createRenderResources();
+        }
         imgui_.initialize(window_, context_);
+        imgui_.setViewportTexture(viewportOutput_.texture);
         swapchainGeneration_ = context_.swapchainGeneration();
     }
 
@@ -1052,6 +1124,12 @@ namespace lumin::render {
         data.historyWrite = frameGraph_.importTexture(
             "taa.history.write", textureDesc(frame.history, textures_.historyInitialState(frameIndex)));
 
+        FrameGraphTextureDesc viewportDesc =
+            textureDesc(viewportOutput_, viewportOutputInitialized_ ? nvrhi::ResourceStates::ShaderResource
+                                                                    : nvrhi::ResourceStates::Common);
+        viewportDesc.finalState = nvrhi::ResourceStates::ShaderResource;
+        data.viewportOutput = frameGraph_.importTexture("viewport.output", viewportDesc);
+
         FrameGraphTextureDesc swapDesc;
         swapDesc.texture = context_.swapchainTextures().at(imageIndex);
         swapDesc.initialState = context_.swapchainTextureInitialState(imageIndex);
@@ -1085,8 +1163,8 @@ namespace lumin::render {
         }
         data.taaFramebuffer =
             createFramebuffer(device, nvrhi::FramebufferDesc().addColorAttachment(frame.taaResolved.texture));
-        data.tonemapFramebuffer = createFramebuffer(
-            device, nvrhi::FramebufferDesc().addColorAttachment(context_.swapchainTextures().at(imageIndex)));
+        data.tonemapFramebuffer =
+            createFramebuffer(device, nvrhi::FramebufferDesc().addColorAttachment(viewportOutput_.texture));
 
         core::RenderBlackboard blackboard;
         blackboard.set(std::move(data));
@@ -1774,7 +1852,7 @@ namespace lumin::render {
             [&data](FrameGraphBuilder& builder) {
                 builder.readTexture(data.taaResolved, nvrhi::ResourceStates::ShaderResource);
                 builder.readTexture(data.historyWrite, nvrhi::ResourceStates::ShaderResource);
-                builder.writeTexture(data.swap, nvrhi::ResourceStates::RenderTarget);
+                builder.writeTexture(data.viewportOutput, nvrhi::ResourceStates::RenderTarget);
             },
             [this, &data, framebuffer = data.tonemapFramebuffer](const FrameGraphContext& frameContext) {
                 recordFullscreenPass(*frameContext.commandList, *framebuffer, pipelines_.tonemap(), data.frameIndex);
@@ -1788,6 +1866,7 @@ namespace lumin::render {
             "ImGui overlay", FrameGraphPassType::Graphics,
             [&data](FrameGraphBuilder& builder) {
                 builder.readTexture(data.imguiFont, nvrhi::ResourceStates::ShaderResource);
+                builder.readTexture(data.viewportOutput, nvrhi::ResourceStates::ShaderResource);
                 builder.writeTexture(data.swap, nvrhi::ResourceStates::RenderTarget);
             },
             [this, &data](const FrameGraphContext& frameContext) {
@@ -1823,8 +1902,8 @@ namespace lumin::render {
     void LevelRenderer::recordFullscreenPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
                                              const nvrhi::GraphicsPipelineHandle& pipeline, std::uint32_t frameIndex,
                                              const nvrhi::BindingSetHandle& additionalBindingSet) {
-        const std::uint32_t width = context_.swapchainWidth();
-        const std::uint32_t height = context_.swapchainHeight();
+        const std::uint32_t width = renderExtent_.width;
+        const std::uint32_t height = renderExtent_.height;
         nvrhi::GraphicsState state;
         state.setPipeline(pipeline)
             .setFramebuffer(&framebuffer)
@@ -1846,8 +1925,8 @@ namespace lumin::render {
         nvrhi::GraphicsState state;
         state.setPipeline(pipelines_.deferredLighting())
             .setFramebuffer(&framebuffer)
-            .setViewport(nvrhi::ViewportState().addViewportAndScissorRect(nvrhi::Viewport(
-                static_cast<float>(context_.swapchainWidth()), static_cast<float>(context_.swapchainHeight()))))
+            .setViewport(nvrhi::ViewportState().addViewportAndScissorRect(
+                nvrhi::Viewport(static_cast<float>(renderExtent_.width), static_cast<float>(renderExtent_.height))))
             .addBindingSet(textures_.bindingSet(frameIndex))
             .addBindingSet(directLightingBindingSets_[frameIndex]);
         commandList.setGraphicsState(state);

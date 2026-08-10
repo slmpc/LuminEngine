@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -39,11 +40,24 @@ namespace lumin::editor {
     };
 
     using BackendInfoProvider = std::function<render::gi::BackendInfo()>;
+    using ViewportImageProvider = std::function<render::ImGuiViewportImage()>;
+
+    struct ViewportInteractionState {
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        bool hovered = false;
+        bool focused = false;
+
+        [[nodiscard]] bool hasRenderableExtent() const noexcept {
+            return width != 0 && height != 0;
+        }
+    };
 
     class Editor final : public render::ImGuiContent {
     public:
         Editor(scene::Level& level, scene::Camera& camera, render::RenderSettings& settings,
-               scripting::ScriptRuntime& scripts, BackendInfoProvider backendInfo);
+               scripting::ScriptRuntime& scripts, BackendInfoProvider backendInfo,
+               ViewportImageProvider viewportImage = {});
         ~Editor() override;
 
         Editor(const Editor&) = delete;
@@ -52,6 +66,9 @@ namespace lumin::editor {
         Editor& operator=(Editor&&) noexcept;
 
         void draw() override;
+
+        /** 返回最近一次 UI 构建得到的 Viewport 内容区状态。 */
+        [[nodiscard]] ViewportInteractionState viewportInteraction() const noexcept;
 
         [[nodiscard]] SelectionState selectionState() const noexcept;
         [[nodiscard]] std::optional<scene::ActorHandle> selectedActor() const noexcept;

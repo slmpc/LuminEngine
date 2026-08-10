@@ -21,6 +21,8 @@ renderer 创建后会安装 idle 守卫，正常退出或异常展开都会先�
 
 `Application` 先处理 SDL 事件并调用 `beginUiFrame(editor)` 构建当前 ImGui 帧，再读取当前帧 capture 状态。
 UI 未捕获输入时才更新相机和派发 `GameInput`，随后始终调用 `Game::tick`、`Level::tick(deltaSeconds)` 和渲染。
+Viewport 图像被悬停并按住鼠标右键时，应用启用 SDL relative mouse mode；该模式隐藏并约束鼠标，以帧内相对位移
+更新相机 yaw/pitch，同时继续使用 `WASD`、`Space` 和 `Left Ctrl` 平移。松开右键后立即恢复普通鼠标模式。
 因此，即使编辑器捕获输入，游戏模拟、Actor 与 Lua 生命周期仍会推进。`drawFrame` 只消费已经准备的 UI 帧；旧调用方
 未显式准备时由 renderer 兼容性补建。交换链图像获取提前返回时会取消该 UI 帧，避免重复 `NewFrame` 或遗留活动帧。
 模型变换和材质变化会递增
@@ -35,15 +37,15 @@ UI 未捕获输入时才更新相机和派发 `GameInput`，随后始终调用 `
 
 每一帧通过 `FrameGraph` 按以下顺序记录：
 
-1. 四个 CSM 纯深度通道，每个级联使用一张独立的二维深度图像。
-2. G-buffer 通道：世界空间位置、世界空间法线与粗糙度、线性反照率与金属度、运动矢量和深度。
+1. Raster 路径执行四个 CSM 纯深度通道和 G-buffer；Hybrid 路径由 RT primary surface 直接生成表面信号。
+2. 更新当前路径所需的大气 LUT 和全局光照资源。
 3. 全局光照 Feature；支持设备执行 GPU Scene、SHARC、RT GI、NRD 与 composite，否则执行 SSAO fallback。
 4. 程序化天空盒全屏通道，写入 HDR 光照目标。
 5. 延迟光照通道，加载该目标，并结合全局光照输出和 CSM 对几何体进行着色。
 6. TAA 解析，读取 HDR 光照、运动矢量和上一帧历史。
 7. 将解析结果传输复制到当前历史图像。
-8. 使用 ACES 色调映射输出到交换链。
-9. 绘制 ImGui 界面并呈现。
+8. 使用 ACES 色调映射输出到 renderer 拥有的 Viewport 纹理。
+9. ImGui 在独立的 `Viewport` dock window 中采样该纹理，将完整编辑器界面合成到交换链并呈现。
 
 所有图形通道均使用 Vulkan 1.3 动态渲染。`PipelineFactory` 支持 MRT 流水线和仅含顶点阶段的深度流水线；
 项目不会创建 `VkRenderPass` 或 framebuffer 对象。
@@ -161,13 +163,16 @@ Vulkan 后端通过负物理 viewport 高度将正 NDC Y 映射到较小的屏�
 ## 资源所有权
 
 `TextureManager` 拥有两个帧槽。每个槽位都有自己的 G-buffer、标准全局光照输出、HDR 光照、TAA 解析/历史、四张阴影图、
-后处理 uniform buffer 和 descriptor set。`ModelRenderer` 同样拥有逐帧对象及相机 buffer、四个逐帧阴影矩阵
+后处理 uniform buffer 和 descriptor set。`LevelRenderer` 另行拥有一张可作为颜色附件和 sampled image 使用的 Viewport
+输出纹理；其物理像素尺寸来自 ImGui Viewport 内容区，尺寸连续两帧稳定后才重建，以免拖动 dock 边界时反复等待 GPU。
+尺寸变化通过 `HistoryReason::RenderExtentChanged` 统一失效 TAA、NRD 和 SHARC 等时序状态。
+`ModelRenderer` 同样拥有逐帧对象及相机 buffer、四个逐帧阴影矩阵
 buffer，以及只读材质数组纹理和采样器。材质纹理在创建时通过 staging buffer 上传并转换到
 `VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL`，之后跨帧保持该布局。只有在 `VulkanContext::beginFrame` 等待相应
 fence 后，才能更新帧槽。
 
-交换链重建时，系统会等待设备空闲、关闭 ImGui、先于 descriptor layout 和图像销毁流水线、重新创建与尺寸相关的
-资源、使时序历史失效，然后再次初始化 ImGui。
+交换链重建时，系统会等待设备空闲并重新创建 ImGui 的交换链 framebuffer，但保留分辨率由 Viewport 管理的场景资源；
+只有 surface format 改变时才重建 Viewport 输出和相关 pipeline。Viewport 尺寸变化走独立的稳定检测与历史失效路径。
 
 ## FrameGraph 约定
 
@@ -195,7 +200,8 @@ NvRHI native interop。交换链图像对应的 NvRHI texture 是非拥有型包
 这是仅有的 automatic barrier 例外；上传列表在关闭时把纹理恢复到 `ShaderResource`。只有
 `render/FrameGraph.cpp` 可以在运行时代码中调用 `beginTracking*State`、`set*State` 和 `commitBarriers`；首次使用的
 纹理以 NvRHI 支持的 `Common`（Vulkan `Undefined` 源布局）导入，离屏附件清理由显式声明 `CopyDest` 的 transfer pass
-完成，交换链则由全屏 Tonemap pass 直接覆盖。后续由 `FrameGraph` 转换到 `RenderTarget` 或 `DepthWrite`；同状态写依赖
+完成。交换链只保证颜色附件用途：Tonemap 写 Viewport 输出，最终 ImGui pass 将 Viewport 声明为 `ShaderResource`，并将
+交换链声明为 `RenderTarget`。后续由 `FrameGraph` 转换到 `RenderTarget` 或 `DepthWrite`；同状态写依赖
 使用有效图像布局作为中间状态，绝不把 `Common` 用作 barrier 目标。`Unknown` 只作为“不生成最终转换”的哨兵。
 ImGui 每帧顶点和索引数据在对应帧槽 fence 完成后通过 CPU 映射缓冲更新，不进入逐帧上传命令列表。
 `historyValid` 表示历史内容能否参与混合，`historyInitialized` 表示持久纹理是否已有

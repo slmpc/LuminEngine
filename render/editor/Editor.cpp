@@ -70,9 +70,10 @@ namespace lumin::editor {
 
     struct Editor::Impl {
         Impl(scene::Level& levelValue, scene::Camera& cameraValue, render::RenderSettings& settingsValue,
-             scripting::ScriptRuntime& scriptsValue, BackendInfoProvider backendInfoValue)
+             scripting::ScriptRuntime& scriptsValue, BackendInfoProvider backendInfoValue,
+             ViewportImageProvider viewportImageValue)
             : level(levelValue), camera(cameraValue), settings(settingsValue), scripts(scriptsValue),
-              backendInfo(std::move(backendInfoValue)) {
+              backendInfo(std::move(backendInfoValue)), viewportImage(std::move(viewportImageValue)) {
         }
 
         scene::Level& level;
@@ -80,6 +81,8 @@ namespace lumin::editor {
         render::RenderSettings& settings;
         scripting::ScriptRuntime& scripts;
         BackendInfoProvider backendInfo;
+        ViewportImageProvider viewportImage;
+        ViewportInteractionState viewportInteraction;
         SelectionState selection = SelectionState::Empty;
         std::optional<scene::ActorHandle> actor;
         std::optional<scene::ModelHandle> model;
@@ -212,9 +215,7 @@ namespace lumin::editor {
             if (ImGui::DockBuilderGetNode(dockspace) != nullptr) {
                 ImGui::DockBuilderRemoveNode(dockspace);
             }
-            ImGui::DockBuilderAddNode(dockspace,
-                                      ImGuiDockNodeFlags_DockSpace |
-                                          static_cast<ImGuiDockNodeFlags>(ImGuiDockNodeFlags_PassthruCentralNode));
+            ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
             ImGui::DockBuilderSetNodePos(dockspace, viewport.WorkPos);
             ImGui::DockBuilderSetNodeSize(dockspace, viewport.WorkSize);
 
@@ -229,6 +230,7 @@ namespace lumin::editor {
                 ImGui::DockBuilderDockWindow("Inspector", left);
                 ImGui::DockBuilderDockWindow("Render / GI", bottom);
                 ImGui::DockBuilderDockWindow("Script Console", bottom);
+                ImGui::DockBuilderDockWindow("Viewport", center);
             } else {
                 ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, style::HierarchyRatio, &left, &center);
                 ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, style::PropertiesRatio, &right, &center);
@@ -240,6 +242,7 @@ namespace lumin::editor {
                 ImGui::DockBuilderDockWindow("Inspector", inspector);
                 ImGui::DockBuilderDockWindow("Render / GI", renderGi);
                 ImGui::DockBuilderDockWindow("Script Console", bottom);
+                ImGui::DockBuilderDockWindow("Viewport", center);
             }
             ImGui::DockBuilderFinish(dockspace);
         }
@@ -367,17 +370,25 @@ namespace lumin::editor {
             ImGui::End();
         }
 
-        void drawViewport(ImGuiID dockspace, const ImGuiViewport& viewport) {
-            constexpr ImGuiWindowFlags flags =
-                ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoDecoration |
-                ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
-            const ImGuiDockNode* center = ImGui::DockBuilderGetCentralNode(dockspace);
-            ImGui::SetNextWindowPos(center != nullptr ? center->Pos : viewport.Pos);
-            ImGui::SetNextWindowSize(center != nullptr ? center->Size : viewport.Size);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {style::Space0, style::Space0});
+        void drawViewport() {
+            constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0.0f, 0.0f});
             ImGui::Begin("Viewport", nullptr, flags);
-            ImGui::SetCursorPos({style::Space2, style::Space2});
-            ImGui::TextDisabled("Viewport");
+            const ImVec2 available = ImGui::GetContentRegionAvail();
+            const ImVec2 framebufferScale = ImGui::GetIO().DisplayFramebufferScale;
+            viewportInteraction.width =
+                available.x > 0.0f ? static_cast<std::uint32_t>(std::max(available.x * framebufferScale.x, 1.0f)) : 0U;
+            viewportInteraction.height =
+                available.y > 0.0f ? static_cast<std::uint32_t>(std::max(available.y * framebufferScale.y, 1.0f)) : 0U;
+            viewportInteraction.focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+
+            const render::ImGuiViewportImage image = viewportImage ? viewportImage() : render::ImGuiViewportImage{};
+            if (image.isValid() && available.x > 0.0f && available.y > 0.0f) {
+                ImGui::Image(static_cast<ImTextureID>(image.textureId), available);
+            } else {
+                ImGui::Dummy(available);
+            }
+            viewportInteraction.hovered = ImGui::IsItemHovered();
             ImGui::End();
             ImGui::PopStyleVar();
         }
@@ -557,8 +568,10 @@ namespace lumin::editor {
     };
 
     Editor::Editor(scene::Level& level, scene::Camera& camera, render::RenderSettings& settings,
-                   scripting::ScriptRuntime& scripts, BackendInfoProvider backendInfo)
-        : impl_(std::make_unique<Impl>(level, camera, settings, scripts, std::move(backendInfo))) {
+                   scripting::ScriptRuntime& scripts, BackendInfoProvider backendInfo,
+                   ViewportImageProvider viewportImage)
+        : impl_(std::make_unique<Impl>(level, camera, settings, scripts, std::move(backendInfo),
+                                       std::move(viewportImage))) {
     }
 
     Editor::~Editor() = default;
@@ -571,12 +584,16 @@ namespace lumin::editor {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         const ImGuiID dockspace = ImGui::GetID("LuminEditorDockspace");
         impl_->buildLayout(dockspace, *viewport);
-        ImGui::DockSpaceOverViewport(dockspace, viewport, ImGuiDockNodeFlags_PassthruCentralNode);
+        ImGui::DockSpaceOverViewport(dockspace, viewport);
         impl_->drawHierarchy();
         impl_->drawInspector();
-        impl_->drawViewport(dockspace, *viewport);
+        impl_->drawViewport();
         impl_->drawRenderSettings();
         impl_->drawConsole();
+    }
+
+    ViewportInteractionState Editor::viewportInteraction() const noexcept {
+        return impl_->viewportInteraction;
     }
 
     SelectionState Editor::selectionState() const noexcept {

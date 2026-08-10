@@ -99,6 +99,7 @@ namespace {
     }
 
     void testScissorsOffsetsAndCallbacks() {
+        constexpr std::uintptr_t textureId = 0x1234U;
         SyntheticDrawData synthetic({10.0f, 20.0f}, {100.0f, 50.0f}, {2.0f, 2.0f});
         ImDrawList& first = synthetic.addList(20, 30);
         ImDrawCmd clipped;
@@ -106,6 +107,7 @@ namespace {
         clipped.ElemCount = 6;
         clipped.IdxOffset = 3;
         clipped.VtxOffset = 4;
+        clipped.TexRef = ImTextureRef(static_cast<ImTextureID>(textureId));
         first.CmdBuffer.push_back(clipped);
 
         ImDrawCmd fullyClipped;
@@ -140,6 +142,8 @@ namespace {
                 "Clip rectangles must be transformed, clamped and conservatively rounded.");
         require(events[0].indexOffset == 3 && events[0].vertexOffset == 4,
                 "First-list local offsets must be preserved.");
+        require(events[0].textureId == textureId,
+                "Each draw event must preserve the ImGui texture binding selected by its command.");
         require(events[1].type == ImGuiDrawEvent::Type::ResetRenderState,
                 "Reset callbacks must become reset-state events.");
         require(events[2].type == ImGuiDrawEvent::Type::UserCallback && events[2].command == &second.CmdBuffer[1],
@@ -187,6 +191,12 @@ namespace {
         require(manager.find("if (!layer_.initialized() || !framePrepared_") != std::string::npos &&
                     manager.find("ImGui::EndFrame();") != std::string::npos,
                 "Unprepared record and cancel paths must preserve the established frame-state guards.");
+        require(
+            layer.find("reinterpret_cast<nvrhi::IBindingSet*>(event.textureId)") != std::string::npos &&
+                layer.find("setRenderState(commandList, framebuffer, *drawData, buffers, scissor, *textureBinding)") !=
+                    std::string::npos &&
+                manager.find("layer_.createTextureBinding(texture)") != std::string::npos,
+            "ImGui image draws must select their NvRHI texture binding per command.");
     }
 
 } // namespace

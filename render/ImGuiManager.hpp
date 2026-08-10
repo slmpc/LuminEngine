@@ -33,11 +33,15 @@ namespace lumin::render {
         [[nodiscard]] nvrhi::ITexture* fontTexture() const noexcept;
         [[nodiscard]] nvrhi::ResourceStates fontTextureInitialState() const noexcept;
         void markFontTextureInitialized() noexcept;
+        /** 更新 Viewport 图像 binding；传入空纹理会移除图像。 */
+        void setViewportTexture(nvrhi::ITexture* texture);
+        [[nodiscard]] std::uintptr_t viewportTextureId() const noexcept;
 
     private:
         ImGuiLayer layer_;
         std::vector<nvrhi::FramebufferHandle> framebuffers_;
+        nvrhi::BindingSetHandle viewportBindingSet_;
         bool framePrepared_ = false;
     };
 
-}
+} // namespace lumin::render
