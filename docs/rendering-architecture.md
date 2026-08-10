@@ -87,9 +87,15 @@ material ID 与 `GpuMaterialData` buffer。`MetallicRoughness` 路径保持 GGX�
 
 ## 全局光照后端
 
-`GlobalIlluminationMode::Auto` 在 Vulkan RT、SHARC 所需 16-bit storage/float16/int64 和 NRD 所需 compute
-derivatives 均可用时选择 Hybrid GI，否则使用 `SsaoBackend`。`RayTracedSharcNrd` 表达用户偏好，但运行时能力不足时
-仍安全回退；`LUMIN_RAY_TRACING=OFF` 会在构建期同时移除 RT、SHARC、NRD 源码、vendor target 与 shader entries。
+`GlobalIlluminationMode::Legacy` 使用 raster G-buffer、CSM、延迟光照与可选 SSAO；
+`GlobalIlluminationMode::RayTracing` 使用 primary/direct RT 和 RT 间接光，不创建或读取 G-buffer/CSM。运行时能力不足、
+场景尚无可追踪几何，或构建时使用 `LUMIN_RAY_TRACING=OFF` 时，Ray Tracing 请求会安全回退到 Legacy 拓扑。
+
+Ray Tracing 模式可分别关闭 SHARC 与 NRD。关闭 SHARC 后不录制 cache update/resolve/statistics pass，RT 间接光改用
+无辐射缓存的 fallback estimate；关闭 NRD 后，原始 diffuse/specular radiance-hit-distance 直接交给 GI composite。
+Legacy 模式可分别关闭 SSAO 与 CSM，并通过 `splitLambda` 和 `maxDistance` 控制四级联分割。TAA 是两条路径共用的
+后处理选项。任一模式、Feature 开关或 CSM 参数变化都会使相关时序历史失效；SHARC shader 变体变化还会在等待 GPU
+空闲后重建对应 RT GI 资源。
 
 Hybrid GI 的一帧顺序为：按需物化 GPU Scene 和 BLAS/TLAS、执行 SHARC clear/update/resolve、在 RT GI closest-hit
 中查询 SHARC、输出 diffuse/specular radiance-hit-distance 与 NRD auxiliary signals、执行 NRD dispatch，最后由
@@ -119,7 +125,7 @@ texture 和 AS；该回收是逐帧资源生命周期的一部分，不能仅依
 `legacyAmbient * globalIllumination.a + globalIllumination.rgb` 合成环境光。该图像同时支持颜色附件、采样和存储图像
 用途，以便后续后端使用光线追踪或计算通道写入相同契约。
 
-相机切换、场景拓扑变化、全局光照从关闭切换到开启以及交换链重建都会使后端历史失效。无时序历史的 SSAO 后端
+相机切换、场景拓扑变化、Legacy/Ray Tracing 模式或 Feature 开关变化以及交换链重建都会使后端历史失效。无时序历史的 SSAO 后端
 忽略失效通知；SHARC、NRD diffuse/specular 和 TAA 分域决定 keep、soft reset 或 full reset，并且都只在成功提交后
 推进历史。失败帧不会污染下一帧的 previous matrices、jitter、cache 或 denoiser state。
 

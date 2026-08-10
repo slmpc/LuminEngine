@@ -409,16 +409,43 @@ namespace lumin::editor {
             }
             section("Direct Lighting");
             ImGui::Checkbox("Enabled##directLighting", &settings.directLighting.enabled);
-            section("Shadows");
-            ImGui::Checkbox("Cascaded shadows", &settings.shadows.enabled);
             section("Global Illumination");
-            ImGui::Checkbox("Enabled##gi", &settings.globalIllumination.enabled);
+            const char* modeName =
+                settings.globalIllumination.mode == render::GlobalIlluminationMode::Legacy ? "Legacy" : "Ray Tracing";
+            propertyLabel("Mode");
+            ImGui::SetNextItemWidth(-style::Space1);
+            if (ImGui::BeginCombo("##renderMode", modeName)) {
+                for (const auto [mode, name] : {std::pair{render::GlobalIlluminationMode::Legacy, "Legacy"},
+                                                std::pair{render::GlobalIlluminationMode::RayTracing, "Ray Tracing"}}) {
+                    const bool selected = settings.globalIllumination.mode == mode;
+                    if (ImGui::Selectable(name, selected)) {
+                        settings.globalIllumination.mode = mode;
+                    }
+                    if (selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            if (settings.globalIllumination.mode == render::GlobalIlluminationMode::Legacy) {
+                ImGui::Checkbox("SSAO", &settings.globalIllumination.ssaoEnabled);
+                ImGui::Checkbox("CSM", &settings.shadows.enabled);
+                if (settings.shadows.enabled) {
+                    propertyLabel("Split lambda");
+                    ImGui::SliderFloat("##csmSplitLambda", &settings.shadows.splitLambda, 0.0f, 1.0f, "%.2f");
+                    propertyLabel("Max distance");
+                    ImGui::SliderFloat("##csmMaxDistance", &settings.shadows.maxDistance, 1.0f,
+                                       std::max(camera.farPlane(), 1.0f), "%.1f");
+                }
+            } else {
+                ImGui::Checkbox("SHARC", &settings.globalIllumination.sharcEnabled);
+                ImGui::Checkbox("NRD", &settings.globalIllumination.nrdEnabled);
+            }
             const render::gi::BackendInfo backend = backendInfo();
-            ImGui::Text("Backend: %.*s", static_cast<int>(backend.name.size()), backend.name.data());
-            ImGui::Text("Temporal history: %s", backend.temporal ? "Supported" : "Not supported");
-            ImGui::Text("Hardware ray tracing: %s", backend.hardwareRayTracing ? "Supported" : "Not supported");
+            ImGui::Text("Active: %.*s", static_cast<int>(backend.name.size()), backend.name.data());
             section("Temporal AA");
-            ImGui::Checkbox("Enabled##taa", &settings.temporalAa.enabled);
+            ImGui::Checkbox("TAA", &settings.temporalAa.enabled);
             section("Tonemap");
             propertyLabel("Exposure");
             ImGui::SliderFloat("##exposure", &settings.toneMapping.exposure, 0.1f, 4.0f);
@@ -666,8 +693,28 @@ namespace lumin::editor {
         impl_->settings.shadows.enabled = enabled;
     }
 
-    void Editor::setGlobalIlluminationEnabled(bool enabled) noexcept {
-        impl_->settings.globalIllumination.enabled = enabled;
+    void Editor::setGlobalIlluminationMode(render::GlobalIlluminationMode mode) noexcept {
+        impl_->settings.globalIllumination.mode = mode;
+    }
+
+    void Editor::setSsaoEnabled(bool enabled) noexcept {
+        impl_->settings.globalIllumination.ssaoEnabled = enabled;
+    }
+
+    void Editor::setSharcEnabled(bool enabled) noexcept {
+        impl_->settings.globalIllumination.sharcEnabled = enabled;
+    }
+
+    void Editor::setNrdEnabled(bool enabled) noexcept {
+        impl_->settings.globalIllumination.nrdEnabled = enabled;
+    }
+
+    void Editor::setCsmSplitLambda(float splitLambda) noexcept {
+        impl_->settings.shadows.splitLambda = std::clamp(splitLambda, 0.0f, 1.0f);
+    }
+
+    void Editor::setCsmMaxDistance(float maxDistance) noexcept {
+        impl_->settings.shadows.maxDistance = std::max(maxDistance, 1.0f);
     }
 
     void Editor::setTaaEnabled(bool enabled) noexcept {

@@ -194,8 +194,8 @@ namespace {
         }
         require(level.find("context_.rayTracingDecision().enabled()") != std::string::npos &&
                     level.find("supportsSharcShaderStorage()") != std::string::npos &&
-                    level.find("GlobalIlluminationMode::Ssao") != std::string::npos,
-                "Hybrid GI selection must honor runtime capability and explicit SSAO fallback mode.");
+                    level.find("GlobalIlluminationMode::RayTracing") != std::string::npos,
+                "Hybrid GI selection must honor the explicit mode and complete runtime capability set.");
         require(level.find("requiredCapacity > hybridGi_->geometryDescriptorCapacity") != std::string::npos &&
                     level.find("ensureHybridGiCapacity()") != std::string::npos,
                 "Growing geometry descriptor arrays must be rebuilt from the waited-idle topology path.");
@@ -210,6 +210,16 @@ namespace {
         position = requireAfter(level, "LevelRenderer::addGiDenoiserFeaturePasses", position);
         position = requireAfter(level, "runtime.nrd->record(", position);
         requireAfter(level, "runtime.composite->record(", position);
+        require(level.find("if (runtime.sharcEnabled)") != std::string::npos &&
+                    level.find("if (data.settings->globalIllumination.nrdEnabled)") != std::string::npos &&
+                    level.find("diffuseInput = signals.diffuseRadianceHitDistance") != std::string::npos &&
+                    level.find("specularInput = signals.specularRadianceHitDistance") != std::string::npos,
+                "SHARC and NRD must be optional while raw RT GI remains a valid composite input.");
+        require(level.find("if (!data.settings->shadows.enabled)") != std::string::npos &&
+                    level.find("settings.shadows.splitLambda") != std::string::npos &&
+                    level.find("settings.shadows.maxDistance") != std::string::npos &&
+                    level.find("settings.globalIllumination.ssaoEnabled") != std::string::npos,
+                "Legacy mode controls must drive CSM recording, cascade parameters, and SSAO.");
 
         require(level.find(".atmosphere = atmosphereConsumerBindingSets_[data.frameIndex]") != std::string::npos &&
                     level.find(".atmosphere = data.atmosphereLuts->resources") != std::string::npos,

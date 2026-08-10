@@ -72,10 +72,14 @@ namespace lumin::render {
 
     private:
         struct FeatureConfigurationState {
-            GlobalIlluminationMode globalIlluminationMode = GlobalIlluminationMode::Auto;
+            GlobalIlluminationMode globalIlluminationMode = GlobalIlluminationMode::RayTracing;
             bool directLightingEnabled = true;
             bool shadowsEnabled = true;
-            bool globalIlluminationEnabled = true;
+            float shadowSplitLambda = 0.68f;
+            float shadowMaxDistance = 200.0f;
+            bool ssaoEnabled = true;
+            bool sharcEnabled = true;
+            bool nrdEnabled = true;
             bool temporalAaEnabled = true;
             bool atmosphereEnabled = true;
             bool aerialPerspectiveEnabled = true;
@@ -95,7 +99,8 @@ namespace lumin::render {
         struct HybridGiState;
 
         void createRenderResources();
-        void createRenderFeaturePipeline();
+        void createRenderFeaturePipeline(DeferredRenderPath requestedPath = DeferredRenderPath::Hybrid);
+        void synchronizeRenderConfiguration(const RenderSettings& settings);
         void createModelRenderer();
         void createDirectLightingBindingLayout();
         void createDirectLightingBindingSets();
@@ -179,6 +184,7 @@ namespace lumin::render {
         core::FrameChangeSet pendingFrameChanges_;
         std::array<bool, TextureManager::maxFramesInFlight> frameResourcesInitialized_{};
         bool atmosphereForceRebuild_ = true;
+        bool requestedSharcEnabled_ = true;
         std::unique_ptr<DeferredRenderPipeline> renderPipeline_;
     };
 

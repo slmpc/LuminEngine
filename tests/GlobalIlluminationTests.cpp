@@ -533,6 +533,29 @@ namespace {
         require(outputClear < outputWrite,
                 "SSAO neutral clear must run in a CopyDest transfer pass before the RenderTarget draw pass.");
         graph.reset();
+
+        recorder.events.clear();
+        barriers.events.clear();
+        desc.texture = position;
+        const FrameGraphResourceHandle disabledPosition = graph.importTexture("disabled.position", desc);
+        desc.texture = normal;
+        const FrameGraphResourceHandle disabledNormal = graph.importTexture("disabled.normal", desc);
+        desc.texture = output;
+        const FrameGraphResourceHandle disabledOutput = graph.importTexture("disabled.output", desc);
+        backend->addPasses(graph, FrameInfo{.world = *renderWorld,
+                                            .enabled = false,
+                                            .extent = {16, 16},
+                                            .position = disabledPosition,
+                                            .normalRoughness = disabledNormal,
+                                            .output = disabledOutput});
+        graph.execute(FrameGraphContext{.barriers = &barriers});
+        require(recorder.events == std::vector<std::string>{"clear"},
+                "Disabled SSAO must only clear its output to the neutral GI value.");
+        require(std::find(barriers.events.begin(), barriers.events.end(), "position-read") == barriers.events.end() &&
+                    std::find(barriers.events.begin(), barriers.events.end(), "normal-read") == barriers.events.end() &&
+                    std::find(barriers.events.begin(), barriers.events.end(), "output-write") == barriers.events.end(),
+                "Disabled SSAO must not read the G-buffer or register a fullscreen render-target write.");
+        graph.reset();
         backend->destroy();
         require(driver.live.ownedTotal() == 0, "Production SSAO pass resources must release after recording.");
         std::cout << "PASS: production SSAO FrameGraph, binding, framebuffer clear/store, and draw\n";
@@ -674,8 +697,8 @@ namespace {
         const auto renderWorld = lumin::render::world::RenderWorldExtractor::extract(level);
         FakeGlobalIlluminationBackend backend;
         backend.executionOrder = &order;
-        const FrameInfo frameInfo{*renderWorld, 0, 0, true, false, lumin::render::gi::RenderExtent{16, 16},
-                                  position, normal, albedo, motion, depth, output};
+        const FrameInfo frameInfo{*renderWorld, 0,      0,      true,   false, lumin::render::gi::RenderExtent{16, 16},
+                                  position,     normal, albedo, motion, depth, output};
         backend.addPasses(frameGraph, frameInfo);
 
         frameGraph.addPass(

@@ -140,6 +140,10 @@ namespace lumin::render::gi {
                         detail::recordSsaoClear(*context.commandList, output);
                     });
 
+                if (!frameInfo.enabled) {
+                    return;
+                }
+
                 frameGraph.addPass(
                     "GI: SSAO", FrameGraphPassType::Graphics,
                     [position = frameInfo.position, normal = frameInfo.normalRoughness,

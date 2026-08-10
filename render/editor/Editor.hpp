@@ -87,7 +87,12 @@ namespace lumin::editor {
         void setCameraPosition(const glm::vec3& position) noexcept;
         void setDirectLightingEnabled(bool enabled) noexcept;
         void setShadowsEnabled(bool enabled) noexcept;
-        void setGlobalIlluminationEnabled(bool enabled) noexcept;
+        void setGlobalIlluminationMode(render::GlobalIlluminationMode mode) noexcept;
+        void setSsaoEnabled(bool enabled) noexcept;
+        void setSharcEnabled(bool enabled) noexcept;
+        void setNrdEnabled(bool enabled) noexcept;
+        void setCsmSplitLambda(float splitLambda) noexcept;
+        void setCsmMaxDistance(float maxDistance) noexcept;
         void setTaaEnabled(bool enabled) noexcept;
         void setExposure(float exposure) noexcept;
         void setSunDirection(const glm::vec3& direction) noexcept;

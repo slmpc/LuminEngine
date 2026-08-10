@@ -10,18 +10,23 @@ namespace lumin::render {
 
     struct ShadowSettings {
         bool enabled = true;
+        /// 0 为均匀分割，1 为对数分割。
+        float splitLambda = 0.68f;
+        /// CSM 覆盖的最大观察空间距离，不得超过相机 far plane。
+        float maxDistance = 200.0f;
     };
 
     enum class GlobalIlluminationMode {
-        Auto,
-        Ssao,
-        RayTracedSharcNrd,
+        Legacy,
+        RayTracing,
     };
 
-    /** GI feature 的选择与启用状态；算法私有调参由对应 feature 自己拥有。 */
+    /** Legacy 与 Ray Tracing 两条路径的 GI Feature 开关。 */
     struct GlobalIlluminationSettings {
-        bool enabled = true;
-        GlobalIlluminationMode mode = GlobalIlluminationMode::Auto;
+        GlobalIlluminationMode mode = GlobalIlluminationMode::RayTracing;
+        bool ssaoEnabled = true;
+        bool sharcEnabled = true;
+        bool nrdEnabled = true;
     };
 
     struct TemporalAaSettings {

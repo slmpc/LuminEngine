@@ -278,16 +278,25 @@ namespace {
         editor.setCameraPosition({1.0f, 2.0f, 3.0f});
         editor.setDirectLightingEnabled(false);
         editor.setShadowsEnabled(false);
-        editor.setGlobalIlluminationEnabled(false);
+        editor.setGlobalIlluminationMode(lumin::render::GlobalIlluminationMode::Legacy);
+        editor.setSsaoEnabled(false);
+        editor.setSharcEnabled(false);
+        editor.setNrdEnabled(false);
+        editor.setCsmSplitLambda(1.5f);
+        editor.setCsmMaxDistance(-10.0f);
         editor.setTaaEnabled(false);
         editor.setExposure(2.25f);
         editor.setSunDirection({0.0f, -1.0f, 0.0f});
         require(nearlyEqual(camera.moveSpeed(), 8.0f) && camera.position() == glm::vec3(1.0f, 2.0f, 3.0f),
                 "Camera controls must mutate the borrowed camera.");
-        require(!settings.directLighting.enabled && !settings.shadows.enabled && !settings.globalIllumination.enabled &&
-                    !settings.temporalAa.enabled && nearlyEqual(settings.toneMapping.exposure, 2.25f) &&
+        require(!settings.directLighting.enabled && !settings.shadows.enabled &&
+                    settings.globalIllumination.mode == lumin::render::GlobalIlluminationMode::Legacy &&
+                    !settings.globalIllumination.ssaoEnabled && !settings.globalIllumination.sharcEnabled &&
+                    !settings.globalIllumination.nrdEnabled && nearlyEqual(settings.shadows.splitLambda, 1.0f) &&
+                    nearlyEqual(settings.shadows.maxDistance, 1.0f) && !settings.temporalAa.enabled &&
+                    nearlyEqual(settings.toneMapping.exposure, 2.25f) &&
                     level.environment().sun.direction == glm::vec3(0.0f, -1.0f, 0.0f) && camera.cutEpoch() == 1,
-                "Render/GI controls must mutate feature settings, scene lighting, and explicit camera-cut state.");
+                "Legacy/RT GI controls must mutate mode-specific settings and shared TAA state.");
 
         const auto actor = level.spawnActor<TestActor>();
         require(editor.selectActor(actor), "A live actor must be selectable for Inspector edits.");
