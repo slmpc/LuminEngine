@@ -236,18 +236,18 @@ namespace lumin::render::gpu {
             ticket.geometryResources_.reserve(version->geometry.size());
             for (std::size_t index = 0; index < version->geometry.size(); ++index) {
                 const GpuGeometryDescriptor& geometry = version->geometry[index];
-                const FrameGraphResourceHandle vertices = frameGraph.importBuffer(
-                    "gpu-scene-reused-vertices-" + std::to_string(index),
-                    FrameGraphBufferDesc{.size = geometry.vertices->getDesc().byteSize,
-                                         .buffer = geometry.vertices,
-                                         .initialState = nvrhi::ResourceStates::ShaderResource,
-                                         .finalState = nvrhi::ResourceStates::ShaderResource});
-                const FrameGraphResourceHandle indices = frameGraph.importBuffer(
-                    "gpu-scene-reused-indices-" + std::to_string(index),
-                    FrameGraphBufferDesc{.size = geometry.indices->getDesc().byteSize,
-                                         .buffer = geometry.indices,
-                                         .initialState = nvrhi::ResourceStates::ShaderResource,
-                                         .finalState = nvrhi::ResourceStates::ShaderResource});
+                const FrameGraphResourceHandle vertices =
+                    frameGraph.importBuffer("gpu-scene-reused-vertices-" + std::to_string(index),
+                                            FrameGraphBufferDesc{.size = geometry.vertices->getDesc().byteSize,
+                                                                 .buffer = geometry.vertices,
+                                                                 .initialState = nvrhi::ResourceStates::ShaderResource,
+                                                                 .finalState = nvrhi::ResourceStates::ShaderResource});
+                const FrameGraphResourceHandle indices =
+                    frameGraph.importBuffer("gpu-scene-reused-indices-" + std::to_string(index),
+                                            FrameGraphBufferDesc{.size = geometry.indices->getDesc().byteSize,
+                                                                 .buffer = geometry.indices,
+                                                                 .initialState = nvrhi::ResourceStates::ShaderResource,
+                                                                 .finalState = nvrhi::ResourceStates::ShaderResource});
                 ticket.bufferResources_.push_back(vertices);
                 ticket.bufferResources_.push_back(indices);
                 ticket.geometryResources_.push_back(
@@ -268,18 +268,16 @@ namespace lumin::render::gpu {
                 importTable("gpu-scene-reused-instance-records", version->descriptors.instances);
             ticket.materialRecordsResource_ =
                 importTable("gpu-scene-reused-material-records", version->descriptors.materials);
-            ticket.lightRecordsResource_ =
-                importTable("gpu-scene-reused-light-records", version->descriptors.lights);
+            ticket.lightRecordsResource_ = importTable("gpu-scene-reused-light-records", version->descriptors.lights);
 
             if (config_.rayTracingEnabled) {
                 for (std::size_t index = 0; index < version->geometry.size(); ++index) {
                     if (version->geometry[index].blas) {
                         static_cast<void>(frameGraph.importAccelerationStructure(
                             "gpu-scene-reused-blas-" + std::to_string(index),
-                            FrameGraphAccelerationStructureDesc{
-                                .accelerationStructure = version->geometry[index].blas,
-                                .initialState = nvrhi::ResourceStates::AccelStructRead,
-                                .finalState = nvrhi::ResourceStates::AccelStructRead}));
+                            FrameGraphAccelerationStructureDesc{.accelerationStructure = version->geometry[index].blas,
+                                                                .initialState = nvrhi::ResourceStates::AccelStructRead,
+                                                                .finalState = nvrhi::ResourceStates::AccelStructRead}));
                     }
                 }
                 ticket.topLevelAccelerationStructureResource_ = frameGraph.importAccelerationStructure(
@@ -335,7 +333,8 @@ namespace lumin::render::gpu {
             std::vector<GpuPackedVertex> vertices;
             vertices.reserve(source.vertices.size());
             for (const assets::Vertex& vertex : source.vertices) {
-                vertices.push_back(GpuPackedVertex{glm::vec4{vertex.position, 0.0F}, glm::vec4{vertex.normal, 0.0F}});
+                vertices.push_back(GpuPackedVertex{glm::vec4{vertex.position, vertex.texCoord.x},
+                                                   glm::vec4{vertex.normal, vertex.texCoord.y}});
             }
             std::vector<std::uint32_t> indices = source.indices;
             if (vertices.empty()) {
@@ -431,7 +430,9 @@ namespace lumin::render::gpu {
                     instance.setInstanceID(binding.instanceIndex.value())
                         .setInstanceMask(0xFFU)
                         .setInstanceContributionToHitGroupIndex(0U)
-                        .setFlags(nvrhi::rt::InstanceFlags::TriangleFrontCounterclockwise)
+                        // Raster G-buffer 对场景 mesh 使用双面绘制；TLAS 必须保持相同语义，否则绕序不一致的
+                        // OBJ/程序化地形会在 RTDI 中消失，并把错误的 miss 信号传播给 SHARC 与 NRD。
+                        .setFlags(nvrhi::rt::InstanceFlags::TriangleCullDisable)
                         .setBLAS(geometry->blas);
                     version->tlasInstances.push_back(instance);
                 }
@@ -580,8 +581,7 @@ namespace lumin::render::gpu {
                 });
         }
 
-        pending_[slot] =
-            std::make_shared<PendingVersion>(PendingVersion{ticket.serial_, version, std::move(version)});
+        pending_[slot] = std::make_shared<PendingVersion>(PendingVersion{ticket.serial_, version, std::move(version)});
         return ticket;
     }
 

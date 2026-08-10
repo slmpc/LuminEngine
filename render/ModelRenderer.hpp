@@ -109,6 +109,7 @@ namespace lumin::render {
                                                                      std::uint32_t cascadeIndex) const;
         [[nodiscard]] std::span<const nvrhi::TextureHandle> baseColorTextures() const noexcept;
         [[nodiscard]] std::span<const nvrhi::TextureHandle> normalRoughnessTextures() const noexcept;
+        [[nodiscard]] nvrhi::SamplerHandle materialSampler() const noexcept;
 
     private:
         struct Impl;

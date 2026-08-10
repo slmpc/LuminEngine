@@ -29,6 +29,9 @@ namespace lumin::render::gi {
         constexpr std::uint32_t directRadianceOutputBinding = 11;
         constexpr std::uint32_t visibilityMaskOutputBinding = 12;
         constexpr std::uint32_t constantsBinding = 13;
+        constexpr std::uint32_t baseColorTexturesBinding = 14;
+        constexpr std::uint32_t normalRoughnessTexturesBinding = 15;
+        constexpr std::uint32_t materialSamplerBinding = 16;
 
         [[nodiscard]] nvrhi::BufferHandle createConstantBuffer(nvrhi::IDevice& device) {
             nvrhi::BufferDesc desc;
@@ -58,8 +61,8 @@ namespace lumin::render::gi {
         }
 
         [[nodiscard]] nvrhi::TextureHandle createSignalTexture(nvrhi::IDevice& device, std::uint32_t width,
-                                                                std::uint32_t height, nvrhi::Format format,
-                                                                const char* debugName) {
+                                                               std::uint32_t height, nvrhi::Format format,
+                                                               const char* debugName) {
             nvrhi::TextureDesc desc;
             desc.width = width;
             desc.height = height;
@@ -84,9 +87,12 @@ namespace lumin::render::gi {
 
     namespace detail {
 
-        nvrhi::BindingLayoutDesc makeRayTracedDiBindingLayoutDesc(std::uint32_t maxGeometryDescriptors) {
-            if (maxGeometryDescriptors == 0 || maxGeometryDescriptors > std::numeric_limits<std::uint16_t>::max()) {
-                throw std::invalid_argument("RT surface geometry descriptor capacity must fit NvRHI's uint16 array size.");
+        nvrhi::BindingLayoutDesc makeRayTracedDiBindingLayoutDesc(std::uint32_t maxGeometryDescriptors,
+                                                                  std::uint32_t maxMaterialTextureDescriptors) {
+            if (maxGeometryDescriptors == 0 || maxGeometryDescriptors > std::numeric_limits<std::uint16_t>::max() ||
+                maxMaterialTextureDescriptors == 0 ||
+                maxMaterialTextureDescriptors > std::numeric_limits<std::uint16_t>::max()) {
+                throw std::invalid_argument("RT surface descriptor capacities must fit NvRHI's uint16 array size.");
             }
 
             nvrhi::BindingLayoutDesc desc;
@@ -100,8 +106,8 @@ namespace lumin::render::gi {
                 .addItem(nvrhi::BindingLayoutItem::RayTracingAccelStruct(tlasBinding))
                 .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(vertexBuffersBinding)
                              .setSize(maxGeometryDescriptors))
-                .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(indexBuffersBinding)
-                             .setSize(maxGeometryDescriptors))
+                .addItem(
+                    nvrhi::BindingLayoutItem::StructuredBuffer_SRV(indexBuffersBinding).setSize(maxGeometryDescriptors))
                 .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(instancesBinding))
                 .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(materialsBinding))
                 .addItem(nvrhi::BindingLayoutItem::Texture_UAV(worldPositionOutputBinding))
@@ -112,18 +118,28 @@ namespace lumin::render::gi {
                 .addItem(nvrhi::BindingLayoutItem::Texture_UAV(motionOutputBinding))
                 .addItem(nvrhi::BindingLayoutItem::Texture_UAV(directRadianceOutputBinding))
                 .addItem(nvrhi::BindingLayoutItem::Texture_UAV(visibilityMaskOutputBinding))
-                .addItem(nvrhi::BindingLayoutItem::ConstantBuffer(constantsBinding));
+                .addItem(nvrhi::BindingLayoutItem::ConstantBuffer(constantsBinding))
+                .addItem(nvrhi::BindingLayoutItem::Texture_SRV(baseColorTexturesBinding)
+                             .setSize(maxMaterialTextureDescriptors))
+                .addItem(nvrhi::BindingLayoutItem::Texture_SRV(normalRoughnessTexturesBinding)
+                             .setSize(maxMaterialTextureDescriptors))
+                .addItem(nvrhi::BindingLayoutItem::Sampler(materialSamplerBinding));
             return desc;
         }
 
         nvrhi::BindingSetDesc makeRayTracedDiBindingSetDesc(const RayTracedDiFrameResources& outputs,
                                                             const RayTracedGiSceneBindings& scene,
                                                             std::uint32_t maxGeometryDescriptors,
+                                                            std::uint32_t maxMaterialTextureDescriptors,
                                                             nvrhi::BufferHandle constants) {
             if (!complete(outputs) || !scene.descriptors.rayTracingEnabled || !scene.descriptors.tlas ||
                 !scene.descriptors.instances || !scene.descriptors.materials || scene.geometry.empty() ||
-                scene.geometry.size() > maxGeometryDescriptors || !constants) {
-                throw std::invalid_argument("RT surface binding set requires a complete traceable GPU scene and outputs.");
+                scene.geometry.size() > maxGeometryDescriptors || scene.baseColorTextures.empty() ||
+                scene.baseColorTextures.size() != scene.normalRoughnessTextures.size() ||
+                scene.baseColorTextures.size() > maxMaterialTextureDescriptors || !scene.materialSampler ||
+                !constants) {
+                throw std::invalid_argument(
+                    "RT surface binding set requires a complete traceable GPU scene and outputs.");
             }
 
             nvrhi::BindingSetDesc desc;
@@ -146,6 +162,16 @@ namespace lumin::render::gi {
                 desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(indexBuffersBinding, geometry.indices)
                                  .setArrayElement(index));
             }
+            for (std::uint32_t index = 0; index < maxMaterialTextureDescriptors; ++index) {
+                const std::size_t textureIndex = index % scene.baseColorTextures.size();
+                desc.addItem(
+                    nvrhi::BindingSetItem::Texture_SRV(baseColorTexturesBinding, scene.baseColorTextures[textureIndex])
+                        .setArrayElement(index));
+                desc.addItem(nvrhi::BindingSetItem::Texture_SRV(normalRoughnessTexturesBinding,
+                                                                scene.normalRoughnessTextures[textureIndex])
+                                 .setArrayElement(index));
+            }
+            desc.addItem(nvrhi::BindingSetItem::Sampler(materialSamplerBinding, scene.materialSampler));
             return desc;
         }
 
@@ -156,6 +182,7 @@ namespace lumin::render::gi {
         std::uint32_t width = 0;
         std::uint32_t height = 0;
         std::uint32_t maxGeometryDescriptors = 0;
+        std::uint32_t maxMaterialTextureDescriptors = 0;
         std::vector<RayTracedDiFrameResources> frames;
         std::vector<nvrhi::BufferHandle> constants;
         std::vector<std::uint8_t> initialized;
@@ -167,12 +194,13 @@ namespace lumin::render::gi {
         explicit Impl(const CreateInfo& createInfo)
             : device(*createInfo.device), width(createInfo.width), height(createInfo.height),
               maxGeometryDescriptors(createInfo.maxGeometryDescriptors),
+              maxMaterialTextureDescriptors(createInfo.maxMaterialTextureDescriptors),
               frames(createInfo.frames.begin(), createInfo.frames.end()), constants(frames.size()),
               initialized(frames.size(), 0) {
             for (RayTracedDiFrameResources& frame : frames) {
                 if (!frame.viewZ) {
-                    frame.viewZ = createSignalTexture(device, width, height, nvrhi::Format::R32_FLOAT,
-                                                      "RT surface viewZ");
+                    frame.viewZ =
+                        createSignalTexture(device, width, height, nvrhi::Format::R32_FLOAT, "RT surface viewZ");
                 }
                 if (!frame.visibilityMask) {
                     frame.visibilityMask = createSignalTexture(device, width, height, nvrhi::Format::R32_UINT,
@@ -185,7 +213,8 @@ namespace lumin::render::gi {
 
             ShaderLibrary shaders(device, createInfo.shaderDirectory);
             PipelineFactory pipelines(device);
-            bindingLayout = device.createBindingLayout(detail::makeRayTracedDiBindingLayoutDesc(maxGeometryDescriptors));
+            bindingLayout = device.createBindingLayout(
+                detail::makeRayTracedDiBindingLayoutDesc(maxGeometryDescriptors, maxMaterialTextureDescriptors));
             if (!bindingLayout) {
                 throw std::runtime_error("Failed to create RT surface binding layout.");
             }
@@ -237,21 +266,24 @@ namespace lumin::render::gi {
 
     RayTracedDirectLightingPass::RayTracedDirectLightingPass(const CreateInfo& createInfo) {
         if (createInfo.device == nullptr || createInfo.shaderDirectory.empty() || createInfo.width == 0 ||
-            createInfo.height == 0 || createInfo.maxGeometryDescriptors == 0 || !createInfo.atmosphereBindingLayout ||
+            createInfo.height == 0 || createInfo.maxGeometryDescriptors == 0 ||
+            createInfo.maxMaterialTextureDescriptors == 0 || !createInfo.atmosphereBindingLayout ||
             createInfo.frames.empty()) {
-            throw std::invalid_argument("RT surface pass requires device, shader directory, extent, geometry capacity, atmosphere, and frames.");
+            throw std::invalid_argument("RT surface pass requires device, shader directory, extent, geometry capacity, "
+                                        "atmosphere, and frames.");
         }
         impl_ = std::make_unique<Impl>(createInfo);
     }
 
     RayTracedDirectLightingPass::~RayTracedDirectLightingPass() = default;
 
-    FrameGraphPassHandle RayTracedDirectLightingPass::record(
-        FrameGraph& frameGraph, std::uint32_t frameIndex, bool frameSlotFenceWaited,
-        const RayTracedDiConstants& constants, const RayTracedDiGraphResources& outputs,
-        const RayTracedGiSceneBindings& scene, const RayTracedGiSceneGraphResources& sceneResources,
-        const RayTracingEnvironmentBindings& environment,
-        const RayTracingEnvironmentGraphResources& environmentResources) {
+    FrameGraphPassHandle
+    RayTracedDirectLightingPass::record(FrameGraph& frameGraph, std::uint32_t frameIndex, bool frameSlotFenceWaited,
+                                        const RayTracedDiConstants& constants, const RayTracedDiGraphResources& outputs,
+                                        const RayTracedGiSceneBindings& scene,
+                                        const RayTracedGiSceneGraphResources& sceneResources,
+                                        const RayTracingEnvironmentBindings& environment,
+                                        const RayTracingEnvironmentGraphResources& environmentResources) {
         if (!frameSlotFenceWaited) {
             throw std::logic_error("RT surface bindings may only change after waiting for the frame-slot fence.");
         }
@@ -260,7 +292,10 @@ namespace lumin::render::gi {
         }
         if (frameIndex >= impl_->frames.size() || !outputs.isValid() || !sceneResources.tlas.isValid() ||
             !sceneResources.instances.isValid() || !sceneResources.materials.isValid() ||
-            sceneResources.vertices.size() != scene.geometry.size() || sceneResources.indices.size() != scene.geometry.size() ||
+            sceneResources.vertices.size() != scene.geometry.size() ||
+            sceneResources.indices.size() != scene.geometry.size() ||
+            sceneResources.baseColorTextures.size() != scene.baseColorTextures.size() ||
+            sceneResources.normalRoughnessTextures.size() != scene.normalRoughnessTextures.size() ||
             !environment.isValid() || !environmentResources.isValid()) {
             throw std::invalid_argument("RT surface record requires matching scene, output, and atmosphere resources.");
         }
@@ -269,22 +304,27 @@ namespace lumin::render::gi {
         writeConstants(impl_->device, frameConstants, constants);
         const nvrhi::BindingSetHandle bindingSet = impl_->device.createBindingSet(
             detail::makeRayTracedDiBindingSetDesc(impl_->frames[frameIndex], scene, impl_->maxGeometryDescriptors,
-                                                   frameConstants),
+                                                  impl_->maxMaterialTextureDescriptors, frameConstants),
             impl_->bindingLayout);
         if (!bindingSet) {
             throw std::runtime_error("Failed to create RT surface binding set for the current GPU Scene version.");
         }
 
         const std::vector<FrameGraphResourceHandle> vertexResources(sceneResources.vertices.begin(),
-                                                                     sceneResources.vertices.end());
+                                                                    sceneResources.vertices.end());
         const std::vector<FrameGraphResourceHandle> indexResources(sceneResources.indices.begin(),
-                                                                    sceneResources.indices.end());
+                                                                   sceneResources.indices.end());
+        const std::vector<FrameGraphResourceHandle> baseColorResources(sceneResources.baseColorTextures.begin(),
+                                                                       sceneResources.baseColorTextures.end());
+        const std::vector<FrameGraphResourceHandle> normalRoughnessResources(
+            sceneResources.normalRoughnessTextures.begin(), sceneResources.normalRoughnessTextures.end());
         const nvrhi::rt::ShaderTableHandle shaderTable = impl_->shaderTable;
         const std::uint32_t width = impl_->width;
         const std::uint32_t height = impl_->height;
         const FrameGraphPassHandle pass = frameGraph.addPass(
             "rt-primary-surface", FrameGraphPassType::RayTracing,
-            [outputs, sceneResources, environmentResources, vertexResources, indexResources](FrameGraphBuilder& builder) {
+            [outputs, sceneResources, environmentResources, vertexResources, indexResources, baseColorResources,
+             normalRoughnessResources](FrameGraphBuilder& builder) {
                 if (sceneResources.readyPass.isValid()) {
                     builder.dependsOn(sceneResources.readyPass);
                 }
@@ -297,14 +337,19 @@ namespace lumin::render::gi {
                 for (const FrameGraphResourceHandle resource : indexResources) {
                     builder.read(resource, nvrhi::ResourceStates::ShaderResource);
                 }
+                for (const FrameGraphResourceHandle resource : baseColorResources) {
+                    builder.readTexture(resource, nvrhi::ResourceStates::ShaderResource);
+                }
+                for (const FrameGraphResourceHandle resource : normalRoughnessResources) {
+                    builder.readTexture(resource, nvrhi::ResourceStates::ShaderResource);
+                }
                 for (const FrameGraphResourceHandle lut : environmentResources.atmosphere.textures) {
                     builder.readTexture(lut, nvrhi::ResourceStates::ShaderResource);
                 }
                 builder.read(environmentResources.atmosphere.constants, nvrhi::ResourceStates::ConstantBuffer);
-                for (const FrameGraphResourceHandle output : {outputs.worldPositionHitT, outputs.normalRoughness,
-                                                              outputs.albedoMetallic, outputs.materialId, outputs.viewZ,
-                                                              outputs.motion, outputs.directRadiance,
-                                                              outputs.visibilityMask}) {
+                for (const FrameGraphResourceHandle output :
+                     {outputs.worldPositionHitT, outputs.normalRoughness, outputs.albedoMetallic, outputs.materialId,
+                      outputs.viewZ, outputs.motion, outputs.directRadiance, outputs.visibilityMask}) {
                     builder.writeTexture(output, nvrhi::ResourceStates::UnorderedAccess);
                 }
             },

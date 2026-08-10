@@ -62,6 +62,10 @@ SharcParameters rayTracedGiSharcParameters() {
 }
 #endif
 
+[[vk::binding(21, 0)]] Texture2D<float4> baseColorTextures[];
+[[vk::binding(22, 0)]] Texture2D<float4> normalRoughnessTextures[];
+[[vk::binding(23, 0)]] SamplerState materialSampler;
+
 uint hashUint(uint value) {
     value ^= value >> 16;
     value *= 0x7feb352d;
@@ -97,7 +101,7 @@ GiPayload traceRadiance(float3 origin, float3 direction) {
     payload.hitDistance = ray.TMax;
     payload.rayKind = kRadianceRay;
     payload.visibility = 0.0;
-    TraceRay(sceneTlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xff, 0, 1, 0, ray, payload);
+    TraceRay(sceneTlas, 0, 0xff, 0, 1, 0, ray, payload);
     return payload;
 }
 
@@ -184,10 +188,27 @@ void closestHitMain(inout GiPayload payload, BuiltInTriangleIntersectionAttribut
     uint3 vertexIndices = uint3(indices[triangleIndex], indices[triangleIndex + 1], indices[triangleIndex + 2]);
     float3 barycentrics = float3(1.0 - attributes.barycentrics.x - attributes.barycentrics.y,
                                 attributes.barycentrics.x, attributes.barycentrics.y);
-    float3 objectNormal = normalize(vertices[vertexIndices.x + vertexOffset].normal * barycentrics.x +
-                                    vertices[vertexIndices.y + vertexOffset].normal * barycentrics.y +
-                                    vertices[vertexIndices.z + vertexOffset].normal * barycentrics.z);
-    float3 worldNormal = normalize(mul((float3x3)instance.normalMatrix, objectNormal));
+    GpuPackedVertex vertex0 = vertices[vertexIndices.x + vertexOffset];
+    GpuPackedVertex vertex1 = vertices[vertexIndices.y + vertexOffset];
+    GpuPackedVertex vertex2 = vertices[vertexIndices.z + vertexOffset];
+    float3 objectNormal = normalize(vertex0.normal * barycentrics.x + vertex1.normal * barycentrics.y +
+                                    vertex2.normal * barycentrics.z);
+    float3 worldNormal = luminOrientShadingNormal(mul((float3x3)instance.normalMatrix, objectNormal),
+                                                  WorldRayDirection());
+    float2 texCoord = luminVertexTexCoord(vertex0) * barycentrics.x +
+                      luminVertexTexCoord(vertex1) * barycentrics.y +
+                      luminVertexTexCoord(vertex2) * barycentrics.z;
+    GpuMaterialData material = materials[instance.metadata.x];
+    if (material.metadata.z != 0u) {
+        uint textureIndex = material.metadata.y;
+        float2 materialUv = texCoord * material.surfaceParameters.y;
+        material.baseColorMetallic.rgb *=
+            baseColorTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(materialSampler, materialUv, 0.0).rgb;
+        material.surfaceParameters.x = clamp(
+            normalRoughnessTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(materialSampler, materialUv, 0.0).a *
+                material.surfaceParameters.x,
+            0.04, 1.0);
+    }
     float3 hitPosition = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
     float3 toSun = normalize(frame.toSunWorld.xyz);
 
@@ -201,10 +222,8 @@ void closestHitMain(inout GiPayload payload, BuiltInTriangleIntersectionAttribut
     shadowPayload.hitDistance = shadowRay.TMax;
     shadowPayload.rayKind = kShadowRay;
     shadowPayload.visibility = 0.0;
-    TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_CULL_BACK_FACING_TRIANGLES,
-             0xff, 0, 1, 1, shadowRay, shadowPayload);
+    TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff, 0, 1, 1, shadowRay, shadowPayload);
 
-    GpuMaterialData material = materials[instance.metadata.x];
     float noL = saturate(dot(worldNormal, toSun));
     float3 direct = material.baseColorMetallic.rgb * frame.sunRadiance.rgb * (noL * shadowPayload.visibility);
     float3 fallbackRadiance = direct + material.baseColorMetallic.rgb * 0.015;

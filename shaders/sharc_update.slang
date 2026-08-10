@@ -29,6 +29,9 @@ static const uint kSharcStatisticOverflow = 2;
 [[vk::binding(11, 0)]] RWStructuredBuffer<uint> sharcLocks;
 [[vk::binding(12, 0)]] RWStructuredBuffer<uint> sharcStatistics;
 [[vk::binding(13, 0)]] ConstantBuffer<SharcGpuConstants> sharcFrame;
+[[vk::binding(14, 0)]] Texture2D<float4> baseColorTextures[];
+[[vk::binding(15, 0)]] Texture2D<float4> normalRoughnessTextures[];
+[[vk::binding(16, 0)]] SamplerState materialSampler;
 
 uint sharcHashUint(uint value) {
     value ^= value >> 16;
@@ -111,7 +114,7 @@ void sharcUpdateRayGenerationMain() {
     ray.Direction = sharcCosineHemisphere(normal, tileSeed ^ 0x51ed270b);
     ray.TMin = sharcFrame.traceParameters.x;
     ray.TMax = sharcFrame.traceParameters.y;
-    TraceRay(sceneTlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xff, 0, 1, 0, ray, payload);
+    TraceRay(sceneTlas, 0, 0xff, 0, 1, 0, ray, payload);
 }
 
 [shader("miss")]
@@ -140,11 +143,28 @@ void sharcUpdateClosestHitMain(
     uint triangleIndex = PrimitiveIndex() * 3 + instance.metadata.y;
     uint3 vertexIndices = uint3(indices[triangleIndex], indices[triangleIndex + 1], indices[triangleIndex + 2]);
     float3 barycentrics = float3(1.0 - attributes.barycentrics.x - attributes.barycentrics.y,
-                                attributes.barycentrics.x, attributes.barycentrics.y);
-    float3 objectNormal = normalize(vertices[vertexIndices.x + instance.metadata.z].normal * barycentrics.x +
-                                    vertices[vertexIndices.y + instance.metadata.z].normal * barycentrics.y +
-                                    vertices[vertexIndices.z + instance.metadata.z].normal * barycentrics.z);
-    float3 worldNormal = normalize(mul((float3x3)instance.normalMatrix, objectNormal));
+                                 attributes.barycentrics.x, attributes.barycentrics.y);
+    GpuPackedVertex vertex0 = vertices[vertexIndices.x + instance.metadata.z];
+    GpuPackedVertex vertex1 = vertices[vertexIndices.y + instance.metadata.z];
+    GpuPackedVertex vertex2 = vertices[vertexIndices.z + instance.metadata.z];
+    float3 objectNormal = normalize(vertex0.normal * barycentrics.x + vertex1.normal * barycentrics.y +
+                                    vertex2.normal * barycentrics.z);
+    float3 worldNormal = luminOrientShadingNormal(mul((float3x3)instance.normalMatrix, objectNormal),
+                                                  WorldRayDirection());
+    float2 texCoord = luminVertexTexCoord(vertex0) * barycentrics.x +
+                      luminVertexTexCoord(vertex1) * barycentrics.y +
+                      luminVertexTexCoord(vertex2) * barycentrics.z;
+    GpuMaterialData material = materials[instance.metadata.x];
+    if (material.metadata.z != 0u) {
+        uint textureIndex = material.metadata.y;
+        float2 materialUv = texCoord * material.surfaceParameters.y;
+        material.baseColorMetallic.rgb *=
+            baseColorTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(materialSampler, materialUv, 0.0).rgb;
+        material.surfaceParameters.x = clamp(
+            normalRoughnessTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(materialSampler, materialUv, 0.0).a *
+                material.surfaceParameters.x,
+            0.04, 1.0);
+    }
     float3 hitPosition = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
     float3 toSun = normalize(sharcFrame.toSunWorldRadianceScale.xyz);
 
@@ -158,10 +178,8 @@ void sharcUpdateClosestHitMain(
     shadowRay.Direction = toSun;
     shadowRay.TMin = sharcFrame.traceParameters.x;
     shadowRay.TMax = sharcFrame.traceParameters.y;
-    TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_CULL_BACK_FACING_TRIANGLES,
-             0xff, 0, 1, 1, shadowRay, shadowPayload);
+    TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff, 0, 1, 1, shadowRay, shadowPayload);
 
-    GpuMaterialData material = materials[instance.metadata.x];
     float noL = saturate(dot(worldNormal, toSun));
     float3 directLighting = material.baseColorMetallic.rgb * sharcFrame.sunRadiance.rgb *
                             (noL * shadowPayload.visibility);

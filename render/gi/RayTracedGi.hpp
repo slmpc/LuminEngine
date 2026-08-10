@@ -85,6 +85,9 @@ namespace lumin::render::gi {
     struct RayTracedGiSceneBindings {
         gpu::GpuSceneDescriptors descriptors;
         std::span<const gpu::GpuGeometryDescriptor> geometry;
+        std::span<const nvrhi::TextureHandle> baseColorTextures;
+        std::span<const nvrhi::TextureHandle> normalRoughnessTextures;
+        nvrhi::SamplerHandle materialSampler;
     };
 
     /** 必须复用 GPU Scene upload/build 阶段导入的 FrameGraph 资源身份。 */
@@ -94,6 +97,8 @@ namespace lumin::render::gi {
         FrameGraphResourceHandle materials;
         std::span<const FrameGraphResourceHandle> vertices;
         std::span<const FrameGraphResourceHandle> indices;
+        std::span<const FrameGraphResourceHandle> baseColorTextures;
+        std::span<const FrameGraphResourceHandle> normalRoughnessTextures;
         FrameGraphPassHandle readyPass;
     };
 
@@ -114,6 +119,7 @@ namespace lumin::render::gi {
         std::uint32_t width = 0;
         std::uint32_t height = 0;
         std::uint32_t maxGeometryDescriptors = 0;
+        std::uint32_t maxMaterialTextureDescriptors = 0;
         /// 与 raster sky 完全相同的 descriptor set 2 layout。
         nvrhi::BindingLayoutHandle atmosphereBindingLayout;
         /// 为 `true` 时加载 SHARC closest-hit 变体并扩展 descriptor layout。
@@ -128,14 +134,16 @@ namespace lumin::render::gi {
                                                                           nvrhi::Format format, const char* debugName);
 
         /// 构造与 `rt_gi.slang` descriptor set 0 精确同构的 binding layout。
-        [[nodiscard]] nvrhi::BindingLayoutDesc makeRayTracedGiBindingLayoutDesc(std::uint32_t maxGeometryDescriptors,
-                                                                                bool enableSharc = false);
+        [[nodiscard]] nvrhi::BindingLayoutDesc
+        makeRayTracedGiBindingLayoutDesc(std::uint32_t maxGeometryDescriptors, bool enableSharc = false,
+                                         std::uint32_t maxMaterialTextureDescriptors = 1);
 
         /// 校验并生成当前场景版本的 binding set。
         [[nodiscard]] nvrhi::BindingSetDesc makeRayTracedGiBindingSetDesc(const RayTracedGiFrameInputs& inputs,
                                                                           const RayTracedGiSignalResources& signals,
                                                                           const RayTracedGiSceneBindings& scene,
                                                                           std::uint32_t maxGeometryDescriptors,
+                                                                          std::uint32_t maxMaterialTextureDescriptors,
                                                                           const SharcGraphRecord* sharc = nullptr);
 
         template <typename CommandList>

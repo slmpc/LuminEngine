@@ -36,6 +36,9 @@ namespace lumin::render::gi {
         constexpr std::uint32_t sharcLockBinding = 18;
         constexpr std::uint32_t sharcStatisticsBinding = 19;
         constexpr std::uint32_t sharcConstantsBinding = 20;
+        constexpr std::uint32_t baseColorTexturesBinding = 21;
+        constexpr std::uint32_t normalRoughnessTexturesBinding = 22;
+        constexpr std::uint32_t materialSamplerBinding = 23;
 
         [[nodiscard]] bool complete(const RayTracedGiFrameInputs& inputs) noexcept {
             return inputs.position && inputs.normalRoughness && inputs.albedoMetallic && inputs.motion;
@@ -93,9 +96,12 @@ namespace lumin::render::gi {
         }
 
         nvrhi::BindingLayoutDesc makeRayTracedGiBindingLayoutDesc(std::uint32_t maxGeometryDescriptors,
-                                                                  bool enableSharc) {
-            if (maxGeometryDescriptors == 0 || maxGeometryDescriptors > std::numeric_limits<std::uint16_t>::max()) {
-                throw std::invalid_argument("RT GI geometry descriptor capacity must fit NvRHI's uint16 array size.");
+                                                                  bool enableSharc,
+                                                                  std::uint32_t maxMaterialTextureDescriptors) {
+            if (maxGeometryDescriptors == 0 || maxGeometryDescriptors > std::numeric_limits<std::uint16_t>::max() ||
+                maxMaterialTextureDescriptors == 0 ||
+                maxMaterialTextureDescriptors > std::numeric_limits<std::uint16_t>::max()) {
+                throw std::invalid_argument("RT GI descriptor capacities must fit NvRHI's uint16 array size.");
             }
 
             nvrhi::BindingLayoutDesc desc;
@@ -131,17 +137,24 @@ namespace lumin::render::gi {
                     .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(sharcStatisticsBinding))
                     .addItem(nvrhi::BindingLayoutItem::ConstantBuffer(sharcConstantsBinding));
             }
+            desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(baseColorTexturesBinding)
+                             .setSize(maxMaterialTextureDescriptors))
+                .addItem(nvrhi::BindingLayoutItem::Texture_SRV(normalRoughnessTexturesBinding)
+                             .setSize(maxMaterialTextureDescriptors))
+                .addItem(nvrhi::BindingLayoutItem::Sampler(materialSamplerBinding));
             return desc;
         }
 
-        nvrhi::BindingSetDesc makeRayTracedGiBindingSetDesc(const RayTracedGiFrameInputs& inputs,
-                                                            const RayTracedGiSignalResources& signals,
-                                                            const RayTracedGiSceneBindings& scene,
-                                                            std::uint32_t maxGeometryDescriptors,
-                                                            const SharcGraphRecord* sharc) {
+        nvrhi::BindingSetDesc
+        makeRayTracedGiBindingSetDesc(const RayTracedGiFrameInputs& inputs, const RayTracedGiSignalResources& signals,
+                                      const RayTracedGiSceneBindings& scene, std::uint32_t maxGeometryDescriptors,
+                                      std::uint32_t maxMaterialTextureDescriptors, const SharcGraphRecord* sharc) {
             if (!complete(inputs) || !complete(signals) || !scene.descriptors.rayTracingEnabled ||
                 !scene.descriptors.tlas || !scene.descriptors.instances || !scene.descriptors.materials ||
                 scene.geometry.empty() || scene.geometry.size() > maxGeometryDescriptors ||
+                scene.baseColorTextures.empty() ||
+                scene.baseColorTextures.size() != scene.normalRoughnessTextures.size() ||
+                scene.baseColorTextures.size() > maxMaterialTextureDescriptors || !scene.materialSampler ||
                 (sharc != nullptr && !sharc->isValid())) {
                 throw std::invalid_argument("RT GI binding set requires a complete traceable GPU scene and signals.");
             }
@@ -182,6 +195,16 @@ namespace lumin::render::gi {
                 desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(indexBuffersBinding, geometry.indices)
                                  .setArrayElement(index));
             }
+            for (std::uint32_t index = 0; index < maxMaterialTextureDescriptors; ++index) {
+                const std::size_t textureIndex = index % scene.baseColorTextures.size();
+                desc.addItem(
+                    nvrhi::BindingSetItem::Texture_SRV(baseColorTexturesBinding, scene.baseColorTextures[textureIndex])
+                        .setArrayElement(index));
+                desc.addItem(nvrhi::BindingSetItem::Texture_SRV(normalRoughnessTexturesBinding,
+                                                                scene.normalRoughnessTextures[textureIndex])
+                                 .setArrayElement(index));
+            }
+            desc.addItem(nvrhi::BindingSetItem::Sampler(materialSamplerBinding, scene.materialSampler));
             return desc;
         }
 
@@ -192,6 +215,7 @@ namespace lumin::render::gi {
         std::uint32_t width = 0;
         std::uint32_t height = 0;
         std::uint32_t maxGeometryDescriptors = 0;
+        std::uint32_t maxMaterialTextureDescriptors = 0;
         bool sharcEnabled = false;
         std::vector<RayTracedGiFrameInputs> inputs;
         std::vector<RayTracedGiSignalResources> signals;
@@ -203,12 +227,14 @@ namespace lumin::render::gi {
 
         explicit Impl(const RayTracedGiCreateInfo& createInfo)
             : device(*createInfo.device), width(createInfo.width), height(createInfo.height),
-              maxGeometryDescriptors(createInfo.maxGeometryDescriptors), sharcEnabled(createInfo.enableSharc),
-              inputs(createInfo.frames.begin(), createInfo.frames.end()), initialized(createInfo.frames.size(), 0) {
+              maxGeometryDescriptors(createInfo.maxGeometryDescriptors),
+              maxMaterialTextureDescriptors(createInfo.maxMaterialTextureDescriptors),
+              sharcEnabled(createInfo.enableSharc), inputs(createInfo.frames.begin(), createInfo.frames.end()),
+              initialized(createInfo.frames.size(), 0) {
             ShaderLibrary shaders(device, createInfo.shaderDirectory);
             PipelineFactory pipelines(device);
-            bindingLayout = device.createBindingLayout(
-                detail::makeRayTracedGiBindingLayoutDesc(maxGeometryDescriptors, sharcEnabled));
+            bindingLayout = device.createBindingLayout(detail::makeRayTracedGiBindingLayoutDesc(
+                maxGeometryDescriptors, sharcEnabled, maxMaterialTextureDescriptors));
             if (!bindingLayout) {
                 throw std::runtime_error("Failed to create RT GI binding layout.");
             }
@@ -281,8 +307,8 @@ namespace lumin::render::gi {
 
     RayTracedGiPass::RayTracedGiPass(const RayTracedGiCreateInfo& createInfo) {
         if (createInfo.device == nullptr || createInfo.width == 0 || createInfo.height == 0 ||
-            createInfo.maxGeometryDescriptors == 0 || !createInfo.atmosphereBindingLayout ||
-            createInfo.frames.empty()) {
+            createInfo.maxGeometryDescriptors == 0 || createInfo.maxMaterialTextureDescriptors == 0 ||
+            !createInfo.atmosphereBindingLayout || createInfo.frames.empty()) {
             throw std::invalid_argument("RT GI pass requires device, extent, geometry capacity, and frame inputs.");
         }
         for (const RayTracedGiFrameInputs& inputs : createInfo.frames) {
@@ -315,8 +341,10 @@ namespace lumin::render::gi {
         if (!inputs.position.isValid() || !inputs.normalRoughness.isValid() || !inputs.albedoMetallic.isValid() ||
             !inputs.motion.isValid() || !sceneResources.tlas.isValid() || !sceneResources.instances.isValid() ||
             !sceneResources.materials.isValid() || sceneResources.vertices.size() != scene.geometry.size() ||
-            sceneResources.indices.size() != scene.geometry.size() || !environment.isValid() ||
-            !environmentResources.isValid() || impl_->sharcEnabled != (sharc != nullptr)) {
+            sceneResources.indices.size() != scene.geometry.size() ||
+            sceneResources.baseColorTextures.size() != scene.baseColorTextures.size() ||
+            sceneResources.normalRoughnessTextures.size() != scene.normalRoughnessTextures.size() ||
+            !environment.isValid() || !environmentResources.isValid() || impl_->sharcEnabled != (sharc != nullptr)) {
             throw std::invalid_argument("RT GI record requires matching native and FrameGraph scene resources.");
         }
 
@@ -324,7 +352,8 @@ namespace lumin::render::gi {
         writeConstants(impl_->device, frameSignals.constants, constants);
         nvrhi::BindingSetHandle bindingSet = impl_->device.createBindingSet(
             detail::makeRayTracedGiBindingSetDesc(impl_->inputs[frameIndex], frameSignals, scene,
-                                                  impl_->maxGeometryDescriptors, sharc),
+                                                  impl_->maxGeometryDescriptors, impl_->maxMaterialTextureDescriptors,
+                                                  sharc),
             impl_->bindingLayout);
         if (!bindingSet) {
             throw std::runtime_error("Failed to create RT GI binding set for the current GPU scene version.");
@@ -360,13 +389,17 @@ namespace lumin::render::gi {
                                                                     sceneResources.vertices.end());
         const std::vector<FrameGraphResourceHandle> indexResources(sceneResources.indices.begin(),
                                                                    sceneResources.indices.end());
+        const std::vector<FrameGraphResourceHandle> baseColorResources(sceneResources.baseColorTextures.begin(),
+                                                                       sceneResources.baseColorTextures.end());
+        const std::vector<FrameGraphResourceHandle> normalRoughnessResources(
+            sceneResources.normalRoughnessTextures.begin(), sceneResources.normalRoughnessTextures.end());
         const nvrhi::rt::ShaderTableHandle shaderTable = impl_->shaderTable;
         const std::uint32_t width = impl_->width;
         const std::uint32_t height = impl_->height;
         graphSignals.tracePass = frameGraph.addPass(
             "gi-ray-trace", FrameGraphPassType::RayTracing,
             [inputs, sceneResources, environmentResources, graphSignals, constantsResource, vertexResources, sharc,
-             indexResources](FrameGraphBuilder& builder) {
+             indexResources, baseColorResources, normalRoughnessResources](FrameGraphBuilder& builder) {
                 if (sceneResources.readyPass.isValid()) {
                     builder.dependsOn(sceneResources.readyPass);
                 }
@@ -381,6 +414,12 @@ namespace lumin::render::gi {
                 }
                 for (const FrameGraphResourceHandle resource : indexResources) {
                     builder.read(resource, nvrhi::ResourceStates::ShaderResource);
+                }
+                for (const FrameGraphResourceHandle resource : baseColorResources) {
+                    builder.readTexture(resource, nvrhi::ResourceStates::ShaderResource);
+                }
+                for (const FrameGraphResourceHandle resource : normalRoughnessResources) {
+                    builder.readTexture(resource, nvrhi::ResourceStates::ShaderResource);
                 }
                 builder.readTexture(inputs.position);
                 builder.readTexture(inputs.normalRoughness);

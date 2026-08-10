@@ -687,6 +687,10 @@ namespace {
         const auto instances = backend.records<lumin::render::gpu::GpuInstanceData>("GpuScene.InstanceRecords");
         require(instances[0].metadata == glm::uvec4(0U, 0U, 0U, 0U),
                 "Single-geometry instance records must pack material, local ranges, and descriptor index zero.");
+        const auto vertices = backend.records<lumin::render::gpu::GpuPackedVertex>("GpuScene.Vertices.0");
+        require(vertices.size() == 3 && vertices[1].position.w == 1.0F && vertices[1].normal.w == 0.0F &&
+                    vertices[2].position.w == 0.0F && vertices[2].normal.w == 1.0F,
+                "Packed RT vertices must preserve mesh UVs in the two ABI padding lanes.");
 
         const nvrhi::IBuffer* oldInstances = published.instances;
         lumin::render::FrameGraph replacementGraph;
@@ -757,16 +761,23 @@ namespace {
         graph.execute({.barriers = &barriers});
         require(backend.blasBuilds == 2 && backend.tlasBuilds == 1 && traceObservedCompletedBuilds,
                 "The candidate trace pass must execute only after every active BLAS and the TLAS are built.");
+        require(!backend.tlasBuildInstances.empty() &&
+                    std::ranges::all_of(backend.tlasBuildInstances.back(),
+                                        [](const nvrhi::rt::InstanceDesc& instance) {
+                                            return (instance.flags & nvrhi::rt::InstanceFlags::TriangleCullDisable) !=
+                                                   nvrhi::rt::InstanceFlags::None;
+                                        }),
+                "RT instances must disable triangle culling to match the double-sided raster G-buffer contract.");
         require(barriers.copyDestBuffers == 8 && barriers.accelerationStructureInputs == 4 &&
                     barriers.shaderResourceBuffers == 8 && barriers.accelerationStructureWrites == 3 &&
                     barriers.accelerationStructureReads == 3,
                 "FrameGraph must exclusively transition eight uploads, four geometry inputs, and three BLAS/TLAS.");
         const auto firstBlas = std::ranges::find(backend.executionEvents, std::string{"blas-build"});
         const auto tlas = std::ranges::find(backend.executionEvents, std::string{"tlas-build"});
-        const auto lastBlas = firstBlas == backend.executionEvents.end()
-                                  ? backend.executionEvents.end()
-                                  : std::ranges::find(firstBlas + 1, backend.executionEvents.end(),
-                                                      std::string{"blas-build"});
+        const auto lastBlas =
+            firstBlas == backend.executionEvents.end()
+                ? backend.executionEvents.end()
+                : std::ranges::find(firstBlas + 1, backend.executionEvents.end(), std::string{"blas-build"});
         require(lastBlas != backend.executionEvents.end() && tlas != backend.executionEvents.end() && lastBlas < tlas &&
                     std::ranges::find(lastBlas + 1, tlas, std::string{"as-read-barrier"}) != tlas &&
                     std::ranges::find(lastBlas + 1, tlas, std::string{"commit-barriers"}) != tlas,
@@ -827,7 +838,8 @@ namespace {
             require(instances[0].instanceID != instances[1].instanceID,
                     "Shared-BLAS TLAS entries must not overwrite each other's InstanceID.");
             const auto& right = instances[instances[0].instanceID == rightBinding->instanceIndex.value() ? 0U : 1U];
-            require(right.instanceID == rightBinding->instanceIndex.value() && std::abs(right.transform[3] - 2.0F) < 1e-6F,
+            require(right.instanceID == rightBinding->instanceIndex.value() &&
+                        std::abs(right.transform[3] - 2.0F) < 1e-6F,
                     "The second shared-BLAS instance must preserve its independent world transform.");
         }
     }

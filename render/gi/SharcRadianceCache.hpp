@@ -259,6 +259,9 @@ namespace lumin::render::gi {
     struct SharcUpdateSceneBindings {
         gpu::GpuSceneDescriptors descriptors;
         std::span<const gpu::GpuGeometryDescriptor> geometry;
+        std::span<const nvrhi::TextureHandle> baseColorTextures;
+        std::span<const nvrhi::TextureHandle> normalRoughnessTextures;
+        nvrhi::SamplerHandle materialSampler;
     };
 
     /** 必须复用 GPU Scene build 阶段导入的 FrameGraph 资源身份。 */
@@ -268,6 +271,8 @@ namespace lumin::render::gi {
         FrameGraphResourceHandle materials;
         std::span<const FrameGraphResourceHandle> vertices;
         std::span<const FrameGraphResourceHandle> indices;
+        std::span<const FrameGraphResourceHandle> baseColorTextures;
+        std::span<const FrameGraphResourceHandle> normalRoughnessTextures;
         FrameGraphPassHandle readyPass;
     };
 
@@ -291,6 +296,7 @@ namespace lumin::render::gi {
         std::filesystem::path shaderDirectory;
         std::uint32_t frameSlotCount = 0;
         std::uint32_t maxGeometryDescriptors = 0;
+        std::uint32_t maxMaterialTextureDescriptors = 0;
         /// 与 raster sky 完全相同的 descriptor set 2 layout。
         nvrhi::BindingLayoutHandle atmosphereBindingLayout;
         SharcRadianceCacheConfig config;
@@ -314,7 +320,9 @@ namespace lumin::render::gi {
                                                             const char* debugName);
 
         /** 构造 sparse update RT pipeline 的 descriptor set 0 layout。 */
-        [[nodiscard]] nvrhi::BindingLayoutDesc makeSharcUpdateBindingLayoutDesc(std::uint32_t maxGeometryDescriptors);
+        [[nodiscard]] nvrhi::BindingLayoutDesc
+        makeSharcUpdateBindingLayoutDesc(std::uint32_t maxGeometryDescriptors,
+                                         std::uint32_t maxMaterialTextureDescriptors = 1);
 
         /** 构造 resolve compute pipeline 的 descriptor set 0 layout。 */
         [[nodiscard]] nvrhi::BindingLayoutDesc makeSharcResolveBindingLayoutDesc();

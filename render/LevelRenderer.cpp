@@ -1,9 +1,9 @@
 #include "render/LevelRenderer.hpp"
 
-#include "render/platform/Window.hpp"
 #include "render/VulkanContext.hpp"
 #include "render/gi/SsaoBackend.hpp"
 #include "render/gpu/GpuScene.hpp"
+#include "render/platform/Window.hpp"
 #include "scene/Camera.hpp"
 #include "scene/Level.hpp"
 
@@ -102,6 +102,8 @@ namespace lumin::render {
             FrameGraphPassHandle hybridSceneReadyPass;
             std::vector<FrameGraphResourceHandle> hybridVertices;
             std::vector<FrameGraphResourceHandle> hybridIndices;
+            std::vector<FrameGraphResourceHandle> hybridBaseColorTextures;
+            std::vector<FrameGraphResourceHandle> hybridNormalRoughnessTextures;
             std::optional<gi::SharcGraphRecord> sharcRecord;
             std::optional<gi::RayTracedGiGraphSignals> rayTracedSignals;
             gi::RtSurfaceSignalGraphResources hybridSurface;
@@ -618,6 +620,10 @@ namespace lumin::render {
         if (snapshot == nullptr) {
             throw std::logic_error("Hybrid GI requires a synchronized render-world snapshot.");
         }
+        if (modelRenderer_ == nullptr || modelRenderer_->baseColorTextures().empty() ||
+            modelRenderer_->baseColorTextures().size() > std::numeric_limits<std::uint16_t>::max()) {
+            return;
+        }
         const std::size_t requestedCapacity = std::max<std::size_t>(snapshot->meshes().size(), 1U);
         if (requestedCapacity > std::numeric_limits<std::uint16_t>::max()) {
             // NvRHI descriptor-array size is uint16_t；超大场景保留 SSAO 回退，不创建部分可用的 RT runtime。
@@ -626,6 +632,8 @@ namespace lumin::render {
 
         auto runtime = std::make_unique<HybridGiState>();
         runtime->geometryDescriptorCapacity = static_cast<std::uint32_t>(requestedCapacity);
+        const std::uint32_t materialTextureDescriptorCapacity =
+            static_cast<std::uint32_t>(modelRenderer_->baseColorTextures().size());
         runtime->sceneBackend = std::make_unique<gpu::NvrhiGpuSceneBackend>(*context_.rhiDevice());
         runtime->sceneResources = std::make_unique<gpu::GpuSceneResources>(
             *runtime->sceneBackend, gpu::GpuSceneResourceConfig{TextureManager::maxFramesInFlight, true});
@@ -645,13 +653,14 @@ namespace lumin::render {
                 .visibilityMask = {},
             };
         }
-        runtime->directLighting = std::make_unique<gi::RayTracedDirectLightingPass>(
-            gi::RayTracedDirectLightingPass::CreateInfo{
+        runtime->directLighting =
+            std::make_unique<gi::RayTracedDirectLightingPass>(gi::RayTracedDirectLightingPass::CreateInfo{
                 .device = context_.rhiDevice(),
                 .shaderDirectory = shaderDirectory_,
                 .width = context_.swapchainWidth(),
                 .height = context_.swapchainHeight(),
                 .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
+                .maxMaterialTextureDescriptors = materialTextureDescriptorCapacity,
                 .atmosphereBindingLayout = atmosphereConsumerBindingLayout_,
                 .frames = runtime->directLightingFrames,
             });
@@ -678,6 +687,7 @@ namespace lumin::render {
             .shaderDirectory = shaderDirectory_,
             .frameSlotCount = TextureManager::maxFramesInFlight,
             .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
+            .maxMaterialTextureDescriptors = materialTextureDescriptorCapacity,
             .atmosphereBindingLayout = atmosphereConsumerBindingLayout_,
             .config = {},
             .frames = sharcFrames,
@@ -688,6 +698,7 @@ namespace lumin::render {
             .width = context_.swapchainWidth(),
             .height = context_.swapchainHeight(),
             .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
+            .maxMaterialTextureDescriptors = materialTextureDescriptorCapacity,
             .atmosphereBindingLayout = atmosphereConsumerBindingLayout_,
             .enableSharc = true,
             .frames = rayTracedFrames,
@@ -706,8 +717,8 @@ namespace lumin::render {
             .extent = core::RenderExtent{context_.swapchainWidth(), context_.swapchainHeight()},
             .frameSlotCount = TextureManager::maxFramesInFlight,
         });
-        runtime->lightingComposite = std::make_unique<gi::HybridLightingCompositePass>(
-            gi::HybridLightingCompositeCreateInfo{
+        runtime->lightingComposite =
+            std::make_unique<gi::HybridLightingCompositePass>(gi::HybridLightingCompositeCreateInfo{
                 .device = context_.rhiDevice(),
                 .shaderDirectory = shaderDirectory_,
                 .extent = core::RenderExtent{context_.swapchainWidth(), context_.swapchainHeight()},
@@ -800,10 +811,10 @@ namespace lumin::render {
 
             const bool giPending = runtime.pendingNrdFrame.has_value() || runtime.sharc->hasPendingFrame() ||
                                    runtime.rayTracedGi->hasPendingFrame() || runtime.nrd->hasPendingFrame();
-            if (giPending && (!runtime.pendingNrdFrame || runtime.pendingNrdFrame->sequence() != identity.sequence ||
-                              runtime.pendingNrdFrame->frameSlot() != identity.frameSlot ||
-                              !runtime.sharc->hasPendingFrame() || !runtime.rayTracedGi->hasPendingFrame() ||
-                              !runtime.nrd->hasPendingFrame())) {
+            if (giPending &&
+                (!runtime.pendingNrdFrame || runtime.pendingNrdFrame->sequence() != identity.sequence ||
+                 runtime.pendingNrdFrame->frameSlot() != identity.frameSlot || !runtime.sharc->hasPendingFrame() ||
+                 !runtime.rayTracedGi->hasPendingFrame() || !runtime.nrd->hasPendingFrame())) {
                 throw std::logic_error("Hybrid GI denoiser transaction does not match the submitted render frame.");
             }
 
@@ -1007,14 +1018,14 @@ namespace lumin::render {
                 "rt.surface.world-position", textureDesc(GpuTexture{surface.worldPositionHitT}, frameInitialState));
             data.normal = frameGraph_.importTexture(
                 "rt.surface.normal-roughness", textureDesc(GpuTexture{surface.normalRoughness}, frameInitialState));
-            data.albedo = frameGraph_.importTexture(
-                "rt.surface.albedo-metallic", textureDesc(GpuTexture{surface.albedoMetallic}, frameInitialState));
-            data.materialId = frameGraph_.importTexture(
-                "rt.surface.material-id", textureDesc(GpuTexture{surface.materialId}, frameInitialState));
-            data.motion = frameGraph_.importTexture(
-                "rt.surface.motion", textureDesc(GpuTexture{surface.motion}, frameInitialState));
-            data.depth = frameGraph_.importTexture(
-                "rt.surface.view-z", textureDesc(GpuTexture{surface.viewZ}, frameInitialState));
+            data.albedo = frameGraph_.importTexture("rt.surface.albedo-metallic",
+                                                    textureDesc(GpuTexture{surface.albedoMetallic}, frameInitialState));
+            data.materialId = frameGraph_.importTexture("rt.surface.material-id",
+                                                        textureDesc(GpuTexture{surface.materialId}, frameInitialState));
+            data.motion = frameGraph_.importTexture("rt.surface.motion",
+                                                    textureDesc(GpuTexture{surface.motion}, frameInitialState));
+            data.depth = frameGraph_.importTexture("rt.surface.view-z",
+                                                   textureDesc(GpuTexture{surface.viewZ}, frameInitialState));
             data.hybridSurface.worldPositionHitT = data.position;
             data.hybridSurface.normalRoughness = data.normal;
             data.hybridSurface.albedoMetallic = data.albedo;
@@ -1027,9 +1038,8 @@ namespace lumin::render {
 #endif
         data.globalIllumination = frameGraph_.importTexture("global-illumination.output",
                                                             textureDesc(frame.globalIllumination, frameInitialState));
-        data.lighting = frameGraph_.importTexture(
-            data.hybridPathActive ? "rt.surface.direct-radiance" : "lighting.hdr",
-            textureDesc(frame.lighting, frameInitialState));
+        data.lighting = frameGraph_.importTexture(data.hybridPathActive ? "rt.surface.direct-radiance" : "lighting.hdr",
+                                                  textureDesc(frame.lighting, frameInitialState));
         data.taaInput = data.lighting;
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (data.hybridPathActive) {
@@ -1133,7 +1143,6 @@ namespace lumin::render {
         if (modelRenderer_ != nullptr) {
             modelRenderer_->sync(*data.renderWorld, data.frameIndex, resetMotion);
         }
-
         graph.addPass(
             "G-buffer clear", FrameGraphPassType::Transfer,
             [&data](FrameGraphBuilder& builder) {
@@ -1199,6 +1208,11 @@ namespace lumin::render {
         if (modelRenderer_ != nullptr) {
             modelRenderer_->sync(*data.renderWorld, data.frameIndex, resetMotion);
         }
+        if (modelRenderer_ == nullptr || modelRenderer_->baseColorTextures().empty() ||
+            modelRenderer_->baseColorTextures().size() != modelRenderer_->normalRoughnessTextures().size() ||
+            !modelRenderer_->materialSampler()) {
+            throw std::logic_error("Hybrid surface requires the shared model material table and texture descriptors.");
+        }
 
         runtime.pendingSequence = context.identity().sequence;
         runtime.pendingScenePlan = runtime.scenePlanner->plan(world::SceneDelta{
@@ -1225,7 +1239,34 @@ namespace lumin::render {
         }
         data.hybridTlas = update.tlasResource();
         data.hybridInstances = update.instanceRecordsResource();
-        data.hybridMaterials = update.materialRecordsResource();
+        const nvrhi::BufferHandle& materialBuffer = modelRenderer_->materialBuffer(data.frameIndex);
+        data.materials = context.frameGraph().importBuffer(
+            "rt.materials",
+            FrameGraphBufferDesc{.size = materialBuffer->getDesc().byteSize,
+                                 .buffer = materialBuffer,
+                                 .initialState = modelRenderer_->materialBufferInitialState(data.frameIndex),
+                                 .finalState = nvrhi::ResourceStates::ShaderResource});
+        data.hybridSceneDescriptors.materials = materialBuffer;
+        data.hybridMaterials = data.materials;
+        data.hybridBaseColorTextures.clear();
+        data.hybridNormalRoughnessTextures.clear();
+        const std::span<const nvrhi::TextureHandle> baseColorTextures = modelRenderer_->baseColorTextures();
+        const std::span<const nvrhi::TextureHandle> normalRoughnessTextures = modelRenderer_->normalRoughnessTextures();
+        data.hybridBaseColorTextures.reserve(baseColorTextures.size());
+        data.hybridNormalRoughnessTextures.reserve(normalRoughnessTextures.size());
+        for (std::size_t index = 0; index < baseColorTextures.size(); ++index) {
+            const auto importMaterialTexture = [&](const char* prefix, const nvrhi::TextureHandle& texture) {
+                return context.frameGraph().importTexture(
+                    std::string{prefix} + std::to_string(index),
+                    FrameGraphTextureDesc{.texture = texture,
+                                          .initialState = nvrhi::ResourceStates::ShaderResource,
+                                          .finalState = nvrhi::ResourceStates::ShaderResource});
+            };
+            data.hybridBaseColorTextures.push_back(
+                importMaterialTexture("rt.material-base-color.", baseColorTextures[index]));
+            data.hybridNormalRoughnessTextures.push_back(
+                importMaterialTexture("rt.material-normal-roughness.", normalRoughnessTextures[index]));
+        }
         data.hybridSceneReadyPass = update.accelerationStructurePass();
         if (!data.hybridSceneReadyPass.isValid()) {
             data.hybridSceneReadyPass = update.uploadPass();
@@ -1250,19 +1291,28 @@ namespace lumin::render {
             .renderSize = glm::vec4{static_cast<float>(data.width), static_cast<float>(data.height),
                                     -data.jitter.x / static_cast<float>(data.width),
                                     data.jitter.y / static_cast<float>(data.height)},
-            .traceParameters = glm::vec4{0.001f, data.camera->farPlane(),
-                                         data.settings->directLighting.enabled ? 1.0f : 0.0f,
-                                         static_cast<float>(context.identity().sequence.value())},
+            .traceParameters =
+                glm::vec4{0.001f, data.camera->farPlane(), data.settings->directLighting.enabled ? 1.0f : 0.0f,
+                          static_cast<float>(context.identity().sequence.value())},
         };
         data.hybridSurfacePass = runtime.directLighting->record(
             context.frameGraph(), data.frameIndex, true, directConstants, data.hybridSurface,
-            gi::RayTracedGiSceneBindings{data.hybridSceneDescriptors, data.hybridGeometry},
+            gi::RayTracedGiSceneBindings{
+                .descriptors = data.hybridSceneDescriptors,
+                .geometry = data.hybridGeometry,
+                .baseColorTextures = baseColorTextures,
+                .normalRoughnessTextures = normalRoughnessTextures,
+                .materialSampler = modelRenderer_->materialSampler(),
+            },
             gi::RayTracedGiSceneGraphResources{
                 .tlas = data.hybridTlas,
                 .instances = data.hybridInstances,
                 .materials = data.hybridMaterials,
                 .vertices = std::span<const FrameGraphResourceHandle>{data.hybridVertices},
                 .indices = std::span<const FrameGraphResourceHandle>{data.hybridIndices},
+                .baseColorTextures = std::span<const FrameGraphResourceHandle>{data.hybridBaseColorTextures},
+                .normalRoughnessTextures =
+                    std::span<const FrameGraphResourceHandle>{data.hybridNormalRoughnessTextures},
                 .readyPass = data.hybridSceneReadyPass,
             },
             environment, environmentResources);
@@ -1363,6 +1413,9 @@ namespace lumin::render {
         const gi::SharcUpdateSceneBindings sceneBindings{
             .descriptors = data.hybridSceneDescriptors,
             .geometry = data.hybridGeometry,
+            .baseColorTextures = modelRenderer_->baseColorTextures(),
+            .normalRoughnessTextures = modelRenderer_->normalRoughnessTextures(),
+            .materialSampler = modelRenderer_->materialSampler(),
         };
         const gi::SharcUpdateSceneGraphResources sceneGraphResources{
             .tlas = data.hybridTlas,
@@ -1370,6 +1423,8 @@ namespace lumin::render {
             .materials = data.hybridMaterials,
             .vertices = std::span<const FrameGraphResourceHandle>{data.hybridVertices},
             .indices = std::span<const FrameGraphResourceHandle>{data.hybridIndices},
+            .baseColorTextures = std::span<const FrameGraphResourceHandle>{data.hybridBaseColorTextures},
+            .normalRoughnessTextures = std::span<const FrameGraphResourceHandle>{data.hybridNormalRoughnessTextures},
             .readyPass = data.hybridSceneReadyPass,
         };
         const gi::SharcFrameParameters sharcFrame{
@@ -1381,12 +1436,12 @@ namespace lumin::render {
             .minTraceDistance = 0.001f,
             .maxTraceDistance = data.camera->farPlane(),
         };
-        data.sharcRecord = runtime.sharc->record(
-            context.frameGraph(), data.frameIndex, true, sharcFrame, sharcInvalidation, environment,
-            environmentResources,
-            gi::SharcUpdateFrameGraphInputs{data.hybridSurface.worldPositionHitT, data.hybridSurface.normalRoughness,
-                                            data.hybridSurface.albedoMetallic},
-            sceneBindings, sceneGraphResources);
+        data.sharcRecord = runtime.sharc->record(context.frameGraph(), data.frameIndex, true, sharcFrame,
+                                                 sharcInvalidation, environment, environmentResources,
+                                                 gi::SharcUpdateFrameGraphInputs{data.hybridSurface.worldPositionHitT,
+                                                                                 data.hybridSurface.normalRoughness,
+                                                                                 data.hybridSurface.albedoMetallic},
+                                                 sceneBindings, sceneGraphResources);
 
         const core::HistoryAction diffuseAction = context.historyAction(core::HistoryDomain::NrdDiffuse);
         const core::HistoryAction specularAction = context.historyAction(core::HistoryDomain::NrdSpecular);
@@ -1412,13 +1467,22 @@ namespace lumin::render {
             context.frameGraph(), data.frameIndex, true, rayTracingConstants,
             gi::RayTracedGiFrameGraphInputs{data.hybridSurface.worldPositionHitT, data.hybridSurface.normalRoughness,
                                             data.hybridSurface.albedoMetallic, data.hybridSurface.motion},
-            gi::RayTracedGiSceneBindings{data.hybridSceneDescriptors, data.hybridGeometry},
+            gi::RayTracedGiSceneBindings{
+                .descriptors = data.hybridSceneDescriptors,
+                .geometry = data.hybridGeometry,
+                .baseColorTextures = modelRenderer_->baseColorTextures(),
+                .normalRoughnessTextures = modelRenderer_->normalRoughnessTextures(),
+                .materialSampler = modelRenderer_->materialSampler(),
+            },
             gi::RayTracedGiSceneGraphResources{
                 .tlas = data.hybridTlas,
                 .instances = data.hybridInstances,
                 .materials = data.hybridMaterials,
                 .vertices = std::span<const FrameGraphResourceHandle>{data.hybridVertices},
                 .indices = std::span<const FrameGraphResourceHandle>{data.hybridIndices},
+                .baseColorTextures = std::span<const FrameGraphResourceHandle>{data.hybridBaseColorTextures},
+                .normalRoughnessTextures =
+                    std::span<const FrameGraphResourceHandle>{data.hybridNormalRoughnessTextures},
                 .readyPass = data.hybridSceneReadyPass,
             },
             environment, environmentResources, &*data.sharcRecord);
@@ -1510,8 +1574,8 @@ namespace lumin::render {
                 .materials = data.hybridSceneDescriptors.materials,
                 // Hybrid uses TAA's physical target as an indirect-light scratch texture. The final
                 // indirect is staged in TAA's physical target before the Hybrid lighting composite.
-                .globalIllumination = data.hybridPathActive ? frame.taaResolved.texture
-                                                              : frame.globalIllumination.texture,
+                .globalIllumination =
+                    data.hybridPathActive ? frame.taaResolved.texture : frame.globalIllumination.texture,
             },
             gi::GiCompositeGraphResources{
                 .diffuseRadianceHitDistance = nrdGraphOutputs.diffuseRadianceHitDistance,
@@ -1526,25 +1590,25 @@ namespace lumin::render {
             nrdPasses.back());
         if (data.hybridPathActive) {
             const gi::RayTracedDiFrameResources& surface = runtime.directLighting->signals(data.frameIndex);
-            const FrameGraphPassHandle lightingPass = runtime.lightingComposite->record(
-                context.frameGraph(),
-                gi::HybridLightingCompositeFrameParameters{
-                    .frameSlot = context.identity().frameSlot,
-                    .extent = context.identity().extent,
-                    .mode = gi::HybridLightingCompositeMode::DirectAndIndirect,
-                    .frameSlotFenceWaited = true,
-                },
-                gi::HybridLightingCompositeResources{
-                    .directRadiance = surface.directRadiance,
-                    .indirectRadiance = frame.taaResolved.texture,
-                    .output = frame.lighting.texture,
-                },
-                gi::HybridLightingCompositeGraphResources{
-                    .directRadiance = data.hybridSurface.directRadiance,
-                    .indirectRadiance = data.taaResolved,
-                    .output = data.lighting,
-                },
-                compositePass);
+            const FrameGraphPassHandle lightingPass =
+                runtime.lightingComposite->record(context.frameGraph(),
+                                                  gi::HybridLightingCompositeFrameParameters{
+                                                      .frameSlot = context.identity().frameSlot,
+                                                      .extent = context.identity().extent,
+                                                      .mode = gi::HybridLightingCompositeMode::DirectAndIndirect,
+                                                      .frameSlotFenceWaited = true,
+                                                  },
+                                                  gi::HybridLightingCompositeResources{
+                                                      .directRadiance = surface.directRadiance,
+                                                      .indirectRadiance = frame.taaResolved.texture,
+                                                      .output = frame.lighting.texture,
+                                                  },
+                                                  gi::HybridLightingCompositeGraphResources{
+                                                      .directRadiance = data.hybridSurface.directRadiance,
+                                                      .indirectRadiance = data.taaResolved,
+                                                      .output = data.lighting,
+                                                  },
+                                                  compositePass);
             static_cast<void>(lightingPass);
             data.taaInput = data.lighting;
         } else {
@@ -1571,9 +1635,8 @@ namespace lumin::render {
             }
 
             // GI 关闭时仍必须把 RTDI 结果交给 TAA；显式 SSAO 模式则使用 packed GI alpha 作为可见度。
-            const bool useAmbientVisibility =
-                data.settings->globalIllumination.enabled &&
-                data.settings->globalIllumination.mode == GlobalIlluminationMode::Ssao;
+            const bool useAmbientVisibility = data.settings->globalIllumination.enabled &&
+                                              data.settings->globalIllumination.mode == GlobalIlluminationMode::Ssao;
             const gi::RayTracedDiFrameResources& surface = hybridGi_->directLighting->signals(data.frameIndex);
             static_cast<void>(hybridGi_->lightingComposite->record(
                 context.frameGraph(),
@@ -1581,7 +1644,7 @@ namespace lumin::render {
                     .frameSlot = context.identity().frameSlot,
                     .extent = context.identity().extent,
                     .mode = useAmbientVisibility ? gi::HybridLightingCompositeMode::DirectWithAmbientVisibility
-                                                  : gi::HybridLightingCompositeMode::DirectOnly,
+                                                 : gi::HybridLightingCompositeMode::DirectOnly,
                     .frameSlotFenceWaited = true,
                 },
                 gi::HybridLightingCompositeResources{

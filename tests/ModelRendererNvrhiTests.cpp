@@ -1,6 +1,6 @@
+#include "render/DescriptorIndexingLimits.hpp"
 #include "render/ModelRenderer.hpp"
 #include "render/world/RenderWorld.hpp"
-#include "render/DescriptorIndexingLimits.hpp"
 
 #include <array>
 #include <concepts>
@@ -106,6 +106,7 @@ namespace {
             renderer.recordShadow(commandList, framebuffer, 2048, 2048, 0, 0, matrix);
             { renderer.materialBuffer(0) } -> std::same_as<const nvrhi::BufferHandle&>;
             { renderer.materialBufferInitialState(0) } -> std::same_as<nvrhi::ResourceStates>;
+            { renderer.materialSampler() } -> std::same_as<nvrhi::SamplerHandle>;
         });
         static_assert(noexcept(std::declval<lumin::render::ModelRenderer&>().commitSubmittedFrame()));
         static_assert(sizeof(lumin::render::ObjectData) == 240);
@@ -141,11 +142,11 @@ namespace {
                     std::string::npos,
                 "ModelRenderer graphics state must set one viewport and scissor from the requested extent.");
         require(contents.find("recordGBuffer(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,") !=
-                    std::string::npos &&
+                        std::string::npos &&
                     contents.find("std::uint32_t width, std::uint32_t height") != std::string::npos,
                 "G-buffer recording must accept the current frame extent.");
         require(contents.find("recordShadow(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,") !=
-                    std::string::npos &&
+                        std::string::npos &&
                     contents.find("std::uint32_t width, std::uint32_t height") != std::string::npos,
                 "Shadow recording must accept the shadow-map extent.");
     }

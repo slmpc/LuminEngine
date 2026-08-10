@@ -147,6 +147,24 @@
           "kind": "sampler",
           "set": 2,
           "binding": 5
+        },
+        {
+          "binding": 14,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "baseColorTextures"
+        },
+        {
+          "binding": 15,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "normalRoughnessTextures"
+        },
+        {
+          "binding": 16,
+          "set": 0,
+          "kind": "sampler",
+          "name": "materialSampler"
         }
       ],
       "abiStructs": [
@@ -304,6 +322,24 @@
           "kind": "sampler",
           "set": 2,
           "binding": 5
+        },
+        {
+          "binding": 14,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "baseColorTextures"
+        },
+        {
+          "binding": 15,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "normalRoughnessTextures"
+        },
+        {
+          "binding": 16,
+          "set": 0,
+          "kind": "sampler",
+          "name": "materialSampler"
         }
       ],
       "abiStructs": [
@@ -461,6 +497,24 @@
           "kind": "sampler",
           "set": 2,
           "binding": 5
+        },
+        {
+          "binding": 14,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "baseColorTextures"
+        },
+        {
+          "binding": 15,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "normalRoughnessTextures"
+        },
+        {
+          "binding": 16,
+          "set": 0,
+          "kind": "sampler",
+          "name": "materialSampler"
         }
       ],
       "abiStructs": [
@@ -618,6 +672,24 @@
           "kind": "sampler",
           "set": 2,
           "binding": 5
+        },
+        {
+          "binding": 14,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "baseColorTextures"
+        },
+        {
+          "binding": 15,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "normalRoughnessTextures"
+        },
+        {
+          "binding": 16,
+          "set": 0,
+          "kind": "sampler",
+          "name": "materialSampler"
         }
       ],
       "abiStructs": [

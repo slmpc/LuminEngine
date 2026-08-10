@@ -71,9 +71,11 @@ namespace {
     void testDescriptorAndDispatchContracts() {
         using namespace lumin::render::gi;
         constexpr std::uint32_t geometryCapacity = 43;
-        const nvrhi::BindingLayoutDesc update = detail::makeSharcUpdateBindingLayoutDesc(geometryCapacity);
-        require(update.visibility == nvrhi::ShaderType::AllRayTracing && update.bindings.size() == 14,
-                "SHARC update set 0 must expose only scene, cache, and constants resources.");
+        constexpr std::uint32_t materialTextureCapacity = 7;
+        const nvrhi::BindingLayoutDesc update =
+            detail::makeSharcUpdateBindingLayoutDesc(geometryCapacity, materialTextureCapacity);
+        require(update.visibility == nvrhi::ShaderType::AllRayTracing && update.bindings.size() == 17,
+                "SHARC update set 0 must expose scene, cache, constants, and material textures.");
         require(update.bindings[4].type == nvrhi::ResourceType::StructuredBuffer_SRV &&
                     update.bindings[4].getArraySize() == geometryCapacity &&
                     update.bindings[5].getArraySize() == geometryCapacity,
@@ -84,6 +86,10 @@ namespace {
         }
         require(update.bindings[13].type == nvrhi::ResourceType::ConstantBuffer,
                 "SHARC update binding 13 must contain SharcGpuConstants.");
+        require(update.bindings[14].slot == 14 && update.bindings[14].getArraySize() == materialTextureCapacity &&
+                    update.bindings[15].slot == 15 && update.bindings[15].getArraySize() == materialTextureCapacity &&
+                    update.bindings[16].slot == 16 && update.bindings[16].type == nvrhi::ResourceType::Sampler,
+                "SHARC update bindings 14-16 must expose both material arrays and their sampler.");
 
         const nvrhi::BindingLayoutDesc resolve = detail::makeSharcResolveBindingLayoutDesc();
         require(resolve.visibility == nvrhi::ShaderType::Compute && resolve.bindings.size() == 6,

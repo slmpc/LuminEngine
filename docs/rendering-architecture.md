@@ -68,6 +68,12 @@ texture descriptor index 和纹理存在标志。Blinn-Phong 指数通过
 slot 的 generation 被复用时，由逐 frame-slot 的物理 buffer 版本隔离仍在 flight 的旧数据。240-byte `ObjectData`
 仅在 `metadata.x` 保存该索引，完整表面模型参数不再塞入 normal/roughness 或其他浮点 G-buffer 通道。
 
+Hybrid primary RT、RT GI 与 SHARC update 复用 `ModelRenderer` 的逐帧 `GpuMaterialData` buffer、base-color/normal-
+roughness descriptor arrays 和 repeat sampler，不维护独立材质副本。GPU Scene 的 32-byte `GpuPackedVertex` 将 UV.x/UV.y
+分别存入 position/normal 的第四个分量；closest-hit 用重心坐标插值 UV，并以显式 LOD 0 采样 base color 与 roughness。
+材质纹理及 buffer 必须使用同一组已导入的 FrameGraph handle 声明 `ShaderResource` 读取，不能只绑定原生 handle 而绕过
+资源状态跟踪。
+
 base color 图像使用 `VK_FORMAT_R8G8B8A8_SRGB`，normal RGB 与 roughness 被打包到线性
 `VK_FORMAT_R8G8B8A8_UNORM`。G-buffer 将世界空间 normal/roughness 写入一个附件，将线性
 albedo/metallic 写入另一个附件，并以独立 `R32_UINT` attachment 输出稳定 material index；无几何像素清为
@@ -87,6 +93,11 @@ Hybrid GI 的一帧顺序为：按需物化 GPU Scene 和 BLAS/TLAS、执行 SHA
 中查询 SHARC、输出 diffuse/specular radiance-hit-distance 与 NRD auxiliary signals、执行 NRD dispatch，最后由
 GI composite 写入统一的 RGBA 间接光照目标。RT miss、SHARC update 和 raster sky 使用同一个 atmosphere descriptor
 set，避免环境输入在三条路径中漂移。
+
+场景 mesh 在 raster G-buffer 中按双面几何绘制，因此 TLAS instance 固定使用 `TriangleCullDisable`，primary、shadow、
+indirect 和 SHARC trace 都不得附加背面剔除 flag。closest-hit 对插值后的世界空间法线执行归一化，并在命中背面时将其
+翻向入射光线的反方向；否则绕序不一致的 OBJ、程序化地形或镜像实例会出现缺面，并向直接光、SHARC 和 NRD 传播错误
+的半球法线。
 
 `GpuSceneUpdatePlanner::generation()` 表示 GPU 可见内容版本，而不是 CPU 帧号；无 GPU 工作的稳定帧不会推进它。
 每个 frame slot 保存一个已提交物理版本：空槽或落后槽在 fence 完成后从最新 immutable snapshot 追赶一次，已经同步的

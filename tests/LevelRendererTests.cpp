@@ -268,8 +268,8 @@ namespace {
         const std::size_t beginFrame = context.find("std::optional<VulkanFrame> VulkanContext::beginFrame()");
         const std::size_t garbageCollection = context.find("rhiDevice_->runGarbageCollection()", beginFrame);
         const std::size_t acquire = context.find("vkAcquireNextImageKHR", beginFrame);
-        require(beginFrame != std::string::npos && garbageCollection != std::string::npos && acquire != std::string::npos &&
-                    beginFrame < garbageCollection && garbageCollection < acquire,
+        require(beginFrame != std::string::npos && garbageCollection != std::string::npos &&
+                    acquire != std::string::npos && beginFrame < garbageCollection && garbageCollection < acquire,
                 "Each frame must retire completed NvRHI command buffers before acquiring and recording new work.");
         std::size_t cancellation = context.find("void VulkanContext::cancelFrame");
         cancellation = requireAfter(context, "frame.commandList->close()", cancellation);
@@ -325,6 +325,21 @@ namespace {
         std::cout << "HYBRID_MOTION=RTDI-jitter-once;NRD=non-jittered-previous-minus-current\n";
     }
 
+    void verifyHybridRaySidednessContract() {
+        const std::string gpuScene = readSource("shaders/include/GpuScene.slang");
+        require(gpuScene.find("float3 luminOrientShadingNormal") != std::string::npos,
+                "GPU Scene shaders must provide one shared double-sided normal orientation helper.");
+
+        for (const std::string& path : {"shaders/rt_di.slang", "shaders/rt_gi.slang", "shaders/sharc_update.slang"}) {
+            const std::string source = readSource(path);
+            require(source.find("RAY_FLAG_CULL_BACK_FACING_TRIANGLES") == std::string::npos,
+                    path + " must not cull triangles that the raster G-buffer renders.");
+            require(source.find("luminOrientShadingNormal") != std::string::npos,
+                    path + " must orient radiance-hit normals against the incoming ray.");
+        }
+        std::cout << "HYBRID_SIDEDNESS=double-sided;normal=against-incoming-ray\n";
+    }
+
 } // namespace
 
 int main() {
@@ -342,6 +357,7 @@ int main() {
         verifySwapchainLifecycle(context);
         verifyNvrhiYCoordinateConvention(level);
         verifyHybridMotionContract();
+        verifyHybridRaySidednessContract();
         std::cout << "LEVEL_RENDERER_RECORDER=PASS\n";
         return 0;
     } catch (const std::exception& exception) {

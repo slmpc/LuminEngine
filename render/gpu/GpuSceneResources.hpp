@@ -19,9 +19,9 @@ namespace lumin::render::gpu {
 
     /** ray tracing 与 raster 共用的 32 字节顶点记录。 */
     struct alignas(16) GpuPackedVertex {
-        /// 世界变换前的 object-space 位置；w 为对齐填充。
+        /// 世界变换前的 object-space 位置；w 保存 UV.x。
         glm::vec4 position;
-        /// object-space 法线；w 为对齐填充。
+        /// object-space 法线；w 保存 UV.y。
         glm::vec4 normal;
     };
 

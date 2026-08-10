@@ -30,6 +30,9 @@ namespace lumin::render::gi {
         constexpr std::uint32_t updateLockBinding = 11;
         constexpr std::uint32_t updateStatisticsBinding = 12;
         constexpr std::uint32_t updateConstantsBinding = 13;
+        constexpr std::uint32_t updateBaseColorTexturesBinding = 14;
+        constexpr std::uint32_t updateNormalRoughnessTexturesBinding = 15;
+        constexpr std::uint32_t updateMaterialSamplerBinding = 16;
 
         constexpr std::uint32_t resolveHashEntriesBinding = 0;
         constexpr std::uint32_t resolveAccumulationBinding = 1;
@@ -56,7 +59,8 @@ namespace lumin::render::gi {
 
         [[nodiscard]] bool complete(const SharcUpdateSceneBindings& scene) noexcept {
             return scene.descriptors.rayTracingEnabled && scene.descriptors.tlas && scene.descriptors.instances &&
-                   scene.descriptors.materials && !scene.geometry.empty();
+                   scene.descriptors.materials && !scene.geometry.empty() && !scene.baseColorTextures.empty() &&
+                   scene.baseColorTextures.size() == scene.normalRoughnessTextures.size() && scene.materialSampler;
         }
 
         [[nodiscard]] std::uint64_t byteSize(std::uint32_t capacity, std::uint32_t stride) {
@@ -81,9 +85,11 @@ namespace lumin::render::gi {
         [[nodiscard]] nvrhi::BindingSetDesc makeUpdateBindingSetDesc(const SharcUpdateFrameInputs& inputs,
                                                                      const SharcUpdateSceneBindings& scene,
                                                                      const SharcNativeResources& resources,
-                                                                     std::uint32_t maxGeometryDescriptors) {
+                                                                     std::uint32_t maxGeometryDescriptors,
+                                                                     std::uint32_t maxMaterialTextureDescriptors) {
             if (!complete(inputs) || !complete(scene) || !resources.isValid() ||
-                scene.geometry.size() > maxGeometryDescriptors) {
+                scene.geometry.size() > maxGeometryDescriptors ||
+                scene.baseColorTextures.size() > maxMaterialTextureDescriptors) {
                 throw std::invalid_argument(
                     "SHARC update binding set requires complete G-buffer, scene, and cache resources.");
             }
@@ -114,6 +120,16 @@ namespace lumin::render::gi {
                 desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(updateIndexBuffersBinding, geometry.indices)
                                  .setArrayElement(index));
             }
+            for (std::uint32_t index = 0; index < maxMaterialTextureDescriptors; ++index) {
+                const std::size_t textureIndex = index % scene.baseColorTextures.size();
+                desc.addItem(nvrhi::BindingSetItem::Texture_SRV(updateBaseColorTexturesBinding,
+                                                                scene.baseColorTextures[textureIndex])
+                                 .setArrayElement(index));
+                desc.addItem(nvrhi::BindingSetItem::Texture_SRV(updateNormalRoughnessTexturesBinding,
+                                                                scene.normalRoughnessTextures[textureIndex])
+                                 .setArrayElement(index));
+            }
+            desc.addItem(nvrhi::BindingSetItem::Sampler(updateMaterialSamplerBinding, scene.materialSampler));
             return desc;
         }
 
@@ -310,9 +326,12 @@ namespace lumin::render::gi {
             return desc;
         }
 
-        nvrhi::BindingLayoutDesc makeSharcUpdateBindingLayoutDesc(std::uint32_t maxGeometryDescriptors) {
-            if (maxGeometryDescriptors == 0 || maxGeometryDescriptors > std::numeric_limits<std::uint16_t>::max()) {
-                throw std::invalid_argument("SHARC geometry descriptor capacity must fit NvRHI's uint16 array size.");
+        nvrhi::BindingLayoutDesc makeSharcUpdateBindingLayoutDesc(std::uint32_t maxGeometryDescriptors,
+                                                                  std::uint32_t maxMaterialTextureDescriptors) {
+            if (maxGeometryDescriptors == 0 || maxGeometryDescriptors > std::numeric_limits<std::uint16_t>::max() ||
+                maxMaterialTextureDescriptors == 0 ||
+                maxMaterialTextureDescriptors > std::numeric_limits<std::uint16_t>::max()) {
+                throw std::invalid_argument("SHARC descriptor capacities must fit NvRHI's uint16 array size.");
             }
             nvrhi::BindingLayoutDesc desc;
             desc.setVisibility(nvrhi::ShaderType::AllRayTracing)
@@ -337,7 +356,12 @@ namespace lumin::render::gi {
                 .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(updateResolvedBinding))
                 .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(updateLockBinding))
                 .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(updateStatisticsBinding))
-                .addItem(nvrhi::BindingLayoutItem::ConstantBuffer(updateConstantsBinding));
+                .addItem(nvrhi::BindingLayoutItem::ConstantBuffer(updateConstantsBinding))
+                .addItem(nvrhi::BindingLayoutItem::Texture_SRV(updateBaseColorTexturesBinding)
+                             .setSize(maxMaterialTextureDescriptors))
+                .addItem(nvrhi::BindingLayoutItem::Texture_SRV(updateNormalRoughnessTexturesBinding)
+                             .setSize(maxMaterialTextureDescriptors))
+                .addItem(nvrhi::BindingLayoutItem::Sampler(updateMaterialSamplerBinding));
             return desc;
         }
 
@@ -388,6 +412,7 @@ namespace lumin::render::gi {
         SharcRadianceCacheConfig config;
         SharcHistoryTracker history;
         std::uint32_t maxGeometryDescriptors = 0;
+        std::uint32_t maxMaterialTextureDescriptors = 0;
         std::vector<SharcUpdateFrameInputs> inputs;
         SharcNativeResources cacheResources;
         std::vector<nvrhi::BufferHandle> constants;
@@ -405,6 +430,7 @@ namespace lumin::render::gi {
         explicit Impl(const SharcRadianceCacheCreateInfo& createInfo)
             : device(*createInfo.device), config(createInfo.config), history(config),
               maxGeometryDescriptors(createInfo.maxGeometryDescriptors),
+              maxMaterialTextureDescriptors(createInfo.maxMaterialTextureDescriptors),
               inputs(createInfo.frames.begin(), createInfo.frames.end()),
               constantsInitialized(createInfo.frameSlotCount, 0),
               statisticsReadbackReady(createInfo.frameSlotCount, 0) {
@@ -422,8 +448,8 @@ namespace lumin::render::gi {
             cacheResources.lock = createBuffer(detail::SharcBufferKind::Lock, "SHARC lock");
             cacheResources.statistics = createBuffer(detail::SharcBufferKind::Statistics, "SHARC statistics");
 
-            updateBindingLayout =
-                device.createBindingLayout(detail::makeSharcUpdateBindingLayoutDesc(maxGeometryDescriptors));
+            updateBindingLayout = device.createBindingLayout(
+                detail::makeSharcUpdateBindingLayoutDesc(maxGeometryDescriptors, maxMaterialTextureDescriptors));
             resolveBindingLayout = device.createBindingLayout(detail::makeSharcResolveBindingLayoutDesc());
             if (!updateBindingLayout || !resolveBindingLayout) {
                 throw std::runtime_error("Failed to create SHARC binding layouts.");
@@ -500,8 +526,9 @@ namespace lumin::render::gi {
 
     SharcRadianceCache::SharcRadianceCache(const SharcRadianceCacheCreateInfo& createInfo) {
         if (createInfo.device == nullptr || createInfo.shaderDirectory.empty() || createInfo.frameSlotCount == 0 ||
-            createInfo.maxGeometryDescriptors == 0 || createInfo.frames.size() != createInfo.frameSlotCount ||
-            !createInfo.atmosphereBindingLayout || !validateSharcRadianceCacheConfig(createInfo.config)) {
+            createInfo.maxGeometryDescriptors == 0 || createInfo.maxMaterialTextureDescriptors == 0 ||
+            createInfo.frames.size() != createInfo.frameSlotCount || !createInfo.atmosphereBindingLayout ||
+            !validateSharcRadianceCacheConfig(createInfo.config)) {
             throw std::invalid_argument(
                 "SHARC cache requires device, shaders, matching frame slots, geometry capacity, and valid config.");
         }
@@ -537,7 +564,9 @@ namespace lumin::render::gi {
             !sceneResources.materials.isValid() || !complete(scene) || !environment.isValid() ||
             !environmentResources.isValid() || scene.geometry.size() > impl_->maxGeometryDescriptors ||
             sceneResources.vertices.size() != scene.geometry.size() ||
-            sceneResources.indices.size() != scene.geometry.size()) {
+            sceneResources.indices.size() != scene.geometry.size() ||
+            sceneResources.baseColorTextures.size() != scene.baseColorTextures.size() ||
+            sceneResources.normalRoughnessTextures.size() != scene.normalRoughnessTextures.size()) {
             throw std::invalid_argument("SHARC record requires matching G-buffer and GPU Scene resources.");
         }
         const nvrhi::TextureDesc& positionDesc = impl_->inputs[frameSlot].position->getDesc();
@@ -553,7 +582,8 @@ namespace lumin::render::gi {
             SharcNativeResources native = impl_->cacheResources;
             native.constants = impl_->constants[frameSlot];
             const nvrhi::BindingSetHandle updateBindingSet = impl_->device.createBindingSet(
-                makeUpdateBindingSetDesc(impl_->inputs[frameSlot], scene, native, impl_->maxGeometryDescriptors),
+                makeUpdateBindingSetDesc(impl_->inputs[frameSlot], scene, native, impl_->maxGeometryDescriptors,
+                                         impl_->maxMaterialTextureDescriptors),
                 impl_->updateBindingLayout);
             if (!updateBindingSet) {
                 throw std::runtime_error("Failed to create SHARC update binding set.");
@@ -630,13 +660,17 @@ namespace lumin::render::gi {
                                                                         sceneResources.vertices.end());
             const std::vector<FrameGraphResourceHandle> indexResources(sceneResources.indices.begin(),
                                                                        sceneResources.indices.end());
+            const std::vector<FrameGraphResourceHandle> baseColorResources(sceneResources.baseColorTextures.begin(),
+                                                                           sceneResources.baseColorTextures.end());
+            const std::vector<FrameGraphResourceHandle> normalRoughnessResources(
+                sceneResources.normalRoughnessTextures.begin(), sceneResources.normalRoughnessTextures.end());
             const nvrhi::rt::ShaderTableHandle updateShaderTable = impl_->updateShaderTable;
             const detail::SharcUpdateDispatchSize updateDispatch = detail::makeSharcUpdateDispatchSize(
                 frameParameters.renderWidth, frameParameters.renderHeight, impl_->config.sparseTileSize);
             const FrameGraphPassHandle updatePass = frameGraph.addPass(
                 "sharc-sparse-update", FrameGraphPassType::RayTracing,
                 [inputs, sceneResources, environmentResources, graphResources, clearPass, vertexResources,
-                 indexResources](FrameGraphBuilder& builder) {
+                 indexResources, baseColorResources, normalRoughnessResources](FrameGraphBuilder& builder) {
                     builder.dependsOn(clearPass);
                     if (sceneResources.readyPass.isValid()) {
                         builder.dependsOn(sceneResources.readyPass);
@@ -649,6 +683,12 @@ namespace lumin::render::gi {
                     }
                     for (const FrameGraphResourceHandle resource : indexResources) {
                         builder.read(resource, nvrhi::ResourceStates::ShaderResource);
+                    }
+                    for (const FrameGraphResourceHandle resource : baseColorResources) {
+                        builder.readTexture(resource, nvrhi::ResourceStates::ShaderResource);
+                    }
+                    for (const FrameGraphResourceHandle resource : normalRoughnessResources) {
+                        builder.readTexture(resource, nvrhi::ResourceStates::ShaderResource);
                     }
                     builder.readTexture(inputs.position);
                     builder.readTexture(inputs.normalRoughness);

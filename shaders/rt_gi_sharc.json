@@ -191,6 +191,24 @@
           "kind": "sampler",
           "set": 2,
           "binding": 5
+        },
+        {
+          "binding": 21,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "baseColorTextures"
+        },
+        {
+          "binding": 22,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "normalRoughnessTextures"
+        },
+        {
+          "binding": 23,
+          "set": 0,
+          "kind": "sampler",
+          "name": "materialSampler"
         }
       ],
       "abiStructs": [

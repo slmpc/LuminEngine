@@ -786,4 +786,8 @@ namespace lumin::render {
         return impl_->normalRoughnessTextures;
     }
 
+    nvrhi::SamplerHandle ModelRenderer::materialSampler() const noexcept {
+        return impl_->materialSampler;
+    }
+
 } // namespace lumin::render

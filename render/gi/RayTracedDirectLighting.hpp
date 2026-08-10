@@ -60,12 +60,15 @@ namespace lumin::render::gi {
 
         /// 构造 RTDI set 0 的 descriptor layout；不包含任何 G-buffer 或 CSM 输入。
         [[nodiscard]] nvrhi::BindingLayoutDesc
-        makeRayTracedDiBindingLayoutDesc(std::uint32_t maxGeometryDescriptors);
+        makeRayTracedDiBindingLayoutDesc(std::uint32_t maxGeometryDescriptors,
+                                         std::uint32_t maxMaterialTextureDescriptors = 1);
 
         /// 构造当前 GPU Scene 版本的 RTDI binding set；只包含 TLAS/scene、surface UAV 和 constants。
-        [[nodiscard]] nvrhi::BindingSetDesc makeRayTracedDiBindingSetDesc(
-            const RayTracedDiFrameResources& outputs, const RayTracedGiSceneBindings& scene,
-            std::uint32_t maxGeometryDescriptors, nvrhi::BufferHandle constants);
+        [[nodiscard]] nvrhi::BindingSetDesc makeRayTracedDiBindingSetDesc(const RayTracedDiFrameResources& outputs,
+                                                                          const RayTracedGiSceneBindings& scene,
+                                                                          std::uint32_t maxGeometryDescriptors,
+                                                                          std::uint32_t maxMaterialTextureDescriptors,
+                                                                          nvrhi::BufferHandle constants);
 
         template <typename CommandList>
         void recordRayTracedDiDispatch(CommandList& commandList, const nvrhi::rt::State& state, std::uint32_t width,
@@ -91,6 +94,7 @@ namespace lumin::render::gi {
             std::uint32_t width = 0;
             std::uint32_t height = 0;
             std::uint32_t maxGeometryDescriptors = 0;
+            std::uint32_t maxMaterialTextureDescriptors = 0;
             nvrhi::BindingLayoutHandle atmosphereBindingLayout;
             std::span<const RayTracedDiFrameResources> frames;
         };

@@ -46,11 +46,12 @@ namespace {
 
     void testBindingLayoutMatchesShaderAbi() {
         constexpr std::uint32_t geometryCapacity = 37;
-        const nvrhi::BindingLayoutDesc desc =
-            lumin::render::gi::detail::makeRayTracedGiBindingLayoutDesc(geometryCapacity);
+        constexpr std::uint32_t materialTextureCapacity = 5;
+        const nvrhi::BindingLayoutDesc desc = lumin::render::gi::detail::makeRayTracedGiBindingLayoutDesc(
+            geometryCapacity, false, materialTextureCapacity);
         require(desc.visibility == nvrhi::ShaderType::AllRayTracing && desc.registerSpace == 0 &&
-                    desc.registerSpaceIsDescriptorSet && desc.bindings.size() == 15,
-                "RT GI set 0 must contain only scene and raw-signal resources.");
+                    desc.registerSpaceIsDescriptorSet && desc.bindings.size() == 18,
+                "RT GI set 0 must contain scene, material textures, and raw-signal resources.");
         require(desc.bindings[0].slot == 0 && desc.bindings[0].type == nvrhi::ResourceType::RayTracingAccelStruct,
                 "Binding 0 must contain the TLAS.");
         require(desc.bindings[5].slot == 5 && desc.bindings[5].type == nvrhi::ResourceType::StructuredBuffer_SRV &&
@@ -63,17 +64,24 @@ namespace {
         }
         require(desc.bindings[14].slot == 14 && desc.bindings[14].type == nvrhi::ResourceType::ConstantBuffer,
                 "Binding 14 must contain RayTracedGiConstants.");
+        require(desc.bindings[15].slot == 21 && desc.bindings[15].getArraySize() == materialTextureCapacity &&
+                    desc.bindings[16].slot == 22 && desc.bindings[16].getArraySize() == materialTextureCapacity &&
+                    desc.bindings[17].slot == 23 && desc.bindings[17].type == nvrhi::ResourceType::Sampler,
+                "RT GI bindings 21-23 must expose both material texture arrays and their sampler.");
 
-        const nvrhi::BindingLayoutDesc sharcDesc =
-            lumin::render::gi::detail::makeRayTracedGiBindingLayoutDesc(geometryCapacity, true);
-        require(sharcDesc.bindings.size() == 21,
-                "SHARC query must append six cache bindings to the base RT GI layout.");
+        const nvrhi::BindingLayoutDesc sharcDesc = lumin::render::gi::detail::makeRayTracedGiBindingLayoutDesc(
+            geometryCapacity, true, materialTextureCapacity);
+        require(sharcDesc.bindings.size() == 24,
+                "SHARC query must contain cache bindings and the shared material texture table.");
         for (std::size_t index = 15; index <= 19; ++index) {
             require(sharcDesc.bindings[index].type == nvrhi::ResourceType::StructuredBuffer_UAV,
                     "SHARC query cache/statistics descriptors must use storage buffers.");
         }
         require(sharcDesc.bindings[20].type == nvrhi::ResourceType::ConstantBuffer,
                 "SHARC query binding 20 must contain SharcGpuConstants.");
+        require(sharcDesc.bindings[21].slot == 21 && sharcDesc.bindings[22].slot == 22 &&
+                    sharcDesc.bindings[23].slot == 23,
+                "SHARC RT GI must preserve material bindings 21-23 after its cache descriptors.");
 
         requireInvalidArgument(
             [] {

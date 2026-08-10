@@ -41,6 +41,9 @@ static const uint kInvalidMaterial = 0xffffffffu;
 [[vk::binding(11, 0)]] RWTexture2D<float4> directRadiance;
 [[vk::binding(12, 0)]] RWTexture2D<uint> visibilityMask;
 [[vk::binding(13, 0)]] ConstantBuffer<RayTracedDiConstants> frame;
+[[vk::binding(14, 0)]] Texture2D<float4> baseColorTextures[];
+[[vk::binding(15, 0)]] Texture2D<float4> normalRoughnessTextures[];
+[[vk::binding(16, 0)]] SamplerState materialSampler;
 
 float2 clipToUv(float4 clipPosition) {
     float2 ndc = clipPosition.xy / max(abs(clipPosition.w), 1e-6);
@@ -120,7 +123,7 @@ void rayGenerationMain() {
     payload.hit = 0u;
     payload.visibility = 0u;
     payload.padding = 0u;
-    TraceRay(sceneTlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xff, 0, 1, 0, ray, payload);
+    TraceRay(sceneTlas, 0, 0xff, 0, 1, 0, ray, payload);
 }
 
 [shader("miss")]
@@ -155,10 +158,27 @@ void primaryClosestHitMain(inout PrimaryPayload payload, BuiltInTriangleIntersec
     uint3 vertexIndices = uint3(indices[triangleIndex], indices[triangleIndex + 1], indices[triangleIndex + 2]);
     float3 barycentrics = float3(1.0 - attributes.barycentrics.x - attributes.barycentrics.y,
                                  attributes.barycentrics.x, attributes.barycentrics.y);
-    float3 objectNormal = normalize(vertices[vertexIndices.x + instance.metadata.z].normal.xyz * barycentrics.x +
-                                    vertices[vertexIndices.y + instance.metadata.z].normal.xyz * barycentrics.y +
-                                    vertices[vertexIndices.z + instance.metadata.z].normal.xyz * barycentrics.z);
-    float3 normal = safeNormalize(mul((float3x3)instance.normalMatrix, objectNormal), float3(0.0, 1.0, 0.0));
+    GpuPackedVertex vertex0 = vertices[vertexIndices.x + instance.metadata.z];
+    GpuPackedVertex vertex1 = vertices[vertexIndices.y + instance.metadata.z];
+    GpuPackedVertex vertex2 = vertices[vertexIndices.z + instance.metadata.z];
+    float3 objectNormal = normalize(vertex0.normal.xyz * barycentrics.x + vertex1.normal.xyz * barycentrics.y +
+                                    vertex2.normal.xyz * barycentrics.z);
+    float3 normal = luminOrientShadingNormal(mul((float3x3)instance.normalMatrix, objectNormal),
+                                             WorldRayDirection());
+    float2 texCoord = luminVertexTexCoord(vertex0) * barycentrics.x +
+                      luminVertexTexCoord(vertex1) * barycentrics.y +
+                      luminVertexTexCoord(vertex2) * barycentrics.z;
+    GpuMaterialData material = materials[instance.metadata.x];
+    if (material.metadata.z != 0u) {
+        uint textureIndex = material.metadata.y;
+        float2 materialUv = texCoord * material.surfaceParameters.y;
+        material.baseColorMetallic.rgb *=
+            baseColorTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(materialSampler, materialUv, 0.0).rgb;
+        material.surfaceParameters.x = clamp(
+            normalRoughnessTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(materialSampler, materialUv, 0.0).a *
+                material.surfaceParameters.x,
+            0.04, 1.0);
+    }
     float3 hitPosition = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
     float3 toLight = safeNormalize(frame.toSunWorld.xyz, float3(0.0, 1.0, 0.0));
     float3 toView = safeNormalize(frame.cameraPosition.xyz - hitPosition, normal);
@@ -177,10 +197,8 @@ void primaryClosestHitMain(inout PrimaryPayload payload, BuiltInTriangleIntersec
     shadowPayload.hit = 0u;
     shadowPayload.visibility = 0u;
     shadowPayload.padding = 0u;
-    TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_CULL_BACK_FACING_TRIANGLES,
-             0xff, 0, 1, 1, shadowRay, shadowPayload);
+    TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff, 0, 1, 1, shadowRay, shadowPayload);
 
-    GpuMaterialData material = materials[instance.metadata.x];
     float3 direct = evaluateDirect(material, normal, toView, toLight, float(shadowPayload.visibility));
     // 光线由当前抖动投影生成，dispatch 像素中心已经是当前采样位置，不能再次叠加 jitter。
     // previousViewProjection 保留上一帧抖动，因此两者相减会自然得到 TAA 所需的 previous-current motion。
