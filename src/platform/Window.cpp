@@ -1,4 +1,4 @@
-#include "lumin/platform/Window.hpp"
+#include "platform/Window.hpp"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>

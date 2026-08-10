@@ -1,4 +1,4 @@
-#include "lumin/render/FrameGraph.hpp"
+#include "render/FrameGraph.hpp"
 
 #include <algorithm>
 #include <deque>
@@ -56,6 +56,11 @@ namespace lumin::render {
                 commandList_->setBufferState(buffer, state);
             }
 
+            void setAccelerationStructureState(nvrhi::rt::IAccelStruct* accelerationStructure,
+                                               nvrhi::ResourceStates state) override {
+                commandList_->setAccelStructState(accelerationStructure, state);
+            }
+
             void commitBarriers() override {
                 commandList_->commitBarriers();
             }
@@ -107,20 +112,40 @@ namespace lumin::render {
         graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::Write, state, subresources});
     }
 
+    void FrameGraphBuilder::readAccelerationStructure(FrameGraphResourceHandle resource,
+                                                       nvrhi::ResourceStates state) {
+        graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::Read, state});
+    }
+
+    void FrameGraphBuilder::writeAccelerationStructure(FrameGraphResourceHandle resource,
+                                                        nvrhi::ResourceStates state) {
+        graph_.addUsage(passIndex_, FrameGraph::ResourceUsage{resource, FrameGraphAccess::Write, state});
+    }
+
+    void FrameGraphBuilder::dependsOn(FrameGraphPassHandle dependency) {
+        graph_.addPassDependency(passIndex_, dependency);
+    }
+
     FrameGraphResourceHandle FrameGraph::importBuffer(std::string name, const FrameGraphBufferDesc& desc) {
-        return addResource(std::move(name), FrameGraphResourceKind::Buffer, true, &desc, nullptr);
+        return addResource(std::move(name), FrameGraphResourceKind::Buffer, true, &desc, nullptr, nullptr);
     }
 
     FrameGraphResourceHandle FrameGraph::createBuffer(std::string name, const FrameGraphBufferDesc& desc) {
-        return addResource(std::move(name), FrameGraphResourceKind::Buffer, false, &desc, nullptr);
+        return addResource(std::move(name), FrameGraphResourceKind::Buffer, false, &desc, nullptr, nullptr);
     }
 
     FrameGraphResourceHandle FrameGraph::importTexture(std::string name, const FrameGraphTextureDesc& desc) {
-        return addResource(std::move(name), FrameGraphResourceKind::Texture, true, nullptr, &desc);
+        return addResource(std::move(name), FrameGraphResourceKind::Texture, true, nullptr, &desc, nullptr);
     }
 
     FrameGraphResourceHandle FrameGraph::createTexture(std::string name, const FrameGraphTextureDesc& desc) {
-        return addResource(std::move(name), FrameGraphResourceKind::Texture, false, nullptr, &desc);
+        return addResource(std::move(name), FrameGraphResourceKind::Texture, false, nullptr, &desc, nullptr);
+    }
+
+    FrameGraphResourceHandle FrameGraph::importAccelerationStructure(
+        std::string name, const FrameGraphAccelerationStructureDesc& desc) {
+        return addResource(std::move(name), FrameGraphResourceKind::AccelerationStructure, true, nullptr, nullptr,
+                           &desc);
     }
 
     FrameGraphPassHandle FrameGraph::addPass(std::string name, FrameGraphPassType type, SetupCallback setup,
@@ -168,6 +193,10 @@ namespace lumin::render {
         std::vector<ResourceState> resourceStates(resources_.size());
 
         for (std::uint32_t passIndex = 0; passIndex < passCount; ++passIndex) {
+            for (const std::uint32_t dependency : passes_[passIndex].dependencies) {
+                addEdge(dependency, passIndex);
+            }
+
             for (const ResourceUsage& usage : passes_[passIndex].usages) {
                 validateResource(usage.resource);
                 ResourceState& state = resourceStates[usage.resource.id];
@@ -248,10 +277,16 @@ namespace lumin::render {
                     barriers->beginTrackingTextureState(resource.texture.texture, resource.texture.subresources,
                                                         resource.texture.initialState);
                 }
-            } else {
+            } else if (resource.kind == FrameGraphResourceKind::Buffer) {
                 states[resourceIndex].state = resource.buffer.initialState;
                 if (barriers != nullptr && resource.buffer.buffer != nullptr) {
                     barriers->beginTrackingBufferState(resource.buffer.buffer, resource.buffer.initialState);
+                }
+            } else {
+                states[resourceIndex].state = resource.accelerationStructure.initialState;
+                if (barriers != nullptr && resource.accelerationStructure.accelerationStructure != nullptr) {
+                    barriers->setAccelerationStructureState(resource.accelerationStructure.accelerationStructure,
+                                                            resource.accelerationStructure.initialState);
                 }
             }
         }
@@ -283,6 +318,21 @@ namespace lumin::render {
             updateRuntimeState(runtimeState, usage.state, usage.access);
         };
 
+        auto issueAccelerationStructureBarrier = [&](const ResourceNode& resource, const ResourceUsage& usage,
+                                                     RuntimeResourceState& runtimeState) {
+            const bool stateChanged = runtimeState.state != usage.state;
+            const bool memoryDependency = needsMemoryDependency(runtimeState, usage.access);
+            nvrhi::rt::IAccelStruct* accelerationStructure =
+                resource.accelerationStructure.accelerationStructure;
+            if (barriers != nullptr && accelerationStructure != nullptr && (stateChanged || memoryDependency)) {
+                if (!stateChanged && usage.state != nvrhi::ResourceStates::Common) {
+                    barriers->setAccelerationStructureState(accelerationStructure, nvrhi::ResourceStates::Common);
+                }
+                barriers->setAccelerationStructureState(accelerationStructure, usage.state);
+            }
+            updateRuntimeState(runtimeState, usage.state, usage.access);
+        };
+
         for (const std::uint32_t passIndex : executionOrder_) {
             const PassNode& pass = passes_[passIndex];
             if (context.log != nullptr) {
@@ -297,8 +347,10 @@ namespace lumin::render {
                 const ResourceNode& resource = resources_[usage.resource.id];
                 if (resource.kind == FrameGraphResourceKind::Texture) {
                     issueTextureBarrier(resource, usage, states[usage.resource.id]);
-                } else {
+                } else if (resource.kind == FrameGraphResourceKind::Buffer) {
                     issueBufferBarrier(resource, usage, states[usage.resource.id]);
+                } else {
+                    issueAccelerationStructureBarrier(resource, usage, states[usage.resource.id]);
                 }
             }
 
@@ -330,6 +382,13 @@ namespace lumin::render {
                 finalUsage.state = resource.buffer.finalState;
                 issueBufferBarrier(resource, finalUsage, states[resourceIndex]);
                 hasFinalBarrier = true;
+            } else if (resource.kind == FrameGraphResourceKind::AccelerationStructure &&
+                       resource.accelerationStructure.finalState != nvrhi::ResourceStates::Unknown) {
+                finalUsage.state = resource.accelerationStructure.finalState;
+                const bool finalBarrierRequired = states[resourceIndex].state != finalUsage.state ||
+                                                  needsMemoryDependency(states[resourceIndex], finalUsage.access);
+                issueAccelerationStructureBarrier(resource, finalUsage, states[resourceIndex]);
+                hasFinalBarrier = hasFinalBarrier || finalBarrierRequired;
             }
         }
         if (barriers != nullptr && hasFinalBarrier) {
@@ -370,7 +429,8 @@ namespace lumin::render {
 
     FrameGraphResourceHandle FrameGraph::addResource(std::string name, FrameGraphResourceKind kind, bool imported,
                                                      const FrameGraphBufferDesc* buffer,
-                                                     const FrameGraphTextureDesc* texture) {
+                                                     const FrameGraphTextureDesc* texture,
+                                                     const FrameGraphAccelerationStructureDesc* accelerationStructure) {
         ResourceNode node;
         node.name = std::move(name);
         node.kind = kind;
@@ -382,6 +442,10 @@ namespace lumin::render {
 
         if (texture != nullptr) {
             node.texture = *texture;
+        }
+
+        if (accelerationStructure != nullptr) {
+            node.accelerationStructure = *accelerationStructure;
         }
 
         const auto resourceIndex = static_cast<std::uint32_t>(resources_.size());
@@ -398,6 +462,28 @@ namespace lumin::render {
 
         passes_[passIndex].usages.push_back(usage);
         compiled_ = false;
+    }
+
+    void FrameGraph::addPassDependency(std::uint32_t passIndex, FrameGraphPassHandle dependency) {
+        if (passIndex >= passes_.size()) {
+            throw std::out_of_range("Invalid frame graph pass handle.");
+        }
+        if (!dependency.isValid()) {
+            throw std::out_of_range("Invalid frame graph pass dependency handle.");
+        }
+        if (dependency.id == passIndex) {
+            throw std::invalid_argument("A frame graph pass cannot depend on itself.");
+        }
+        if (dependency.id > passIndex) {
+            throw std::invalid_argument("A frame graph pass can only depend on an earlier pass.");
+        }
+
+        validatePass(dependency);
+        std::vector<std::uint32_t>& dependencies = passes_[passIndex].dependencies;
+        if (std::find(dependencies.begin(), dependencies.end(), dependency.id) == dependencies.end()) {
+            dependencies.push_back(dependency.id);
+            compiled_ = false;
+        }
     }
 
     void FrameGraph::validateResource(FrameGraphResourceHandle resource) const {

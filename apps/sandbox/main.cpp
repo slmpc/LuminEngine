@@ -1,6 +1,6 @@
 #include "SandboxGame.hpp"
 
-#include "lumin/core/Application.hpp"
+#include "core/Application.hpp"
 
 #include <cstdlib>
 #include <exception>

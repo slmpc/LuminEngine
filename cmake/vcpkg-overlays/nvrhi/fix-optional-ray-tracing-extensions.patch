@@ -1,0 +1,44 @@
+diff --git a/src/vulkan/vulkan-raytracing.cpp b/src/vulkan/vulkan-raytracing.cpp
+index e4e3d62..8226160 100644
+--- a/src/vulkan/vulkan-raytracing.cpp
++++ b/src/vulkan/vulkan-raytracing.cpp
+@@ -1620,26 +1620,30 @@ namespace nvrhi::vulkan
+ 
+         // Create the pipeline object
+ 
+-        auto libraryInfo = vk::PipelineLibraryCreateInfoKHR();
+-
+         auto pipelineClusters = vk::RayTracingPipelineClusterAccelerationStructureCreateInfoNV()
+             .setAllowClusterAccelerationStructure(true);
+ 
+         auto pipelineFlags2 = vk::PipelineCreateFlags2CreateInfoKHR();
+         pipelineFlags2.setFlags(vk::PipelineCreateFlagBits2::eRayTracingAllowSpheresAndLinearSweptSpheresNV);
+ 
++        void* pipelineExtensionChain = nullptr;
++        if (m_Context.extensions.NV_ray_tracing_linear_swept_spheres)
++        {
++            pipelineFlags2.setPNext(pipelineExtensionChain);
++            pipelineExtensionChain = &pipelineFlags2;
++        }
++        if (m_Context.extensions.NV_cluster_acceleration_structure)
++        {
++            pipelineClusters.setPNext(pipelineExtensionChain);
++            pipelineExtensionChain = &pipelineClusters;
++        }
++
+         auto pipelineInfo = vk::RayTracingPipelineCreateInfoKHR()
+             .setStages(shaderStages)
+             .setGroups(shaderGroups)
+             .setLayout(pso->pipelineLayout)
+             .setMaxPipelineRayRecursionDepth(desc.maxRecursionDepth)
+-            .setPLibraryInfo(&libraryInfo)
+-            .setPNext(&pipelineFlags2);
+-
+-        if (m_Context.extensions.NV_cluster_acceleration_structure)
+-        {
+-            pipelineInfo.setPNext(&pipelineClusters);
+-        }
++            .setPNext(pipelineExtensionChain);
+ 
+         res = m_Context.device.createRayTracingPipelinesKHR(vk::DeferredOperationKHR(), m_Context.pipelineCache,
+             1, &pipelineInfo,

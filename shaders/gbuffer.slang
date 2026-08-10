@@ -9,6 +9,7 @@ struct ObjectData {
     float4x4 normalMatrix;
     float4 baseColorMetallic;
     float4 materialParameters;
+    uint4 metadata;
 };
 
 [[vk::binding(0, 0)]]
@@ -42,6 +43,7 @@ struct VertexOutput {
     [[vk::location(4)]] nointerpolation float4 materialParameters : TEXCOORD4;
     [[vk::location(5)]] float4 currentClip : TEXCOORD5;
     [[vk::location(6)]] float4 previousClip : TEXCOORD6;
+    [[vk::location(7)]] nointerpolation uint materialIndex : TEXCOORD7;
 };
 
 struct GBufferOutput {
@@ -49,6 +51,7 @@ struct GBufferOutput {
     float4 normalRoughness : SV_Target1;
     float4 albedoMetallic : SV_Target2;
     float2 motion : SV_Target3;
+    uint materialId : SV_Target4;
 };
 
 float2 clipToUv(float4 clipPosition) {
@@ -89,6 +92,7 @@ VertexOutput vertexMain(VertexInput input) {
     output.texCoord = input.texCoord;
     output.baseColorMetallic = object.baseColorMetallic;
     output.materialParameters = object.materialParameters;
+    output.materialIndex = object.metadata.x;
     return output;
 }
 
@@ -117,6 +121,8 @@ GBufferOutput fragmentMain(VertexOutput input) {
         float4(baseColorSample.rgb * input.baseColorMetallic.rgb, saturate(input.baseColorMetallic.a));
     float2 currentUv = clipToUv(input.currentClip);
     float2 previousUv = clipToUv(input.previousClip);
-    output.motion = currentUv - previousUv;
+    // 与 RT primary surface 保持一致：motion 表示 previousUv - currentUv。
+    output.motion = previousUv - currentUv;
+    output.materialId = input.materialIndex;
     return output;
 }

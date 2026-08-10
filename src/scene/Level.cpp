@@ -1,5 +1,5 @@
-#include "lumin/scene/Level.hpp"
-#include "lumin/scene/Terrain.hpp"
+#include "scene/Level.hpp"
+#include "scene/Terrain.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -17,9 +17,7 @@ namespace lumin::scene {
         }
 
         bool sameMaterial(const Material& left, const Material& right) noexcept {
-            return left.albedo == right.albedo && left.roughness == right.roughness &&
-                   left.metallic == right.metallic && left.textureScale == right.textureScale &&
-                   left.textures == right.textures;
+            return left == right;
         }
 
         bool referencesSameTextureImages(const Material& left, const Material& right) noexcept {
@@ -27,6 +25,30 @@ namespace lumin::scene {
                 return false;
             }
             return !left.textures.has_value() || left.textures->referencesSameImages(*right.textures);
+        }
+
+        bool sameDirectionalLight(const DirectionalLight& left, const DirectionalLight& right) noexcept {
+            return left.direction == right.direction && left.color == right.color &&
+                   left.illuminanceLux == right.illuminanceLux && left.castsShadows == right.castsShadows;
+        }
+
+        bool sameAtmosphere(const AtmosphereParameters& left, const AtmosphereParameters& right) noexcept {
+            return left.enabled == right.enabled && left.bottomRadiusKm == right.bottomRadiusKm &&
+                   left.topRadiusKm == right.topRadiusKm &&
+                   left.rayleighScatteringPerKm == right.rayleighScatteringPerKm &&
+                   left.rayleighDensityScaleKm == right.rayleighDensityScaleKm &&
+                   left.mieScatteringPerKm == right.mieScatteringPerKm &&
+                   left.mieAbsorptionPerKm == right.mieAbsorptionPerKm &&
+                   left.mieDensityScaleKm == right.mieDensityScaleKm && left.miePhaseG == right.miePhaseG &&
+                   left.ozoneAbsorptionPerKm == right.ozoneAbsorptionPerKm &&
+                   left.ozoneLayerCenterKm == right.ozoneLayerCenterKm &&
+                   left.ozoneLayerHalfWidthKm == right.ozoneLayerHalfWidthKm &&
+                   left.groundAlbedo == right.groundAlbedo;
+        }
+
+        bool sameAtmosphereTransform(const AtmosphereTransform& left, const AtmosphereTransform& right) noexcept {
+            return left.kilometersPerWorldUnit == right.kilometersPerWorldUnit &&
+                   left.seaLevelWorldY == right.seaLevelWorldY;
         }
 
         std::uint32_t nextGeneration(std::uint32_t generation) noexcept {
@@ -847,6 +869,49 @@ namespace lumin::scene {
 
     std::uint64_t Level::meshRevision() const noexcept {
         return topologyRevision_;
+    }
+
+    const SceneEnvironment& Level::environment() const noexcept {
+        return environment_;
+    }
+
+    void Level::setEnvironment(SceneEnvironment environment) noexcept {
+        const bool lightingChanged = !sameDirectionalLight(environment_.sun, environment.sun);
+        const bool atmosphereChanged = !sameAtmosphere(environment_.atmosphere, environment.atmosphere) ||
+                                       !sameAtmosphereTransform(environment_.atmosphereTransform,
+                                                                environment.atmosphereTransform);
+        if (!lightingChanged && !atmosphereChanged) {
+            return;
+        }
+
+        environment_ = std::move(environment);
+        ++revision_;
+        if (lightingChanged) {
+            ++lightingRevision_;
+        }
+        if (atmosphereChanged) {
+            ++atmosphereRevision_;
+        }
+    }
+
+    void Level::setSun(DirectionalLight sun) noexcept {
+        SceneEnvironment next = environment_;
+        next.sun = std::move(sun);
+        setEnvironment(std::move(next));
+    }
+
+    void Level::setAtmosphere(AtmosphereParameters atmosphere) noexcept {
+        SceneEnvironment next = environment_;
+        next.atmosphere = std::move(atmosphere);
+        setEnvironment(std::move(next));
+    }
+
+    std::uint64_t Level::lightingRevision() const noexcept {
+        return lightingRevision_;
+    }
+
+    std::uint64_t Level::atmosphereRevision() const noexcept {
+        return atmosphereRevision_;
     }
 
     Level::ActorSlot* Level::findActorSlot(ActorHandle handle) noexcept {

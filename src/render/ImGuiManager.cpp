@@ -1,7 +1,7 @@
-#include "lumin/render/ImGuiManager.hpp"
+#include "render/ImGuiManager.hpp"
 
-#include "lumin/platform/Window.hpp"
-#include "lumin/render/VulkanContext.hpp"
+#include "platform/Window.hpp"
+#include "render/VulkanContext.hpp"
 
 #include <stdexcept>
 #include <utility>

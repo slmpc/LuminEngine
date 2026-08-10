@@ -1,4 +1,4 @@
-#include "lumin/platform/RenderDocAttachment.hpp"
+#include "platform/RenderDocAttachment.hpp"
 
 #include <stdexcept>
 #include <string>

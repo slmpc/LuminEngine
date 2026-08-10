@@ -1,7 +1,7 @@
-#include "lumin/render/gi/SsaoBackend.hpp"
+#include "render/gi/SsaoBackend.hpp"
 
-#include "lumin/render/PipelineFactory.hpp"
-#include "lumin/render/ShaderLibrary.hpp"
+#include "render/PipelineFactory.hpp"
+#include "render/ShaderLibrary.hpp"
 
 #include <array>
 #include <cstdint>

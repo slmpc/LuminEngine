@@ -9,7 +9,7 @@ if(LUMIN_BUILD_TESTS)
         src/render/ShaderLibrary.cpp
     )
     target_link_libraries(lumin_gi_tests PRIVATE Lumin::Runtime nvrhi)
-    target_include_directories(lumin_gi_tests PRIVATE include)
+    target_include_directories(lumin_gi_tests PRIVATE src)
     target_compile_definitions(lumin_gi_tests PRIVATE
         LUMIN_GI_TESTING=1
         LUMIN_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"

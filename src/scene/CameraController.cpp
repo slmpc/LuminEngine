@@ -1,6 +1,6 @@
-#include "lumin/scene/CameraController.hpp"
+#include "scene/CameraController.hpp"
 
-#include "lumin/scene/Camera.hpp"
+#include "scene/Camera.hpp"
 
 #include <algorithm>
 

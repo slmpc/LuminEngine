@@ -4,7 +4,7 @@ if(LUMIN_BUILD_TESTS)
         src/render/TextureManager.cpp
         src/render/VulkanResources.cpp
     )
-    target_include_directories(lumin_texture_manager_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_include_directories(lumin_texture_manager_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_features(lumin_texture_manager_tests PRIVATE cxx_std_20)
     target_compile_definitions(lumin_texture_manager_tests PRIVATE
         LUMIN_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"

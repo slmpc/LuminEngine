@@ -1,4 +1,4 @@
-#include "lumin/assets/ObjLoader.hpp"
+#include "assets/ObjLoader.hpp"
 
 #include <algorithm>
 #include <array>

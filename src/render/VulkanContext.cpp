@@ -1,10 +1,11 @@
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 
-#include "lumin/render/VulkanContext.hpp"
+#include "render/VulkanContext.hpp"
 
-#include "lumin/platform/Window.hpp"
-#include "lumin/render/BackendLifetime.hpp"
-#include "lumin/render/ModelRenderer.hpp"
+#include "platform/Window.hpp"
+#include "render/BackendLifetime.hpp"
+#include "render/ModelRenderer.hpp"
+#include "render/RayTracingBuildConfiguration.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -12,7 +13,9 @@
 #include <iterator>
 #include <limits>
 #include <set>
+#include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 #include <vulkan/vulkan.hpp>
@@ -26,7 +29,7 @@ namespace lumin::render {
             "VK_LAYER_KHRONOS_validation",
         };
 
-        constexpr const char* deviceExtensions[] = {
+        constexpr const char* baseDeviceExtensions[] = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         };
 
@@ -196,7 +199,9 @@ namespace lumin::render {
                     swapchainTextureInitialized_.clear();
                 }
             },
-            [this] { rhiDevice_ = nullptr; },
+            [this] {
+                rhiDevice_ = nullptr;
+            },
             [this] {
                 if (device_ != VK_NULL_HANDLE) {
                     vkDestroyDevice(device_, nullptr);
@@ -284,8 +289,7 @@ namespace lumin::render {
     }
 
     bool VulkanContext::swapchainIsSrgb() const noexcept {
-        return swapchainImageFormat_ == VK_FORMAT_R8G8B8A8_SRGB ||
-               swapchainImageFormat_ == VK_FORMAT_B8G8R8A8_SRGB ||
+        return swapchainImageFormat_ == VK_FORMAT_R8G8B8A8_SRGB || swapchainImageFormat_ == VK_FORMAT_B8G8R8A8_SRGB ||
                swapchainImageFormat_ == VK_FORMAT_A8B8G8R8_SRGB_PACK32;
     }
 
@@ -331,6 +335,14 @@ namespace lumin::render {
         };
     }
 
+    const VulkanRayTracingSupport& VulkanContext::rayTracingSupport() const noexcept {
+        return rayTracingSupport_;
+    }
+
+    const RayTracingDecision& VulkanContext::rayTracingDecision() const noexcept {
+        return rayTracingDecision_;
+    }
+
     std::uint64_t VulkanContext::swapchainGeneration() const noexcept {
         return swapchainGeneration_;
     }
@@ -368,12 +380,15 @@ namespace lumin::render {
         return VulkanFrame{commandLists_[currentFrame_], currentFrame_, imageIndex};
     }
 
-    bool VulkanContext::submitFrame(const VulkanFrame& frame) {
+    void VulkanContext::submitFrameCommands(const VulkanFrame& frame) {
         if (frame.frameIndex != currentFrame_) {
             throw std::invalid_argument("VulkanFrame does not belong to the current frame slot.");
         }
         if (frame.commandList.Get() != commandLists_[currentFrame_].Get()) {
             throw std::invalid_argument("VulkanFrame command list does not belong to the current frame slot.");
+        }
+        if (currentFrameCommandsSubmitted_) {
+            throw std::logic_error("The current Vulkan frame was already submitted.");
         }
 
         frame.commandList->close();
@@ -384,7 +399,18 @@ namespace lumin::render {
         rhiDevice_->executeCommandLists(commandLists, std::size(commandLists), nvrhi::CommandQueue::Graphics);
         rhiDevice_->setEventQuery(frameQueries_[currentFrame_], nvrhi::CommandQueue::Graphics);
         frameQueryPending_[currentFrame_] = true;
+        currentFrameCommandsSubmitted_ = true;
+    }
 
+    bool VulkanContext::presentFrame(const VulkanFrame& frame) {
+        if (frame.frameIndex != currentFrame_ || frame.commandList.Get() != commandLists_[currentFrame_].Get()) {
+            throw std::invalid_argument("VulkanFrame does not belong to the current frame slot.");
+        }
+        if (!currentFrameCommandsSubmitted_) {
+            throw std::logic_error("A Vulkan frame must be submitted before it can be presented.");
+        }
+
+        const VkSemaphore renderFinished = renderFinishedSemaphores_[frame.imageIndex];
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
         presentInfo.waitSemaphoreCount = 1;
@@ -395,6 +421,8 @@ namespace lumin::render {
         const VkResult result = vkQueuePresentKHR(presentQueue_, &presentInfo);
         const bool needsRecreate =
             result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || window_.framebufferResized();
+        currentFrameCommandsSubmitted_ = false;
+        currentFrame_ = (currentFrame_ + 1) % maxFramesInFlight;
         if (!needsRecreate && result != VK_SUCCESS) {
             throw std::runtime_error("Failed to present the Vulkan frame.");
         }
@@ -403,7 +431,6 @@ namespace lumin::render {
             swapchainTextureInitialized_[frame.imageIndex] = true;
         }
 
-        currentFrame_ = (currentFrame_ + 1) % maxFramesInFlight;
         if (needsRecreate) {
             recreateSwapchain();
         }
@@ -413,6 +440,9 @@ namespace lumin::render {
     void VulkanContext::cancelFrame(const VulkanFrame& frame) {
         if (frame.frameIndex != currentFrame_ || frame.commandList.Get() != commandLists_[currentFrame_].Get()) {
             throw std::invalid_argument("VulkanFrame does not belong to the current frame slot.");
+        }
+        if (currentFrameCommandsSubmitted_) {
+            throw std::logic_error("Submitted Vulkan commands cannot be cancelled.");
         }
 
         frame.commandList->close();
@@ -500,16 +530,69 @@ namespace lumin::render {
         std::vector<VkPhysicalDevice> devices(deviceCount);
         vkEnumeratePhysicalDevices(instance_, &deviceCount, devices.data());
 
+        VkPhysicalDevice fallbackDevice = VK_NULL_HANDLE;
+        QueueFamilyIndices fallbackQueueFamilies;
+        VulkanRayTracingSupport fallbackSupport;
+        RayTracingDecision fallbackDecision;
+        std::ostringstream rejectedDiagnostics;
+
         for (VkPhysicalDevice candidate : devices) {
-            if (isDeviceSuitable(candidate)) {
+            if (!isDeviceSuitable(candidate)) {
+                continue;
+            }
+
+            // 构建策略属于产物 ABI，不能由运行时描述覆盖。OFF 产物也不会触碰任何 RT 专属 Feature 查询。
+            RayTracingPolicy policy = desc_.rayTracing;
+            policy.build = configuredRayTracingBuildMode;
+            VulkanRayTracingSupport support =
+                rayTracingImplementationAvailable ? queryRayTracingSupport(candidate) : VulkanRayTracingSupport{};
+            RayTracingDecision decision = resolveRayTracingPolicy(policy, rayTracingImplementationAvailable, support);
+            if (decision.rejected()) {
+                VkPhysicalDeviceProperties properties{};
+                vkGetPhysicalDeviceProperties(candidate, &properties);
+                rejectedDiagnostics << properties.deviceName << ": " << formatRayTracingDecision(decision) << ' ';
+                continue;
+            }
+
+            if (decision.enabled() || decision.status == RayTracingDecisionStatus::Disabled) {
                 physicalDevice_ = candidate;
                 queueFamilies_ = findQueueFamilies(candidate);
+                rayTracingSupport_ = std::move(support);
+                rayTracingDecision_ = std::move(decision);
                 break;
+            }
+
+            // AUTO fallback 先保留首个 raster 候选，同时继续寻找支持完整 RT pipeline 的设备。
+            if (fallbackDevice == VK_NULL_HANDLE) {
+                fallbackDevice = candidate;
+                fallbackQueueFamilies = findQueueFamilies(candidate);
+                fallbackSupport = std::move(support);
+                fallbackDecision = std::move(decision);
             }
         }
 
+        if (physicalDevice_ == VK_NULL_HANDLE && fallbackDevice != VK_NULL_HANDLE) {
+            physicalDevice_ = fallbackDevice;
+            queueFamilies_ = fallbackQueueFamilies;
+            rayTracingSupport_ = std::move(fallbackSupport);
+            rayTracingDecision_ = std::move(fallbackDecision);
+        }
+
         if (physicalDevice_ == VK_NULL_HANDLE) {
-            throw std::runtime_error("No suitable Vulkan physical device found.");
+            std::string message = "No suitable Vulkan physical device found.";
+            if (!rejectedDiagnostics.str().empty()) {
+                message += " Ray tracing diagnostics: " + rejectedDiagnostics.str();
+            }
+            throw std::runtime_error(message);
+        }
+
+        enabledDeviceExtensions_.assign(std::begin(baseDeviceExtensions), std::end(baseDeviceExtensions));
+        for (const std::string_view extension : enabledVulkanRayTracingDeviceExtensions(rayTracingDecision_)) {
+            enabledDeviceExtensions_.push_back(extension.data());
+        }
+
+        if (rayTracingDecision_.enabled() || rayTracingDecision_.status == RayTracingDecisionStatus::Fallback) {
+            std::cerr << "[vulkan] " << formatRayTracingDecision(rayTracingDecision_) << '\n';
         }
     }
 
@@ -536,10 +619,29 @@ namespace lumin::render {
 
         VkPhysicalDeviceFeatures features{};
         features.multiDrawIndirect = VK_TRUE;
+        features.shaderInt64 =
+            rayTracingDecision_.enabled() && rayTracingSupport_.supportsSharcShaderStorage() ? VK_TRUE : VK_FALSE;
 
         VkPhysicalDeviceVulkan11Features vulkan11Features{};
         vulkan11Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
         vulkan11Features.shaderDrawParameters = VK_TRUE;
+        vulkan11Features.uniformAndStorageBuffer16BitAccess =
+            rayTracingDecision_.enabled() && rayTracingSupport_.supportsSharcShaderStorage() ? VK_TRUE : VK_FALSE;
+        vulkan11Features.storageBuffer16BitAccess =
+            rayTracingDecision_.enabled() && rayTracingSupport_.supportsSharcShaderStorage() ? VK_TRUE : VK_FALSE;
+
+        VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR computeShaderDerivativesFeatures{};
+        computeShaderDerivativesFeatures.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR;
+
+        VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
+        rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+
+        VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures{};
+        rayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{};
+        accelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
 
         VkPhysicalDeviceVulkan12Features vulkan12Features{};
         vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
@@ -548,6 +650,26 @@ namespace lumin::render {
         vulkan12Features.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
         vulkan12Features.runtimeDescriptorArray = VK_TRUE;
         vulkan12Features.timelineSemaphore = VK_TRUE;
+        vulkan12Features.shaderFloat16 =
+            rayTracingDecision_.enabled() && rayTracingSupport_.supportsSharcShaderStorage() ? VK_TRUE : VK_FALSE;
+
+        if (rayTracingDecision_.enabled()) {
+            vulkan12Features.bufferDeviceAddress = VK_TRUE;
+            vulkan12Features.shaderStorageBufferArrayNonUniformIndexing = VK_TRUE;
+            vulkan12Features.descriptorBindingPartiallyBound = VK_TRUE;
+            accelerationStructureFeatures.accelerationStructure = VK_TRUE;
+            accelerationStructureFeatures.pNext = &rayTracingPipelineFeatures;
+            rayTracingPipelineFeatures.rayTracingPipeline = VK_TRUE;
+            rayTracingPipelineFeatures.pNext = rayTracingDecision_.enablesRayQuery() ? &rayQueryFeatures : nullptr;
+            rayQueryFeatures.rayQuery = rayTracingDecision_.enablesRayQuery() ? VK_TRUE : VK_FALSE;
+            computeShaderDerivativesFeatures.computeDerivativeGroupQuads = VK_TRUE;
+            if (rayTracingDecision_.enablesRayQuery()) {
+                rayQueryFeatures.pNext = &computeShaderDerivativesFeatures;
+            } else {
+                rayTracingPipelineFeatures.pNext = &computeShaderDerivativesFeatures;
+            }
+            vulkan11Features.pNext = &accelerationStructureFeatures;
+        }
 
         VkPhysicalDeviceVulkan13Features vulkan13Features{};
         vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
@@ -561,8 +683,8 @@ namespace lumin::render {
         createInfo.flags = 0;
         createInfo.queueCreateInfoCount = static_cast<std::uint32_t>(queueInfos.size());
         createInfo.pQueueCreateInfos = queueInfos.data();
-        createInfo.enabledExtensionCount = static_cast<std::uint32_t>(std::size(deviceExtensions));
-        createInfo.ppEnabledExtensionNames = deviceExtensions;
+        createInfo.enabledExtensionCount = static_cast<std::uint32_t>(enabledDeviceExtensions_.size());
+        createInfo.ppEnabledExtensionNames = enabledDeviceExtensions_.data();
         createInfo.pEnabledFeatures = &features;
 
         if (validationEnabled_) {
@@ -582,9 +704,6 @@ namespace lumin::render {
     }
 
     void VulkanContext::createRhiDevice() {
-        const char* enabledDeviceExtensions[] = {
-            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        };
         nvrhi::vulkan::DeviceDesc deviceDesc{};
         deviceDesc.errorCB = &nvrhiMessageCallback;
         deviceDesc.instance = instance_;
@@ -592,8 +711,9 @@ namespace lumin::render {
         deviceDesc.device = device_;
         deviceDesc.graphicsQueue = graphicsQueue_;
         deviceDesc.graphicsQueueIndex = static_cast<int>(graphicsQueueFamily());
-        deviceDesc.deviceExtensions = enabledDeviceExtensions;
-        deviceDesc.numDeviceExtensions = std::size(enabledDeviceExtensions);
+        deviceDesc.deviceExtensions = enabledDeviceExtensions_.data();
+        deviceDesc.numDeviceExtensions = enabledDeviceExtensions_.size();
+        deviceDesc.bufferDeviceAddressSupported = rayTracingDecision_.enabled();
         rhiDevice_ = nvrhi::vulkan::createDevice(deviceDesc);
         if (!rhiDevice_) {
             throw std::runtime_error("Failed to create the NvRHI Vulkan device.");
@@ -882,7 +1002,7 @@ namespace lumin::render {
         std::vector<VkExtensionProperties> availableExtensions(extensionCount);
         vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
 
-        for (const char* requiredExtension : deviceExtensions) {
+        for (const char* requiredExtension : baseDeviceExtensions) {
             const auto found = std::find_if(availableExtensions.begin(), availableExtensions.end(),
                                             [requiredExtension](const VkExtensionProperties& extension) {
                                                 return std::strcmp(requiredExtension, extension.extensionName) == 0;
@@ -894,6 +1014,96 @@ namespace lumin::render {
         }
 
         return true;
+    }
+
+    VulkanRayTracingSupport VulkanContext::queryRayTracingSupport(VkPhysicalDevice device) const {
+        std::uint32_t extensionCount = 0;
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+
+        std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+        std::vector<std::string_view> extensionNames;
+        extensionNames.reserve(availableExtensions.size());
+        for (const VkExtensionProperties& extension : availableExtensions) {
+            extensionNames.emplace_back(extension.extensionName);
+        }
+        const VulkanRayTracingExtensionSupport extensionSupport = inspectVulkanRayTracingExtensions(extensionNames);
+
+        VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
+        rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+
+        VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR computeShaderDerivativesFeatures{};
+        computeShaderDerivativesFeatures.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR;
+
+        VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures{};
+        rayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{};
+        accelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+
+        void* extensionFeatureChain = nullptr;
+        if (extensionSupport.rayQuery) {
+            rayQueryFeatures.pNext = extensionFeatureChain;
+            extensionFeatureChain = &rayQueryFeatures;
+        }
+        if (extensionSupport.rayTracingPipeline) {
+            rayTracingPipelineFeatures.pNext = extensionFeatureChain;
+            extensionFeatureChain = &rayTracingPipelineFeatures;
+        }
+        if (extensionSupport.accelerationStructure) {
+            accelerationStructureFeatures.pNext = extensionFeatureChain;
+            extensionFeatureChain = &accelerationStructureFeatures;
+        }
+        if (extensionSupport.computeShaderDerivatives) {
+            computeShaderDerivativesFeatures.pNext = extensionFeatureChain;
+            extensionFeatureChain = &computeShaderDerivativesFeatures;
+        }
+
+        VkPhysicalDeviceVulkan11Features vulkan11Features{};
+        vulkan11Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+        vulkan11Features.pNext = extensionFeatureChain;
+
+        VkPhysicalDeviceVulkan12Features vulkan12Features{};
+        vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        vulkan12Features.pNext = &vulkan11Features;
+
+        VkPhysicalDeviceFeatures2 features{};
+        features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features.pNext = &vulkan12Features;
+        vkGetPhysicalDeviceFeatures2(device, &features);
+
+        VkPhysicalDeviceRayTracingPipelinePropertiesKHR rayTracingProperties{};
+        rayTracingProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+        if (extensionSupport.rayTracingPipeline) {
+            VkPhysicalDeviceProperties2 properties{};
+            properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            properties.pNext = &rayTracingProperties;
+            vkGetPhysicalDeviceProperties2(device, &properties);
+        }
+
+        return evaluateVulkanRayTracingSupport(VulkanRayTracingDeviceProbe{
+            .extensions = extensionSupport,
+            .features =
+                {
+                    .shaderInt64 = features.features.shaderInt64 == VK_TRUE,
+                    .shaderFloat16 = vulkan12Features.shaderFloat16 == VK_TRUE,
+                    .uniformAndStorageBuffer16BitAccess =
+                        vulkan11Features.uniformAndStorageBuffer16BitAccess == VK_TRUE,
+                    .storageBuffer16BitAccess = vulkan11Features.storageBuffer16BitAccess == VK_TRUE,
+                    .bufferDeviceAddress = vulkan12Features.bufferDeviceAddress == VK_TRUE,
+                    .shaderStorageBufferArrayNonUniformIndexing =
+                        vulkan12Features.shaderStorageBufferArrayNonUniformIndexing == VK_TRUE,
+                    .descriptorBindingPartiallyBound = vulkan12Features.descriptorBindingPartiallyBound == VK_TRUE,
+                    .accelerationStructure = accelerationStructureFeatures.accelerationStructure == VK_TRUE,
+                    .rayTracingPipeline = rayTracingPipelineFeatures.rayTracingPipeline == VK_TRUE,
+                    .rayQuery = rayQueryFeatures.rayQuery == VK_TRUE,
+                    .computeDerivativeGroupQuads =
+                        computeShaderDerivativesFeatures.computeDerivativeGroupQuads == VK_TRUE,
+                },
+            .maxRayRecursionDepth = rayTracingProperties.maxRayRecursionDepth,
+        });
     }
 
     bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device) const {

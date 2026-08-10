@@ -1,11 +1,11 @@
-#include "lumin/editor/Editor.hpp"
-#include "lumin/editor/EditorLayout.hpp"
+#include "editor/Editor.hpp"
+#include "editor/EditorLayout.hpp"
 
-#include "lumin/assets/ObjLoader.hpp"
-#include "lumin/render/ImGuiContent.hpp"
-#include "lumin/render/ImGuiLayer.hpp"
-#include "lumin/render/ImGuiManager.hpp"
-#include "lumin/render/LevelRenderer.hpp"
+#include "assets/ObjLoader.hpp"
+#include "render/ImGuiContent.hpp"
+#include "render/ImGuiLayer.hpp"
+#include "render/ImGuiManager.hpp"
+#include "render/LevelRenderer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -256,6 +256,7 @@ namespace {
 
         editor.setCameraSpeed(8.0f);
         editor.setCameraPosition({1.0f, 2.0f, 3.0f});
+        editor.setDirectLightingEnabled(false);
         editor.setShadowsEnabled(false);
         editor.setGlobalIlluminationEnabled(false);
         editor.setTaaEnabled(false);
@@ -263,9 +264,10 @@ namespace {
         editor.setSunDirection({0.0f, -1.0f, 0.0f});
         require(nearlyEqual(camera.moveSpeed(), 8.0f) && camera.position() == glm::vec3(1.0f, 2.0f, 3.0f),
                 "Camera controls must mutate the borrowed camera.");
-        require(!settings.enableShadows && !settings.enableGlobalIllumination && !settings.enableTaa &&
-                    nearlyEqual(settings.exposure, 2.25f) && settings.sunDirection == glm::vec3(0.0f, -1.0f, 0.0f),
-                "Render/GI controls must mutate the borrowed render settings.");
+        require(!settings.directLighting.enabled && !settings.shadows.enabled && !settings.globalIllumination.enabled &&
+                    !settings.temporalAa.enabled && nearlyEqual(settings.toneMapping.exposure, 2.25f) &&
+                    level.environment().sun.direction == glm::vec3(0.0f, -1.0f, 0.0f) && camera.cutEpoch() == 1,
+                "Render/GI controls must mutate feature settings, scene lighting, and explicit camera-cut state.");
 
         const auto actor = level.spawnActor<TestActor>();
         require(editor.selectActor(actor), "A live actor must be selectable for Inspector edits.");
@@ -279,8 +281,9 @@ namespace {
         const auto model = level.addModel(mesh);
         require(editor.selectModel(model), "A live model must be selectable for Inspector edits.");
         lumin::scene::Material material;
-        material.roughness = 0.75f;
-        require(editor.setSelectedMaterial(material) && nearlyEqual(level.model(model).material.roughness, 0.75f),
+        material.metallicRoughness.roughness = 0.75f;
+        require(editor.setSelectedMaterial(material) &&
+                    nearlyEqual(level.model(model).material.metallicRoughness.roughness, 0.75f),
                 "Inspector model materials must use the Level mutation API.");
     }
 

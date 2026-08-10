@@ -1,4 +1,4 @@
-#include "lumin/render/ImGuiLayer.hpp"
+#include "render/ImGuiLayer.hpp"
 
 #include <cmath>
 #include <cstdio>

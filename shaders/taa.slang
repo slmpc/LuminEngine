@@ -1,15 +1,4 @@
-struct PostProcessUniforms {
-    float4x4 inverseViewProjection;
-    float4x4 viewProjection;
-    float4x4 cascadeViewProjections[4];
-    float4 cascadeSplits;
-    float4 cameraPosition;
-    float4 cameraForward;
-    float4 lightDirection;
-    float4 renderSize;
-    float4 renderOptions;
-    float4 tonemapOptions;
-};
+#include "PostProcessUniforms.slang"
 
 [[vk::binding(3, 0)]] Texture2D<float2> motionTexture;
 [[vk::binding(5, 0)]] Texture2D<float4> lightingTexture;
@@ -43,7 +32,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target {
     }
 
     float2 motion = motionTexture.SampleLevel(renderSampler, input.uv, 0.0);
-    float2 previousUv = input.uv - motion;
+    float2 previousUv = input.uv + motion;
     if (any(previousUv <= 0.0) || any(previousUv >= 1.0)) {
         return float4(current, 1.0);
     }

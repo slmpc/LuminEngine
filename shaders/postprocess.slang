@@ -1,15 +1,4 @@
-struct PostProcessUniforms {
-    float4x4 inverseViewProjection;
-    float4x4 viewProjection;
-    float4x4 cascadeViewProjections[4];
-    float4 cascadeSplits;
-    float4 cameraPosition;
-    float4 cameraForward;
-    float4 lightDirection;
-    float4 renderSize;
-    float4 renderOptions;
-    float4 tonemapOptions;
-};
+#include "PostProcessUniforms.slang"
 
 [[vk::binding(7, 0)]] Texture2D<float4> resolvedTexture;
 [[vk::binding(12, 0)]] SamplerState renderSampler;

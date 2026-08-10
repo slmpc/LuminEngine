@@ -1,6 +1,6 @@
-#include "lumin/game/Game.hpp"
+#include "game/Game.hpp"
 
-#include "lumin/core/Application.hpp"
+#include "core/Application.hpp"
 
 #include <chrono>
 #include <filesystem>

@@ -1,0 +1,64 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "debug",
+      "displayName": "Lumin Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlays",
+        "LUMIN_BUILD_TESTS": "ON",
+        "LUMIN_BUILD_SANDBOX": "ON",
+        "LUMIN_RAY_TRACING": "AUTO"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Lumin Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlays",
+        "LUMIN_BUILD_TESTS": "ON",
+        "LUMIN_BUILD_SANDBOX": "ON",
+        "LUMIN_RAY_TRACING": "AUTO"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

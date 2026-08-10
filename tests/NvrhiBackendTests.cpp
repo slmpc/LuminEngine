@@ -1,4 +1,4 @@
-#include "lumin/render/VulkanContext.hpp"
+#include "render/VulkanContext.hpp"
 
 #include <concepts>
 #include <filesystem>

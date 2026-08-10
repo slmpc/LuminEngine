@@ -1,4 +1,4 @@
-#include "lumin/assets/ImageLoader.hpp"
+#include "assets/ImageLoader.hpp"
 
 #include <cstddef>
 #include <cstdint>

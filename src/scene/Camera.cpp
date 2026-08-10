@@ -1,7 +1,8 @@
-#include "lumin/scene/Camera.hpp"
+#include "scene/Camera.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
@@ -30,13 +31,38 @@ namespace lumin::scene {
         return fieldOfViewDegrees_;
     }
 
+    float Camera::nearPlane() const noexcept {
+        return nearPlane_;
+    }
+
+    float Camera::farPlane() const noexcept {
+        return farPlane_;
+    }
+
+    std::uint64_t Camera::revision() const noexcept {
+        return revision_;
+    }
+
+    std::uint64_t Camera::cutEpoch() const noexcept {
+        return cutEpoch_;
+    }
+
     void Camera::setPosition(const glm::vec3& position) noexcept {
+        if (position_ == position) {
+            return;
+        }
         position_ = position;
+        ++revision_;
     }
 
     void Camera::setOrientation(float yawDegrees, float pitchDegrees) noexcept {
+        const float clampedPitch = std::clamp(pitchDegrees, -89.0f, 89.0f);
+        if (yawDegrees_ == yawDegrees && pitchDegrees_ == clampedPitch) {
+            return;
+        }
         yawDegrees_ = yawDegrees;
-        pitchDegrees_ = std::clamp(pitchDegrees, -89.0f, 89.0f);
+        pitchDegrees_ = clampedPitch;
+        ++revision_;
     }
 
     void Camera::setMoveSpeed(float speed) noexcept {
@@ -44,11 +70,37 @@ namespace lumin::scene {
     }
 
     void Camera::setFieldOfViewDegrees(float degrees) noexcept {
-        fieldOfViewDegrees_ = std::clamp(degrees, 1.0f, 120.0f);
+        const float clampedDegrees = std::clamp(degrees, 1.0f, 120.0f);
+        if (fieldOfViewDegrees_ == clampedDegrees) {
+            return;
+        }
+        fieldOfViewDegrees_ = clampedDegrees;
+        ++revision_;
+    }
+
+    void Camera::setClipPlanes(float nearPlane, float farPlane) {
+        if (!std::isfinite(nearPlane) || !std::isfinite(farPlane) || nearPlane <= 0.0f || farPlane <= nearPlane) {
+            throw std::invalid_argument("Camera clip planes require 0 < near < far and finite values.");
+        }
+        if (nearPlane_ == nearPlane && farPlane_ == farPlane) {
+            return;
+        }
+        nearPlane_ = nearPlane;
+        farPlane_ = farPlane;
+        ++revision_;
     }
 
     void Camera::translate(const glm::vec3& offset) noexcept {
+        if (offset == glm::vec3{0.0f}) {
+            return;
+        }
         position_ += offset;
+        ++revision_;
+    }
+
+    void Camera::markCut() noexcept {
+        ++cutEpoch_;
+        ++revision_;
     }
 
     glm::vec3 Camera::forward() const {
@@ -75,7 +127,7 @@ namespace lumin::scene {
     }
 
     glm::mat4 Camera::projectionMatrix(float aspectRatio) const {
-        return glm::perspective(glm::radians(fieldOfViewDegrees_), std::max(aspectRatio, 0.001f), 0.05f, 200.0f);
+        return glm::perspective(glm::radians(fieldOfViewDegrees_), std::max(aspectRatio, 0.001f), nearPlane_, farPlane_);
     }
 
-}
+} // namespace lumin::scene

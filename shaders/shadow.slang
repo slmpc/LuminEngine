@@ -8,6 +8,7 @@ struct ObjectData {
     float4x4 normalMatrix;
     float4 baseColorMetallic;
     float4 materialParameters;
+    uint4 metadata;
 };
 
 [[vk::binding(0, 0)]]

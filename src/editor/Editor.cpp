@@ -1,7 +1,7 @@
-#include "lumin/editor/Editor.hpp"
+#include "editor/Editor.hpp"
 
 #include "EditorStyle.hpp"
-#include "lumin/editor/EditorLayout.hpp"
+#include "editor/EditorLayout.hpp"
 
 #include <algorithm>
 #include <array>
@@ -308,12 +308,27 @@ namespace lumin::editor {
 
         void editMaterial(scene::Material material) {
             bool changed = false;
+            constexpr const char* surfaceModels[] = {"Metallic-Roughness", "Blinn-Phong"};
+            int surfaceModel = static_cast<int>(material.surfaceModel);
+            propertyLabel("Surface model");
+            if (ImGui::Combo("##surfaceModel", &surfaceModel, surfaceModels, std::size(surfaceModels))) {
+                material.surfaceModel = static_cast<scene::SurfaceModel>(surfaceModel);
+                changed = true;
+            }
             propertyLabel("Albedo");
             changed |= ImGui::ColorEdit3("##albedo", &material.albedo.x);
-            propertyLabel("Roughness");
-            changed |= ImGui::SliderFloat("##roughness", &material.roughness, 0.0f, 1.0f);
-            propertyLabel("Metallic");
-            changed |= ImGui::SliderFloat("##metallic", &material.metallic, 0.0f, 1.0f);
+            if (material.surfaceModel == scene::SurfaceModel::MetallicRoughness) {
+                propertyLabel("Roughness");
+                changed |= ImGui::SliderFloat("##roughness", &material.metallicRoughness.roughness, 0.0f, 1.0f);
+                propertyLabel("Metallic");
+                changed |= ImGui::SliderFloat("##metallic", &material.metallicRoughness.metallic, 0.0f, 1.0f);
+            } else {
+                propertyLabel("Specular");
+                changed |= ImGui::ColorEdit3("##specular", &material.blinnPhong.specularColor.x);
+                propertyLabel("Shininess");
+                changed |= ImGui::SliderFloat("##shininess", &material.blinnPhong.shininess, 1.0f, 512.0f, "%.0f",
+                                              ImGuiSliderFlags_Logarithmic);
+            }
             propertyLabel("Texture scale");
             changed |= ImGui::DragFloat("##textureScale", &material.textureScale, 0.05f, 0.01f, 100.0f);
             if (changed) {
@@ -379,24 +394,29 @@ namespace lumin::editor {
             propertyLabel("Position");
             if (ImGui::DragFloat3("##cameraPosition", &position.x, 0.05f)) {
                 camera.setPosition(position);
-                settings.cameraPosition = position;
+                camera.markCut();
             }
+            section("Direct Lighting");
+            ImGui::Checkbox("Enabled##directLighting", &settings.directLighting.enabled);
             section("Shadows");
-            ImGui::Checkbox("Cascaded shadows", &settings.enableShadows);
+            ImGui::Checkbox("Cascaded shadows", &settings.shadows.enabled);
             section("Global Illumination");
-            ImGui::Checkbox("Enabled##gi", &settings.enableGlobalIllumination);
+            ImGui::Checkbox("Enabled##gi", &settings.globalIllumination.enabled);
             const render::gi::BackendInfo backend = backendInfo();
             ImGui::Text("Backend: %.*s", static_cast<int>(backend.name.size()), backend.name.data());
             ImGui::Text("Temporal history: %s", backend.temporal ? "Supported" : "Not supported");
             ImGui::Text("Hardware ray tracing: %s", backend.hardwareRayTracing ? "Supported" : "Not supported");
             section("Temporal AA");
-            ImGui::Checkbox("Enabled##taa", &settings.enableTaa);
+            ImGui::Checkbox("Enabled##taa", &settings.temporalAa.enabled);
             section("Tonemap");
             propertyLabel("Exposure");
-            ImGui::SliderFloat("##exposure", &settings.exposure, 0.1f, 4.0f);
+            ImGui::SliderFloat("##exposure", &settings.toneMapping.exposure, 0.1f, 4.0f);
             section("Lighting");
             propertyLabel("Sun direction");
-            ImGui::SliderFloat3("##sunDirection", &settings.sunDirection.x, -1.0f, 1.0f);
+            scene::DirectionalLight sun = level.environment().sun;
+            if (ImGui::SliderFloat3("##sunDirection", &sun.direction.x, -1.0f, 1.0f)) {
+                level.setSun(sun);
+            }
             ImGui::End();
         }
 
@@ -618,27 +638,33 @@ namespace lumin::editor {
 
     void Editor::setCameraPosition(const glm::vec3& position) noexcept {
         impl_->camera.setPosition(position);
-        impl_->settings.cameraPosition = position;
+        impl_->camera.markCut();
+    }
+
+    void Editor::setDirectLightingEnabled(bool enabled) noexcept {
+        impl_->settings.directLighting.enabled = enabled;
     }
 
     void Editor::setShadowsEnabled(bool enabled) noexcept {
-        impl_->settings.enableShadows = enabled;
+        impl_->settings.shadows.enabled = enabled;
     }
 
     void Editor::setGlobalIlluminationEnabled(bool enabled) noexcept {
-        impl_->settings.enableGlobalIllumination = enabled;
+        impl_->settings.globalIllumination.enabled = enabled;
     }
 
     void Editor::setTaaEnabled(bool enabled) noexcept {
-        impl_->settings.enableTaa = enabled;
+        impl_->settings.temporalAa.enabled = enabled;
     }
 
     void Editor::setExposure(float exposure) noexcept {
-        impl_->settings.exposure = exposure;
+        impl_->settings.toneMapping.exposure = exposure;
     }
 
     void Editor::setSunDirection(const glm::vec3& direction) noexcept {
-        impl_->settings.sunDirection = direction;
+        scene::DirectionalLight sun = impl_->level.environment().sun;
+        sun.direction = direction;
+        impl_->level.setSun(sun);
     }
 
     scripting::ScriptResult Editor::executeCommand(std::string_view command) {

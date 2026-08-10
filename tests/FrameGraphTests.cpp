@@ -1,4 +1,4 @@
-#include "lumin/render/FrameGraph.hpp"
+#include "render/FrameGraph.hpp"
 
 #include <cstdint>
 #include <iostream>
@@ -9,8 +9,11 @@
 namespace {
 
     using lumin::render::FrameGraph;
+    using lumin::render::FrameGraphAccelerationStructureDesc;
     using lumin::render::FrameGraphBarrierRecorder;
+    using lumin::render::FrameGraphBufferDesc;
     using lumin::render::FrameGraphContext;
+    using lumin::render::FrameGraphPassHandle;
     using lumin::render::FrameGraphPassType;
     using lumin::render::FrameGraphTextureDesc;
 
@@ -50,6 +53,16 @@ namespace {
 
         void setBufferState(nvrhi::IBuffer*, nvrhi::ResourceStates) override {
             events.emplace_back("buffer-state");
+        }
+
+        void setAccelerationStructureState(nvrhi::rt::IAccelStruct*, nvrhi::ResourceStates state) override {
+            if (state == nvrhi::ResourceStates::AccelStructRead) {
+                events.emplace_back("as-read");
+            } else if (state == nvrhi::ResourceStates::AccelStructWrite) {
+                events.emplace_back("as-write");
+            } else {
+                events.emplace_back("as-common");
+            }
         }
 
         void commitBarriers() override {
@@ -139,6 +152,142 @@ namespace {
                 "Same-state writes must force an NvRHI memory dependency before the second pass.");
     }
 
+    void testAccelerationStructuresUseFrameGraphBarriers() {
+        FrameGraph graph;
+        FrameGraphAccelerationStructureDesc desc;
+        desc.accelerationStructure =
+            reinterpret_cast<nvrhi::rt::IAccelStruct*>(static_cast<std::uintptr_t>(4));
+        desc.initialState = nvrhi::ResourceStates::Common;
+        desc.finalState = nvrhi::ResourceStates::AccelStructRead;
+        const auto tlas = graph.importAccelerationStructure("scene-tlas", desc);
+
+        graph.addPass(
+            "build-tlas", FrameGraphPassType::Compute,
+            [tlas](lumin::render::FrameGraphBuilder& builder) {
+                builder.writeAccelerationStructure(tlas);
+            },
+            [](const FrameGraphContext&) {});
+        graph.addPass(
+            "trace", FrameGraphPassType::RayTracing,
+            [tlas](lumin::render::FrameGraphBuilder& builder) {
+                builder.readAccelerationStructure(tlas);
+            },
+            [](const FrameGraphContext&) {});
+
+        RecordingBarriers barriers;
+        graph.execute(FrameGraphContext{.barriers = &barriers});
+        const std::vector<std::string> expected{"as-common", "as-write", "commit", "as-read", "commit"};
+        if (barriers.events != expected) {
+            std::cerr << "Acceleration-structure barrier events:";
+            for (const std::string& event : barriers.events) {
+                std::cerr << ' ' << event;
+            }
+            std::cerr << '\n';
+        }
+        require(barriers.events == expected,
+                "FrameGraph must transition TLAS build writes to ray tracing reads.");
+        require(graph.resourceInfo(tlas).kind == lumin::render::FrameGraphResourceKind::AccelerationStructure,
+                "Acceleration structures must remain distinct graph resources.");
+    }
+
+    void testExplicitPassDependenciesParticipateInTopologicalSorting() {
+        FrameGraph graph;
+        const auto synchronizationBuffer = graph.createBuffer("synchronization", FrameGraphBufferDesc{});
+        graph.addPass(
+            "prepare-dependency", FrameGraphPassType::Compute,
+            [synchronizationBuffer](lumin::render::FrameGraphBuilder& builder) {
+                builder.write(synchronizationBuffer);
+            },
+            [](const FrameGraphContext&) {
+            });
+        const FrameGraphPassHandle dependency = graph.addPass(
+            "dependency", FrameGraphPassType::Compute,
+            [synchronizationBuffer](lumin::render::FrameGraphBuilder& builder) {
+                builder.read(synchronizationBuffer);
+            },
+            [](const FrameGraphContext&) {
+            });
+        graph.addPass(
+            "dependent", FrameGraphPassType::RayTracing,
+            [dependency](lumin::render::FrameGraphBuilder& builder) {
+                builder.dependsOn(dependency);
+            },
+            [](const FrameGraphContext&) {
+            });
+
+        graph.compile();
+        const std::span<const std::uint32_t> order = graph.executionOrder();
+        require(order.size() == 3 && order[0] == 0 && order[1] == 1 && order[2] == 2,
+                "Explicit pass dependencies must participate in FrameGraph topological sorting.");
+    }
+
+    void testDuplicatePassDependenciesAreDeduplicated() {
+        FrameGraph graph;
+        const FrameGraphPassHandle dependency =
+            graph.addPass("dependency", FrameGraphPassType::Compute, {}, [](const FrameGraphContext&) {
+            });
+        graph.addPass(
+            "dependent", FrameGraphPassType::RayTracing,
+            [dependency](lumin::render::FrameGraphBuilder& builder) {
+                builder.dependsOn(dependency);
+                builder.dependsOn(dependency);
+            },
+            [](const FrameGraphContext&) {
+            });
+
+        graph.compile();
+        const std::span<const std::uint32_t> order = graph.executionOrder();
+        require(order.size() == 2 && order[0] == 0 && order[1] == 1,
+                "Duplicate explicit pass dependencies must collapse to one topology edge.");
+    }
+
+    void testInvalidAndNonEarlierPassDependenciesAreRejected() {
+        bool invalidRejected = false;
+        try {
+            FrameGraph graph;
+            graph.addPass(
+                "invalid", FrameGraphPassType::Compute,
+                [](lumin::render::FrameGraphBuilder& builder) {
+                    builder.dependsOn({});
+                },
+                [](const FrameGraphContext&) {
+                });
+        } catch (const std::out_of_range&) {
+            invalidRejected = true;
+        }
+        require(invalidRejected, "An invalid explicit pass dependency must be rejected during setup.");
+
+        bool selfRejected = false;
+        try {
+            FrameGraph graph;
+            graph.addPass(
+                "self", FrameGraphPassType::Compute,
+                [](lumin::render::FrameGraphBuilder& builder) {
+                    builder.dependsOn(FrameGraphPassHandle{0});
+                },
+                [](const FrameGraphContext&) {
+                });
+        } catch (const std::invalid_argument&) {
+            selfRejected = true;
+        }
+        require(selfRejected, "A self-referential explicit pass dependency must be rejected during setup.");
+
+        bool forwardRejected = false;
+        try {
+            FrameGraph graph;
+            graph.addPass(
+                "forward", FrameGraphPassType::Compute,
+                [](lumin::render::FrameGraphBuilder& builder) {
+                    builder.dependsOn(FrameGraphPassHandle{1});
+                },
+                [](const FrameGraphContext&) {
+                });
+        } catch (const std::invalid_argument&) {
+            forwardRejected = true;
+        }
+        require(forwardRejected, "A forward explicit pass dependency must be rejected during setup.");
+    }
+
 }
 
 int main() {
@@ -147,6 +296,10 @@ int main() {
         testTransientDefaultsUseConcreteFirstState();
         testReadOnlyPassesDoNotRequestTransitions();
         testSameStateWritesForceMemoryDependency();
+        testAccelerationStructuresUseFrameGraphBarriers();
+        testExplicitPassDependenciesParticipateInTopologicalSorting();
+        testDuplicatePassDependenciesAreDeduplicated();
+        testInvalidAndNonEarlierPassDependenciesAreRejected();
         std::cout << "FrameGraphNvRhiManualBarriers PASS\n";
         return 0;
     } catch (const std::exception& error) {

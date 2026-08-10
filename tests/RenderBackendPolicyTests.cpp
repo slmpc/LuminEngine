@@ -1,4 +1,4 @@
-#include "lumin/render/BackendLifetime.hpp"
+#include "render/BackendLifetime.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -103,7 +103,7 @@ namespace {
 
     std::vector<fs::path> rendererSources(const fs::path& root) {
         std::vector<fs::path> files;
-        for (const fs::path& directory : {root / "include/lumin/render", root / "src/render"}) {
+        for (const fs::path& directory : {root / "src/render"}) {
             for (const fs::directory_entry& entry : fs::recursive_directory_iterator(directory)) {
                 if (!entry.is_regular_file()) {
                     continue;
@@ -121,7 +121,7 @@ namespace {
     void addIdentifierViolations(const fs::path& root, const fs::path& path, const std::string& code,
                                  std::vector<Violation>& violations) {
         const fs::path relative = fs::relative(path, root);
-        const bool contextAllowlist = relative == fs::path("include/lumin/render/VulkanContext.hpp") ||
+        const bool contextAllowlist = relative == fs::path("src/render/VulkanContext.hpp") ||
                                       relative == fs::path("src/render/VulkanContext.cpp");
         static const std::regex identifierPattern(R"(\b[A-Za-z_][A-Za-z0-9_]*\b)");
         for (std::sregex_iterator iterator(code.begin(), code.end(), identifierPattern), end; iterator != end;
@@ -152,7 +152,7 @@ namespace {
         const bool frameGraphImplementation = relative == fs::path("src/render/FrameGraph.cpp");
         if (!frameGraphImplementation) {
             std::string callsOnly = code;
-            if (relative == fs::path("include/lumin/render/FrameGraph.hpp")) {
+            if (relative == fs::path("src/render/FrameGraph.hpp")) {
                 static const std::regex pureVirtualBarrierDeclaration(
                     R"(virtual\s+void\s+(?:beginTracking[A-Za-z0-9_]*State|set(?:Texture|Buffer|Permanent)[A-Za-z0-9_]*State|commitBarriers)\s*\([^;{}]*\)\s*(?:=\s*0)?\s*;)");
                 callsOnly = std::regex_replace(callsOnly, pureVirtualBarrierDeclaration, "");
@@ -206,7 +206,7 @@ namespace {
 
     void verifySubmissionAndLifetime(const fs::path& root) {
         const std::string context = stripCommentsAndLiterals(readFile(root / "src/render/VulkanContext.cpp"));
-        std::size_t position = context.find("bool VulkanContext::submitFrame");
+        std::size_t position = context.find("void VulkanContext::submitFrameCommands");
         position = requireAfter(context, "queueWaitForSemaphore", position, "same-submit ordering");
         position = requireAfter(context, "queueSignalSemaphore", position, "same-submit ordering");
         requireAfter(context, "executeCommandLists", position, "same-submit ordering");
@@ -260,7 +260,7 @@ namespace {
         }
         const std::vector<std::pair<fs::path, std::string>> maliciousCases = {
             {root / "src/render/AdversarialProbe.cpp", "void vkCreateMaliciousHelper();"},
-            {root / "include/lumin/render/FrameGraph.hpp", "inline void probe(){ commitBarriers(); }"},
+            {root / "src/render/FrameGraph.hpp", "inline void probe(){ commitBarriers(); }"},
             {root / "src/render/AdversarialProbe.cpp", "void probe(){ setEnableAutomaticBarriers(true); }"},
         };
         for (const auto& [path, malicious] : maliciousCases) {

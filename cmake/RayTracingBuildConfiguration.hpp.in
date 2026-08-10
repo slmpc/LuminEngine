@@ -1,0 +1,22 @@
+#pragma once
+
+#include "render/VulkanRayTracingCapabilities.hpp"
+
+namespace lumin::render {
+
+    /**
+     * @brief 返回 CMake 为当前构建产物固定的 Ray Tracing 策略。
+     *
+     * 该值来自 `LUMIN_RAY_TRACING` cache 变量，运行时配置不能覆盖它。
+     */
+    inline constexpr RayTracingMode configuredRayTracingBuildMode = RayTracingMode::@LUMIN_RAY_TRACING_MODE_ENUM@;
+
+    /**
+     * @brief 当前产物是否编入 Vulkan Ray Tracing 实现。
+     *
+     * `AUTO` 与 `ON` 为 `true`，`OFF` 为 `false`。只有本值和运行时设备决策均允许时，
+     * `VulkanContext` 才会探测 RT Feature、启用扩展或创建 RT 资源。
+     */
+    inline constexpr bool rayTracingImplementationAvailable = @LUMIN_RAY_TRACING_IMPLEMENTATION_AVAILABLE@;
+
+} // namespace lumin::render

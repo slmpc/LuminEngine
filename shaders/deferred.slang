@@ -1,15 +1,5 @@
-struct PostProcessUniforms {
-    float4x4 inverseViewProjection;
-    float4x4 viewProjection;
-    float4x4 cascadeViewProjections[4];
-    float4 cascadeSplits;
-    float4 cameraPosition;
-    float4 cameraForward;
-    float4 lightDirection;
-    float4 renderSize;
-    float4 renderOptions;
-    float4 tonemapOptions;
-};
+#include "PostProcessUniforms.slang"
+#include "GpuScene.slang"
 
 [[vk::binding(0, 0)]] Texture2D<float4> positionTexture;
 [[vk::binding(1, 0)]] Texture2D<float4> normalTexture;
@@ -21,6 +11,8 @@ struct PostProcessUniforms {
 [[vk::binding(11, 0)]] Texture2D<float> shadowTexture3;
 [[vk::binding(12, 0)]] SamplerState renderSampler;
 [[vk::binding(13, 0)]] ConstantBuffer<PostProcessUniforms> frame;
+[[vk::binding(0, 1)]] Texture2D<uint> materialIdTexture;
+[[vk::binding(1, 1)]] StructuredBuffer<GpuMaterialData> materials;
 
 struct VertexOutput {
     float4 position : SV_Position;
@@ -102,9 +94,14 @@ float3 fresnelSchlick(float cosineTheta, float3 reflectanceAtNormal) {
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target {
     float4 worldPositionSample = positionTexture.SampleLevel(renderSampler, input.uv, 0.0);
-    if (worldPositionSample.w < 0.5) {
+    if (worldPositionSample.w <= 0.0) {
         discard;
     }
+    uint materialId = materialIdTexture.Load(int3(int2(input.position.xy), 0));
+    if (materialId == 0xffffffffu) {
+        discard;
+    }
+    GpuMaterialData material = materials[materialId];
 
     float3 worldPosition = worldPositionSample.xyz;
     float4 normalRoughness = normalTexture.SampleLevel(renderSampler, input.uv, 0.0);
@@ -127,15 +124,27 @@ float4 fragmentMain(VertexOutput input) : SV_Target {
     float3 halfVector = dot(lightViewSum, lightViewSum) > 1e-8 ? normalize(lightViewSum) : normal;
     float normalDotLight = max(dot(normal, toLight), 0.0);
     float normalDotView = max(dot(normal, toView), 0.0);
-    float3 baseReflectance = lerp(0.04.xxx, albedo, metallic);
-    float3 fresnel = fresnelSchlick(max(dot(halfVector, toView), 0.0), baseReflectance);
-    float distribution = distributionGgx(normal, halfVector, roughness);
-    float geometry = geometrySmith(normal, toView, toLight, roughness);
-    float3 specular = distribution * geometry * fresnel / max(4.0 * normalDotView * normalDotLight, 1e-4);
-    float3 diffuseWeight = (1.0 - fresnel) * (1.0 - metallic);
     float3 sunColor = float3(1.0, 0.94, 0.82) * 3.2;
-    float3 legacyAmbient = albedo * (1.0 - metallic) * 0.12 + baseReflectance * 0.04;
+    float3 directBrdf;
+    float3 legacyAmbient;
+    if (material.metadata.x == 1u) {
+        // G-buffer 中的逐像素等效粗糙度会同时保留 roughness texture 对高光宽度的影响。
+        float exponent = clamp(2.0 / max(roughness * roughness, 1e-5) - 2.0, 1.0, 8192.0);
+        float3 specularColor = saturate(material.specularColorShininess.rgb);
+        float blinnSpecular = pow(max(dot(normal, halfVector), 0.0), exponent);
+        directBrdf = albedo / pi + specularColor * blinnSpecular;
+        legacyAmbient = albedo * 0.12 + specularColor * 0.04;
+    } else {
+        float3 baseReflectance = lerp(0.04.xxx, albedo, metallic);
+        float3 fresnel = fresnelSchlick(max(dot(halfVector, toView), 0.0), baseReflectance);
+        float distribution = distributionGgx(normal, halfVector, roughness);
+        float geometry = geometrySmith(normal, toView, toLight, roughness);
+        float3 specular = distribution * geometry * fresnel / max(4.0 * normalDotView * normalDotLight, 1e-4);
+        float3 diffuseWeight = (1.0 - fresnel) * (1.0 - metallic);
+        directBrdf = diffuseWeight * albedo / pi + specular;
+        legacyAmbient = albedo * (1.0 - metallic) * 0.12 + baseReflectance * 0.04;
+    }
     float3 ambient = legacyAmbient * globalIllumination.a + globalIllumination.rgb;
-    float3 direct = (diffuseWeight * albedo / pi + specular) * sunColor * normalDotLight * visibility;
+    float3 direct = directBrdf * sunColor * normalDotLight * visibility * saturate(frame.lightDirection.w);
     return float4(ambient + direct, 1.0);
 }

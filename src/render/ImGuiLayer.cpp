@@ -1,7 +1,7 @@
-#include "lumin/render/ImGuiLayer.hpp"
+#include "render/ImGuiLayer.hpp"
 
-#include "lumin/platform/Window.hpp"
-#include "lumin/render/ShaderLibrary.hpp"
+#include "platform/Window.hpp"
+#include "render/ShaderLibrary.hpp"
 
 #include <algorithm>
 #include <cmath>

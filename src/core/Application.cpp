@@ -1,11 +1,11 @@
-#include "lumin/core/Application.hpp"
+#include "core/Application.hpp"
 
-#include "lumin/editor/Editor.hpp"
-#include "lumin/platform/RenderDocAttachment.hpp"
-#include "lumin/platform/Window.hpp"
-#include "lumin/render/LevelRenderer.hpp"
-#include "lumin/render/VulkanContext.hpp"
-#include "lumin/scene/CameraController.hpp"
+#include "editor/Editor.hpp"
+#include "platform/RenderDocAttachment.hpp"
+#include "platform/Window.hpp"
+#include "render/LevelRenderer.hpp"
+#include "render/VulkanContext.hpp"
+#include "scene/CameraController.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -54,13 +54,14 @@ namespace lumin::core {
             : config(std::move(applicationConfig)), game(std::move(applicationGame)),
               renderDoc(attachRenderDoc(config)),
               window(platform::WindowDesc{config.width, config.height, config.title}),
-              vulkan(window, render::VulkanContextDesc{config.title,
+              vulkan(window, render::VulkanContextDesc{.applicationName = config.title,
+                                                       .enableValidation =
 #if defined(LUMIN_ENABLE_VALIDATION)
-                                                       true
+                                                       true,
 #else
-                                                       false
+                                                       false,
 #endif
-                             }),
+                                                       .rayTracing = {}}),
               scripts(scripting::ScriptRuntimeOptions{.scriptRoot = config.scriptRoot,
                                                       .diagnosticCapacity = 256,
                                                       .consoleHistoryCapacity = 128,

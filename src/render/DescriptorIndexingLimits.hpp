@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "lumin/render/ModelRenderer.hpp"
+#include "render/ModelRenderer.hpp"
 
 namespace lumin::render::detail {
 

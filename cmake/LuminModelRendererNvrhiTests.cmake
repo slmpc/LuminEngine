@@ -4,7 +4,7 @@ if(LUMIN_BUILD_TESTS)
         src/render/DescriptorIndexingLimits.cpp
     )
     target_include_directories(lumin_model_renderer_nvrhi_tests PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
     )
     target_compile_features(lumin_model_renderer_nvrhi_tests PRIVATE cxx_std_20)

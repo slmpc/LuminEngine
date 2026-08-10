@@ -1,4 +1,4 @@
-#include "lumin/scripting/ScriptRuntime.hpp"
+#include "scripting/ScriptRuntime.hpp"
 
 #include <chrono>
 #include <filesystem>

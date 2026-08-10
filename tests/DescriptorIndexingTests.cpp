@@ -1,5 +1,6 @@
-#include "lumin/render/ModelRenderer.hpp"
-#include "lumin/scene/Level.hpp"
+#include "render/ModelRenderer.hpp"
+#include "render/world/RenderWorld.hpp"
+#include "scene/Level.hpp"
 #include "render/DescriptorIndexingLimits.hpp"
 
 #include <cstdint>
@@ -50,7 +51,7 @@ namespace {
     }
 
     void testMaterialDescriptorIndicesPreserveBatchAbi() {
-        static_assert(sizeof(lumin::render::ObjectData) == 224);
+        static_assert(sizeof(lumin::render::ObjectData) == 240);
         static_assert(alignof(lumin::render::ObjectData) == 16);
 
         lumin::scene::Level level;
@@ -60,7 +61,8 @@ namespace {
         level.addModel(mesh, {}, texturedMaterial("wood"));
         level.addModel(mesh);
 
-        const lumin::render::ModelBatch batch = lumin::render::ModelRenderer::buildBatch(level);
+        const auto renderWorld = lumin::render::world::RenderWorldExtractor::extract(level);
+        const lumin::render::ModelBatch batch = lumin::render::ModelRenderer::buildBatch(*renderWorld);
         require(batch.objects.size() == 4, "Every model must retain one ObjectData record.");
         require(batch.objects[0].materialParameters.z == 1.0f && batch.objects[1].materialParameters.z == 1.0f,
                 "Materials referencing the same images must share descriptor index 1.");
@@ -68,6 +70,20 @@ namespace {
                 "The second unique material texture set must use descriptor index 2.");
         require(batch.objects[3].materialParameters.z == 0.0f,
                 "Untextured materials must retain descriptor index 0 fallback semantics.");
+    }
+
+    void testSparseMaterialTableUsesStableModelSlots() {
+        lumin::scene::Level level;
+        const lumin::scene::MeshHandle mesh = level.addMesh(makeTriangle());
+        const lumin::scene::ModelHandle removed = level.addModel(mesh);
+        const lumin::scene::ModelHandle retained = level.addModel(mesh);
+        require(level.removeModel(removed), "Sparse material fixture must remove its first model slot.");
+
+        const auto world = lumin::render::world::RenderWorldExtractor::extract(level);
+        const lumin::render::ModelBatch batch = lumin::render::ModelRenderer::buildBatch(*world);
+        require(batch.objects.size() == 1 && batch.materials.size() == static_cast<std::size_t>(retained.index) + 1U &&
+                    batch.objects.front().metadata.x == retained.index,
+                "Material table and G-buffer object metadata must retain sparse stable model slots.");
     }
 
     void testDescriptorLimitsRejectOversubscription() {
@@ -157,6 +173,7 @@ namespace {
 int main() {
     try {
         testMaterialDescriptorIndicesPreserveBatchAbi();
+        testSparseMaterialTableUsesStableModelSlots();
         testDescriptorLimitsRejectOversubscription();
         std::cout << "Descriptor indexing tests passed.\n";
         return 0;

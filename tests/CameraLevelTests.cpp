@@ -1,9 +1,10 @@
-#include "lumin/assets/ImageLoader.hpp"
-#include "lumin/render/ModelRenderer.hpp"
-#include "lumin/scene/Camera.hpp"
-#include "lumin/scene/CameraController.hpp"
-#include "lumin/scene/Level.hpp"
-#include "lumin/scene/Terrain.hpp"
+#include "assets/ImageLoader.hpp"
+#include "render/ModelRenderer.hpp"
+#include "render/world/RenderWorld.hpp"
+#include "scene/Camera.hpp"
+#include "scene/CameraController.hpp"
+#include "scene/Level.hpp"
+#include "scene/Terrain.hpp"
 
 #include <algorithm>
 #include <array>
@@ -103,6 +104,53 @@ namespace {
                 "NvRHI motion must be current minus previous screen UV and reproject to the previous sample.");
     }
 
+    void testCameraRenderRevisionAndExplicitCut() {
+        lumin::scene::Camera camera;
+        const std::uint64_t initialRevision = camera.revision();
+        const std::uint64_t initialCut = camera.cutEpoch();
+
+        camera.translate({1.0f, 0.0f, 0.0f});
+        require(camera.revision() > initialRevision && camera.cutEpoch() == initialCut,
+                "Continuous camera motion must advance view revision without implying a cut.");
+
+        camera.markCut();
+        require(camera.cutEpoch() == initialCut + 1, "Explicit camera cuts must advance their own epoch.");
+
+        camera.setClipPlanes(0.2f, 500.0f);
+        require(nearlyEqual(camera.nearPlane(), 0.2f) && nearlyEqual(camera.farPlane(), 500.0f),
+                "Camera projection must expose configurable clip planes.");
+
+        bool rejected = false;
+        try {
+            camera.setClipPlanes(1.0f, 1.0f);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        require(rejected, "Camera must reject an invalid clip range.");
+    }
+
+    void testEnvironmentRevisionsAreSeparated() {
+        lumin::scene::Level level;
+        const std::uint64_t baseRevision = level.revision();
+        const std::uint64_t baseLighting = level.lightingRevision();
+        const std::uint64_t baseAtmosphere = level.atmosphereRevision();
+
+        level.setEnvironment(level.environment());
+        require(level.revision() == baseRevision, "Assigning an identical environment must be a no-op.");
+
+        lumin::scene::DirectionalLight sun = level.environment().sun;
+        sun.illuminanceLux *= 0.5f;
+        level.setSun(sun);
+        require(level.lightingRevision() == baseLighting + 1 && level.atmosphereRevision() == baseAtmosphere,
+                "Sun changes must advance only the lighting revision.");
+
+        lumin::scene::AtmosphereParameters atmosphere = level.environment().atmosphere;
+        atmosphere.miePhaseG = 0.7f;
+        level.setAtmosphere(atmosphere);
+        require(level.lightingRevision() == baseLighting + 1 && level.atmosphereRevision() == baseAtmosphere + 1,
+                "Atmosphere changes must advance only the atmosphere revision.");
+    }
+
     void testLevelAndIndirectBatch() {
         lumin::scene::Level level;
         const auto triangle = level.addMesh(makeTriangle("triangle"));
@@ -120,7 +168,8 @@ namespace {
         }
         require(rejectedInvalidHandle, "Level must reject an invalid mesh handle.");
 
-        const lumin::render::ModelBatch batch = lumin::render::ModelRenderer::buildBatch(level);
+        const auto renderWorld = lumin::render::world::RenderWorldExtractor::extract(level);
+        const lumin::render::ModelBatch batch = lumin::render::ModelRenderer::buildBatch(*renderWorld);
         require(batch.vertices.size() == 7, "Unique mesh vertices must be packed once.");
         require(batch.indices.size() == 9, "Unique mesh indices must be packed once.");
         require(batch.commands.size() == 3, "One indirect command is required per model.");
@@ -225,15 +274,16 @@ namespace {
         const auto mesh = level.addMesh(makeTriangle("pbr-material"));
         lumin::scene::Material asphalt;
         asphalt.albedo = {0.8f, 0.9f, 1.0f};
-        asphalt.roughness = 0.75f;
-        asphalt.metallic = 0.2f;
+        asphalt.metallicRoughness.roughness = 0.75f;
+        asphalt.metallicRoughness.metallic = 0.2f;
         asphalt.textureScale = 3.0f;
         asphalt.textures = asphaltTextures;
         const auto first = level.addModel(mesh, {}, asphalt);
         level.addModel(mesh, {}, asphalt);
         level.addModel(mesh);
 
-        const lumin::render::ModelBatch batch = lumin::render::ModelRenderer::buildBatch(level);
+        const auto renderWorld = lumin::render::world::RenderWorldExtractor::extract(level);
+        const lumin::render::ModelBatch batch = lumin::render::ModelRenderer::buildBatch(*renderWorld);
         require(nearlyEqual(batch.objects[0].baseColorMetallic.w, 0.2f) &&
                     nearlyEqual(batch.objects[0].materialParameters.x, 0.75f) &&
                     nearlyEqual(batch.objects[0].materialParameters.y, 3.0f) &&
@@ -243,9 +293,12 @@ namespace {
         require(nearlyEqual(batch.objects[1].materialParameters.z, 1.0f) &&
                     nearlyEqual(batch.objects[2].materialParameters.z, 0.0f),
                 "Matching PBR materials must share a texture-array layer and defaults must use layer zero.");
+        require(batch.materials.size() == 3 && batch.objects[0].metadata.x == first.index &&
+                    batch.materials[first.index].metadata.y == 1U,
+                "Model slots must address the shared sparse GPU material table without compact remapping.");
 
         const std::uint64_t scalarTopologyRevision = level.topologyRevision();
-        asphalt.metallic = 0.4f;
+        asphalt.metallicRoughness.metallic = 0.4f;
         require(level.setModelMaterial(first, asphalt) && level.topologyRevision() == scalarTopologyRevision,
                 "Scalar PBR changes must not rebuild model topology.");
         const std::uint64_t normalConventionTopologyRevision = level.topologyRevision();
@@ -680,7 +733,8 @@ namespace {
         require(!meshLevel.replaceMesh(oldMesh, makeTriangle("stale-replace")),
                 "A stale mesh handle must not replace reused geometry.");
         meshLevel.addModel(replacementMesh);
-        const lumin::render::ModelBatch batch = lumin::render::ModelRenderer::buildBatch(meshLevel);
+        const auto renderWorld = lumin::render::world::RenderWorldExtractor::extract(meshLevel);
+        const lumin::render::ModelBatch batch = lumin::render::ModelRenderer::buildBatch(*renderWorld);
         require(batch.vertices.size() == 4 && batch.indices.size() == 6 && batch.commands[0].indexCount == 6,
                 "Mesh-slot reuse must preserve the renderer's handle-to-mesh index contract.");
     }
@@ -750,7 +804,10 @@ namespace {
                 "Updated model transform must be exposed to the renderer-facing model list.");
 
         const std::uint64_t materialRevision = level.modelRevision();
-        require(level.setModelMaterial(modelHandle, lumin::scene::Material{{0.1f, 0.2f, 0.3f}, 0.2f}),
+        lumin::scene::Material updatedMaterial;
+        updatedMaterial.albedo = {0.1f, 0.2f, 0.3f};
+        updatedMaterial.metallicRoughness.roughness = 0.2f;
+        require(level.setModelMaterial(modelHandle, updatedMaterial),
                 "Model material update must accept a valid handle.");
         require(level.modelRevision() > materialRevision, "Material updates must advance model revision.");
 
@@ -805,6 +862,8 @@ int main() {
     try {
         testCameraMovement();
         testCameraProjectionMatchesNvrhiLogicalY();
+        testCameraRenderRevisionAndExplicitCut();
+        testEnvironmentRevisionsAreSeparated();
         testLevelAndIndirectBatch();
         testPbrAssetsAndMaterialBatch();
         testActorLifecycleAndDeferredChanges();

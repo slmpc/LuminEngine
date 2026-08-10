@@ -1,4 +1,4 @@
-#include "lumin/render/TextureManager.hpp"
+#include "render/TextureManager.hpp"
 
 #include <algorithm>
 #include <array>
@@ -406,7 +406,7 @@ namespace {
         TextureManager manager(device);
         manager.create(64, 32);
 
-        require(device.live.textures == 26, "Two frame slots must own thirteen textures each.");
+        require(device.live.textures == 28, "Two frame slots must own fourteen textures each.");
         require(device.live.buffers == 2, "Two frame slots must own independent uniform buffers.");
         require(device.live.bindingSets == 2, "Two frame slots must own independent binding sets.");
         require(manager.bindingSet(0) != manager.bindingSet(1), "Frame-slot binding sets must be distinct.");
@@ -415,6 +415,7 @@ namespace {
                     manager.normalFormat() == nvrhi::Format::RGBA16_FLOAT &&
                     manager.albedoFormat() == nvrhi::Format::RGBA8_UNORM &&
                     manager.motionFormat() == nvrhi::Format::RG16_FLOAT &&
+                    manager.materialIdFormat() == nvrhi::Format::R32_UINT &&
                     manager.depthFormat() == nvrhi::Format::D32 &&
                     manager.globalIlluminationFormat() == nvrhi::Format::RGBA16_FLOAT &&
                     manager.lightingFormat() == nvrhi::Format::RGBA16_FLOAT &&
@@ -440,20 +441,27 @@ namespace {
                     "Render textures must preserve the requested extent.");
             require(frame.shadowCascades.size() == 4, "Every frame slot must own four shadow cascades.");
             require(desc(frame.position).isRenderTarget && desc(frame.position).isShaderResource &&
-                        !desc(frame.position).isUAV,
-                    "G-buffer position must remain render-target plus sampled usage.");
+                        desc(frame.position).isUAV,
+                    "Surface position must support render-target, sampled, and RT UAV usage.");
             require(desc(frame.normalRoughness).isRenderTarget && desc(frame.normalRoughness).isShaderResource &&
+                        desc(frame.normalRoughness).isUAV &&
                         desc(frame.albedo).isRenderTarget && desc(frame.albedo).isShaderResource &&
-                        desc(frame.motion).isRenderTarget && desc(frame.motion).isShaderResource,
-                    "G-buffer color resources must remain render-target plus sampled usage.");
+                        desc(frame.albedo).isUAV &&
+                        desc(frame.motion).isRenderTarget && desc(frame.motion).isShaderResource &&
+                        desc(frame.motion).isUAV &&
+                        desc(frame.materialId).isRenderTarget && desc(frame.materialId).isShaderResource &&
+                        desc(frame.materialId).isUAV &&
+                        desc(frame.materialId).format == nvrhi::Format::R32_UINT,
+                    "Surface color resources must support render-target, sampled, and RT UAV usage.");
             require(desc(frame.depth).isRenderTarget && !desc(frame.depth).isShaderResource && !desc(frame.depth).isUAV,
                     "G-buffer depth must remain depth-attachment-only usage.");
             require(desc(frame.globalIllumination).isRenderTarget && desc(frame.globalIllumination).isShaderResource &&
                         desc(frame.globalIllumination).isUAV,
                     "GI must remain render-target, sampled, and storage usage.");
             require(desc(frame.lighting).isRenderTarget && desc(frame.lighting).isShaderResource &&
-                        desc(frame.taaResolved).isRenderTarget && desc(frame.taaResolved).isShaderResource,
-                    "Lighting and TAA resolved textures must remain render-target plus sampled usage.");
+                        desc(frame.lighting).isUAV && desc(frame.taaResolved).isRenderTarget &&
+                        desc(frame.taaResolved).isShaderResource && desc(frame.taaResolved).isUAV,
+                    "Lighting and TAA resolved textures must support Hybrid UAV usage.");
             require(!desc(frame.history).isRenderTarget && desc(frame.history).isShaderResource &&
                         !desc(frame.history).isUAV,
                     "TAA history must remain sampled and copy-destination compatible without render-target usage.");
@@ -541,7 +549,7 @@ namespace {
 
     void verifyForbiddenTokens() {
         const std::string production =
-            readSource("include/lumin/render/TextureManager.hpp") + readSource("src/render/TextureManager.cpp");
+            readSource("src/render/TextureManager.hpp") + readSource("src/render/TextureManager.cpp");
         constexpr const char* forbidden[] = {"VkDescriptor",    "VkSampler",     "VkImage",   "VkImageView",
                                              "vkCreate",        "vkUpdate",      "vkDestroy", "beginTracking",
                                              "setTextureState", "commitBarriers"};

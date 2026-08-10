@@ -1,7 +1,7 @@
 #include "SandboxGame.hpp"
 
-#include "lumin/assets/ObjLoader.hpp"
-#include "lumin/scene/Terrain.hpp"
+#include "assets/ObjLoader.hpp"
+#include "scene/Terrain.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -149,13 +149,13 @@ namespace lumin::sandbox {
 
         scene::Material asphalt;
         asphalt.albedo = {1.0f, 1.0f, 1.0f};
-        asphalt.roughness = 1.0f;
-        asphalt.metallic = 0.0f;
+        asphalt.metallicRoughness.roughness = 1.0f;
+        asphalt.metallicRoughness.metallic = 0.0f;
         asphalt.textureScale = 2.5f;
         asphalt.textures = defaultAsphaltTextures();
         scene::Material green;
         green.albedo = {0.25f, 0.76f, 0.46f};
-        green.roughness = 0.58f;
+        green.metallicRoughness.roughness = 0.58f;
 
         context.level.addModel(primary, leftTransform, asphalt);
         context.level.addModel(secondary, centerTransform, green);
@@ -167,7 +167,7 @@ namespace lumin::sandbox {
         terrainDescription.sizeZ = 18.0f;
         scene::Material terrainMaterial;
         terrainMaterial.albedo = {0.18f, 0.42f, 0.23f};
-        terrainMaterial.roughness = 0.82f;
+        terrainMaterial.metallicRoughness.roughness = 0.82f;
         const scene::ActorHandle terrainActor =
             context.level.spawnActor<scene::TerrainActor>(terrainDescription, terrainMaterial);
         if (scene::Actor* actor = context.level.actor(terrainActor); actor != nullptr) {

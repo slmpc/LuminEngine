@@ -7,8 +7,7 @@
 Lumin Engine 是一个使用 C++20、Vulkan 1.3、SDL3 和 Slang 构建的紧凑型渲染器与场景沙盒。
 主要代码位于：
 
-- `include/lumin`：引擎公共头文件。
-- `src`：引擎实现。
+- `src`：引擎头文件与实现。
 - `apps/sandbox`：可运行的示例程序。
 - `shaders`：Slang 着色器源码。
 - `tests`：引擎测试。
@@ -37,7 +36,7 @@ ctest --test-dir out/build/debug --output-on-failure
 
 - 使用 C++20，并遵循仓库根目录的 `.clang-format`。
 - 使用 4 个空格缩进，禁止制表符；每行不超过 120 个字符。
-- 保持公共接口位于 `include/lumin`，对应实现位于 `src`。
+- 头文件与对应实现统一位于 `src`，使用不带项目名称前缀的 include 路径（例如 `render/FrameGraph.hpp`）。
 - 优先沿用现有命名、所有权和错误处理方式，避免无关重构。
 - 新增或移动源文件时，同步更新 `CMakeLists.txt`。
 - 不要提交 `out`、`build`、生成的 SPIR-V、可执行文件或其他构建产物。

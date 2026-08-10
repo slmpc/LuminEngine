@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <optional>
 
-#include "lumin/game/Game.hpp"
+#include "game/Game.hpp"
 
 namespace lumin::sandbox {
 

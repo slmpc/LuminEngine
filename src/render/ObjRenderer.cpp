@@ -1,9 +1,9 @@
-#include "lumin/render/ObjRenderer.hpp"
+#include "render/ObjRenderer.hpp"
 
-#include "lumin/render/LevelRenderer.hpp"
-#include "lumin/render/VulkanContext.hpp"
-#include "lumin/scene/Camera.hpp"
-#include "lumin/scene/Level.hpp"
+#include "render/LevelRenderer.hpp"
+#include "render/VulkanContext.hpp"
+#include "scene/Camera.hpp"
+#include "scene/Level.hpp"
 
 #include <stdexcept>
 #include <utility>
@@ -12,7 +12,6 @@ namespace lumin::render {
 
     struct ObjRenderer::Impl {
         scene::Level level;
-        scene::Camera camera;
         std::unique_ptr<LevelRenderer> renderer;
 
         Impl(platform::Window& window, VulkanContext& context, const assets::Mesh& mesh,
@@ -33,9 +32,8 @@ namespace lumin::render {
 
     ObjRenderer::~ObjRenderer() = default;
 
-    void ObjRenderer::drawFrame(RenderSettings& settings) {
-        impl_->camera.setPosition(settings.cameraPosition);
-        impl_->renderer->drawFrame(impl_->camera, settings);
+    void ObjRenderer::drawFrame(scene::Camera& camera, RenderSettings& settings) {
+        impl_->renderer->drawFrame(camera, settings);
     }
 
     void ObjRenderer::waitIdle() const {

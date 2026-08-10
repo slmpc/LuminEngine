@@ -1,6 +1,6 @@
-#include "lumin/render/PipelineManager.hpp"
+#include "render/PipelineManager.hpp"
 
-#include "lumin/render/VulkanContext.hpp"
+#include "render/VulkanContext.hpp"
 
 #include <array>
 #include <string>
@@ -16,13 +16,20 @@ namespace lumin::render {
         destroy();
     }
 
-    void PipelineManager::create(nvrhi::BindingLayoutHandle bindingLayout, nvrhi::Format lightingFormat,
+    void PipelineManager::create(nvrhi::BindingLayoutHandle fullscreenBindingLayout,
+                                 nvrhi::BindingLayoutHandle directLightingBindingLayout,
+                                 nvrhi::BindingLayoutHandle atmosphereBindingLayout, nvrhi::Format lightingFormat,
                                  nvrhi::Format swapchainFormat) {
         destroy();
 
-        const std::array<nvrhi::BindingLayoutHandle, 1> bindingLayouts = {std::move(bindingLayout)};
+        const std::array<nvrhi::BindingLayoutHandle, 1> fullscreenLayouts = {std::move(fullscreenBindingLayout)};
+        const std::array<nvrhi::BindingLayoutHandle, 2> deferredLayouts = {fullscreenLayouts.front(),
+                                                                           std::move(directLightingBindingLayout)};
+        const std::array<nvrhi::BindingLayoutHandle, 2> skyLayouts = {fullscreenLayouts.front(),
+                                                                      std::move(atmosphereBindingLayout)};
         auto createFullscreen = [&](const std::string& shaderName, nvrhi::Format colorFormat,
-                                    nvrhi::GraphicsPipelineHandle& destination) {
+                                    nvrhi::GraphicsPipelineHandle& destination,
+                                    std::span<const nvrhi::BindingLayoutHandle> bindingLayouts) {
             auto loadModule = [this](const std::string& moduleName, nvrhi::ShaderType type) {
                 const std::string_view entryPoint = type == nvrhi::ShaderType::Vertex ? "vertexMain" : "fragmentMain";
                 return shaders_.loadModule(moduleName, type, entryPoint);
@@ -34,10 +41,10 @@ namespace lumin::render {
         };
 
         try {
-            createFullscreen("sky", lightingFormat, sky_);
-            createFullscreen("deferred", lightingFormat, deferredLighting_);
-            createFullscreen("taa", lightingFormat, taa_);
-            createFullscreen("postprocess", swapchainFormat, tonemap_);
+            createFullscreen("sky", lightingFormat, sky_, skyLayouts);
+            createFullscreen("deferred", lightingFormat, deferredLighting_, deferredLayouts);
+            createFullscreen("taa", lightingFormat, taa_, fullscreenLayouts);
+            createFullscreen("postprocess", swapchainFormat, tonemap_, fullscreenLayouts);
         } catch (...) {
             destroy();
             throw;

@@ -1,7 +1,8 @@
-#include "lumin/render/PipelineFactory.hpp"
-#include "lumin/render/gi/GlobalIllumination.hpp"
-#include "lumin/render/gi/SsaoBackend.hpp"
-#include "lumin/scene/Level.hpp"
+#include "render/PipelineFactory.hpp"
+#include "render/gi/GlobalIllumination.hpp"
+#include "render/gi/SsaoBackend.hpp"
+#include "render/world/RenderWorld.hpp"
+#include "scene/Level.hpp"
 
 #include <algorithm>
 #include <array>
@@ -36,6 +37,8 @@ namespace {
     static_assert(std::same_as<decltype(lumin::render::gi::FrameResources::output), nvrhi::TextureHandle>);
     static_assert(std::same_as<decltype(lumin::render::gi::CreateInfo::outputFormat), nvrhi::Format>);
     static_assert(std::same_as<decltype(lumin::render::gi::CreateInfo::sampler), nvrhi::SamplerHandle>);
+    static_assert(
+        std::same_as<decltype(lumin::render::gi::FrameInfo::world), const lumin::render::world::RenderWorldSnapshot&>);
 
     void require(bool condition, const char* message) {
         if (!condition) {
@@ -97,6 +100,9 @@ namespace {
         }
 
         void setBufferState(nvrhi::IBuffer*, nvrhi::ResourceStates) override {
+        }
+
+        void setAccelerationStructureState(nvrhi::rt::IAccelStruct*, nvrhi::ResourceStates) override {
         }
 
         void commitBarriers() override {
@@ -503,7 +509,8 @@ namespace {
         desc.texture = output;
         const FrameGraphResourceHandle outputHandle = graph.importTexture("output", desc);
         lumin::scene::Level level;
-        backend->addPasses(graph, FrameInfo{.level = level,
+        const auto renderWorld = lumin::render::world::RenderWorldExtractor::extract(level);
+        backend->addPasses(graph, FrameInfo{.world = *renderWorld,
                                             .extent = {16, 16},
                                             .position = positionHandle,
                                             .normalRoughness = normalHandle,
@@ -592,17 +599,18 @@ namespace {
                                    .frames = frames,
                                    .creationDriver = &driver});
         lumin::scene::Level level;
+        const auto renderWorld = lumin::render::world::RenderWorldExtractor::extract(level);
         FrameGraph graph;
         bool badSlotRejected = false;
         try {
-            backend->addPasses(graph, FrameInfo{.level = level, .frameIndex = 1, .extent = {16, 16}});
+            backend->addPasses(graph, FrameInfo{.world = *renderWorld, .frameIndex = 1, .extent = {16, 16}});
         } catch (const std::logic_error&) {
             badSlotRejected = true;
         }
         require(badSlotRejected, "SSAO must reject a frame slot outside its created resources.");
         bool emptyPassRejected = false;
         try {
-            backend->addPasses(graph, FrameInfo{.level = level, .extent = {0, 16}});
+            backend->addPasses(graph, FrameInfo{.world = *renderWorld, .extent = {0, 16}});
         } catch (const std::invalid_argument&) {
             emptyPassRejected = true;
         }
@@ -615,7 +623,7 @@ namespace {
         const FrameGraphResourceHandle normalHandle = graph.importTexture("normal", desc);
         desc.texture = output;
         const FrameGraphResourceHandle outputHandle = graph.importTexture("output", desc);
-        backend->addPasses(graph, FrameInfo{.level = level,
+        backend->addPasses(graph, FrameInfo{.world = *renderWorld,
                                             .extent = {16, 16},
                                             .position = positionHandle,
                                             .normalRoughness = normalHandle,
@@ -663,9 +671,10 @@ namespace {
             });
 
         lumin::scene::Level level;
+        const auto renderWorld = lumin::render::world::RenderWorldExtractor::extract(level);
         FakeGlobalIlluminationBackend backend;
         backend.executionOrder = &order;
-        const FrameInfo frameInfo{level,    0,      0,      true,   false, lumin::render::gi::RenderExtent{16, 16},
+        const FrameInfo frameInfo{*renderWorld, 0, 0, true, false, lumin::render::gi::RenderExtent{16, 16},
                                   position, normal, albedo, motion, depth, output};
         backend.addPasses(frameGraph, frameInfo);
 

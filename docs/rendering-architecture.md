@@ -36,7 +36,7 @@ UI 未捕获输入时才更新相机和派发 `GameInput`，随后始终调用 `
 
 1. 四个 CSM 纯深度通道，每个级联使用一张独立的二维深度图像。
 2. G-buffer 通道：世界空间位置、世界空间法线与粗糙度、线性反照率与金属度、运动矢量和深度。
-3. 全局光照后端通道；默认 SSAO 后端读取世界空间位置和法线。
+3. 全局光照 Feature；支持设备执行 GPU Scene、SHARC、RT GI、NRD 与 composite，否则执行 SSAO fallback。
 4. 程序化天空盒全屏通道，写入 HDR 光照目标。
 5. 延迟光照通道，加载该目标，并结合全局光照输出和 CSM 对几何体进行着色。
 6. TAA 解析，读取 HDR 光照、运动矢量和上一帧历史。
@@ -47,21 +47,50 @@ UI 未捕获输入时才更新相机和派发 `GameInput`，随后始终调用 `
 所有图形通道均使用 Vulkan 1.3 动态渲染。`PipelineFactory` 支持 MRT 流水线和仅含顶点阶段的深度流水线；
 项目不会创建 `VkRenderPass` 或 framebuffer 对象。
 
-## PBR 材质
+## 表面材质与 GPU ABI
+
+`scene::Material` 位于 `src/scene/Material.hpp`，通过 `SurfaceModel` 逐材质选择
+`MetallicRoughness` 或 `BlinnPhong`。枚举使用固定的 `uint32_t` 数值 `0/1`，会直接进入 GPU material buffer；
+后续只能追加新值，不能重新排序。材质同时保留两套模型参数，因此编辑器切换模型不会丢失原有调参：
+Metallic-Roughness 使用 `roughness/metallic`，Blinn-Phong 使用 `specularColor/shininess`，两者共享 base color、
+normal map 和 UV scale。
+
+`gpu::GpuMaterialData` 是 raster、ray tracing、SHARC 与 NRD adapter 共用的 64-byte、16-byte aligned ABI：
+`baseColorMetallic` 保存基础颜色与金属度，`specularColorShininess` 保存 Blinn-Phong 高光颜色与指数，
+`surfaceParameters` 保存统一等效粗糙度、UV scale 与 normal Y 符号，`metadata` 以整数保存 `SurfaceModel`、
+texture descriptor index 和纹理存在标志。Blinn-Phong 指数通过
+`sqrt(2 / (shininess + 2))` 转换为 NRD/GI 使用的等效感知粗糙度，避免 direct lighting 与去噪器各自解释材质。
 
 `Material` 可以引用 base color、normal 和 roughness 三张贴图。`ModelRenderer` 对场景中的唯一贴图组合去重，
 将其上传为二维数组纹理；第 0 层是白色 base color、平法线和单位粗糙度，未绑定贴图的材质因此沿用相同 shader
-与批处理。对象记录保存数组层、UV 缩放、粗糙度/金属度因子和 normal Y 符号，MDI 绘制无需逐模型切换 descriptor。
+与批处理。`GpuMaterialData` 使用 `ModelHandle::index` 稀疏寻址，因此 raster 与 RT 共享同一稳定 material index；
+slot 的 generation 被复用时，由逐 frame-slot 的物理 buffer 版本隔离仍在 flight 的旧数据。240-byte `ObjectData`
+仅在 `metadata.x` 保存该索引，完整表面模型参数不再塞入 normal/roughness 或其他浮点 G-buffer 通道。
 
 base color 图像使用 `VK_FORMAT_R8G8B8A8_SRGB`，normal RGB 与 roughness 被打包到线性
 `VK_FORMAT_R8G8B8A8_UNORM`。G-buffer 将世界空间 normal/roughness 写入一个附件，将线性
-albedo/metallic 写入另一个附件。延迟光照使用 GGX 法线分布、Smith 几何遮蔽和 Schlick Fresnel；材质缺少
-metallic/AO 贴图时分别使用介电常量和默认 SSAO 后端。OBJ 没有 `vt` 时，加载器生成带接缝修正的柱面 UV。
+albedo/metallic 写入另一个附件，并以独立 `R32_UINT` attachment 输出稳定 material index；无几何像素清为
+`GpuMaterialIndex::invalidValue`。direct-lighting 的 descriptor set 0 保留全屏纹理与 uniform，set 1 只绑定
+material ID 与 `GpuMaterialData` buffer。`MetallicRoughness` 路径保持 GGX、Smith 与 Schlick BRDF；
+`BlinnPhong` 路径读取高光颜色，并从逐像素等效粗糙度反算指数，因此 roughness texture 也会调制其高光宽度。
+材质 buffer 的资源状态只在对应 frame slot 成功提交后推进到 `ShaderResource`。OBJ 没有 `vt` 时，加载器生成
+带接缝修正的柱面 UV。
 
 ## 全局光照后端
 
-`LevelRenderer` 接受 `GlobalIlluminationBackend`，未注入后端时创建 `SsaoBackend`。后端报告名称、是否使用时序历史和
-是否依赖硬件光线追踪，并拥有自己的流水线、私有 descriptor 以及向 `FrameGraph` 注册通道的逻辑。
+`GlobalIlluminationMode::Auto` 在 Vulkan RT、SHARC 所需 16-bit storage/float16/int64 和 NRD 所需 compute
+derivatives 均可用时选择 Hybrid GI，否则使用 `SsaoBackend`。`RayTracedSharcNrd` 表达用户偏好，但运行时能力不足时
+仍安全回退；`LUMIN_RAY_TRACING=OFF` 会在构建期同时移除 RT、SHARC、NRD 源码、vendor target 与 shader entries。
+
+Hybrid GI 的一帧顺序为：按需物化 GPU Scene 和 BLAS/TLAS、执行 SHARC clear/update/resolve、在 RT GI closest-hit
+中查询 SHARC、输出 diffuse/specular radiance-hit-distance 与 NRD auxiliary signals、执行 NRD dispatch，最后由
+GI composite 写入统一的 RGBA 间接光照目标。RT miss、SHARC update 和 raster sky 使用同一个 atmosphere descriptor
+set，避免环境输入在三条路径中漂移。
+
+`GpuSceneUpdatePlanner::generation()` 表示 GPU 可见内容版本，而不是 CPU 帧号；无 GPU 工作的稳定帧不会推进它。
+每个 frame slot 保存一个已提交物理版本：空槽或落后槽在 fence 完成后从最新 immutable snapshot 追赶一次，已经同步的
+槽只把现有 buffer 与 TLAS 重新导入 `FrameGraph`，不再创建资源、上传数据或重建 AS。候选版本仅在 queue submit 成功后
+发布；录制或提交失败会丢弃候选并保留旧版本，因此其他 in-flight 帧始终引用有效对象。
 
 `TextureManager` 为每个帧槽拥有一张标准 RGBA 全局光照图像。RGB 保存线性间接辐射亮度，alpha 保存环境可见度；
 禁用全局光照时的中性值为 `{0, 0, 0, 1}`。默认 SSAO 后端写入 `{0, 0, 0, ao}`，延迟光照按
@@ -69,7 +98,8 @@ metallic/AO 贴图时分别使用介电常量和默认 SSAO 后端。OBJ 没有 
 用途，以便后续后端使用光线追踪或计算通道写入相同契约。
 
 相机切换、场景拓扑变化、全局光照从关闭切换到开启以及交换链重建都会使后端历史失效。无时序历史的 SSAO 后端
-忽略失效通知；时序后端必须在下一帧从无历史状态重新开始。
+忽略失效通知；SHARC、NRD diffuse/specular 和 TAA 分域决定 keep、soft reset 或 full reset，并且都只在成功提交后
+推进历史。失败帧不会污染下一帧的 previous matrices、jitter、cache 或 denoiser state。
 
 GameEngine 只通过 `LevelRenderer::globalIlluminationBackendInfo()` 向 Editor 提供只读后端信息；切换开关写入
 `RenderSettings`。该接缝不会让 Rendering 反向依赖 Editor，也不会让游戏代码接触 Vulkan 后端实现。

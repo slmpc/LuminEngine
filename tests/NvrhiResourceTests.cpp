@@ -1,4 +1,4 @@
-#include "lumin/render/VulkanResources.hpp"
+#include "render/VulkanResources.hpp"
 
 #include <concepts>
 #include <cstdint>

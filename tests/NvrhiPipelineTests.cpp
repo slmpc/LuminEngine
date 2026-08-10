@@ -1,6 +1,6 @@
-#include "lumin/render/PipelineFactory.hpp"
-#include "lumin/render/PipelineManager.hpp"
-#include "lumin/render/ShaderLibrary.hpp"
+#include "render/PipelineFactory.hpp"
+#include "render/PipelineManager.hpp"
+#include "render/ShaderLibrary.hpp"
 
 #include <nvrhi/nvrhi.h>
 
@@ -42,9 +42,10 @@ namespace {
         { factory.createGraphicsPipeline(desc) } -> std::same_as<nvrhi::GraphicsPipelineHandle>;
     });
 
-    static_assert(requires(lumin::render::PipelineManager& manager, nvrhi::BindingLayoutHandle bindingLayout,
-                           nvrhi::Format format) {
-        manager.create(bindingLayout, format, format);
+    static_assert(requires(lumin::render::PipelineManager& manager, nvrhi::BindingLayoutHandle fullscreenLayout,
+                           nvrhi::BindingLayoutHandle materialLayout,
+                           nvrhi::BindingLayoutHandle atmosphereLayout, nvrhi::Format format) {
+        manager.create(fullscreenLayout, materialLayout, atmosphereLayout, format, format);
         { manager.sky() } -> std::same_as<const nvrhi::GraphicsPipelineHandle&>;
         { manager.deferredLighting() } -> std::same_as<const nvrhi::GraphicsPipelineHandle&>;
         { manager.taa() } -> std::same_as<const nvrhi::GraphicsPipelineHandle&>;

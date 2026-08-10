@@ -15,8 +15,7 @@ Lumin Engine 是一个使用 C++20、SDL3、Slang 和动态渲染构建的紧凑
 ## 目录结构
 
 - `apps/sandbox`：可运行的示例程序。
-- `include/lumin`：引擎公共头文件。
-- `src`：引擎实现。
+- `src`：引擎头文件与实现，不再维护独立的公共 `include` 树。
 - `assets/models`：实验时放置 OBJ 文件的目录。
 - `assets/materials`：本地 PBR 材质贴图目录，由下载脚本生成且不纳入版本控制。
 - `scripts`：资源下载等项目辅助脚本。
@@ -44,6 +43,21 @@ Lumin Engine 是一个使用 C++20、SDL3、Slang 和动态渲染构建的紧凑
 cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build out/build/debug
 ```
+
+Vulkan Ray Tracing 后端由三态 cache 变量控制：
+
+```powershell
+cmake --preset debug -DLUMIN_RAY_TRACING=AUTO
+cmake --preset debug -DLUMIN_RAY_TRACING=ON
+cmake --preset debug -DLUMIN_RAY_TRACING=OFF
+```
+
+- `AUTO`（默认）：编入 RT 实现；运行时在完整 RT 设备上启用，否则回退到 raster。
+- `ON`：编入 RT 实现；仍由运行时策略决定是否强制要求设备能力。
+- `OFF`：不提供 RT 实现，也不配置 SHARC/NRD vendor target；运行时不会查询或启用 RT 专属 Feature 与扩展。
+
+其他值会在 configure 阶段报错。该选择会写入生成头
+`generated/include/render/RayTracingBuildConfiguration.hpp`，属于构建产物能力，不能由运行时描述覆盖。
 
 运行沙盒：
 
@@ -113,9 +127,12 @@ ctest --test-dir out\build\debug --output-on-failure
 ```
 
 测试覆盖相机移动、`Level`/模型修订号、Actor 生命周期与延迟变更、地形生成与高度采样、PBR 图像解码、
-缺失 UV 生成、渲染器材质批次构建、全局光照后端契约、无 Vulkan 的 `Game` 生命周期、启动脚本错误隔离和输入路由。
+缺失 UV 生成、渲染器材质批次构建、全局光照后端契约、Vulkan/RT capability 与 fallback、无 Vulkan 的
+`Game` 生命周期、启动脚本错误隔离和输入路由。可使用 `cpu`、`vulkan`、`raytracing`、`sharc`、`nrd`、
+`hardware` 和 `fallback` 标签选择测试；真实硬件测试在缺少前置能力时以 CTest skip 返回。
 
-有关渲染通道顺序、时序历史约定和资源所有权模型，请参阅 `docs/rendering-architecture.md`。
+有关标签、硬件跳过与发布门槛，请参阅 `docs/testing.md`；渲染通道顺序、时序历史约定和资源所有权模型见
+`docs/rendering-architecture.md`。
 
 ## NvRHI 渲染后端边界
 

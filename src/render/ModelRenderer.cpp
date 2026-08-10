@@ -1,13 +1,15 @@
-#include "lumin/render/ModelRenderer.hpp"
+#include "render/ModelRenderer.hpp"
 
 #include "DescriptorIndexingLimits.hpp"
-#include "lumin/assets/ImageLoader.hpp"
-#include "lumin/render/PipelineFactory.hpp"
-#include "lumin/render/ShaderLibrary.hpp"
-#include "lumin/render/VulkanContext.hpp"
-#include "lumin/render/VulkanResources.hpp"
-#include "lumin/scene/Camera.hpp"
-#include "lumin/scene/Level.hpp"
+#include "assets/ImageLoader.hpp"
+#include "render/PipelineFactory.hpp"
+#include "render/ShaderLibrary.hpp"
+#include "render/VulkanContext.hpp"
+#include "render/VulkanResources.hpp"
+#include "render/gpu/GpuMaterial.hpp"
+#include "render/gpu/GpuScene.hpp"
+#include "render/world/RenderWorld.hpp"
+#include "scene/Camera.hpp"
 
 #include <algorithm>
 #include <array>
@@ -49,9 +51,10 @@ namespace lumin::render {
             std::int32_t vertexOffset = 0;
         };
 
-        std::vector<scene::PbrTextureSet> collectTextureSets(const scene::Level& level) {
+        std::vector<scene::PbrTextureSet> collectTextureSets(const world::RenderWorldSnapshot& worldSnapshot) {
             std::vector<scene::PbrTextureSet> textureSets;
-            for (const scene::ModelInstance& model : level.models()) {
+            for (const world::RenderWorldInstance& instance : worldSnapshot.instances()) {
+                const scene::ModelInstance& model = instance.model;
                 if (!model.material.textures.has_value()) {
                     continue;
                 }
@@ -85,18 +88,22 @@ namespace lumin::render {
         }
 
         ObjectData makeObjectData(const scene::ModelInstance& model, const glm::mat4& currentModel,
-                                  const glm::mat4& previousModel,
-                                  const std::vector<scene::PbrTextureSet>& textureSets) {
-            const float normalYSign =
-                model.material.textures.has_value() && model.material.textures->flipNormalY ? -1.0f : 1.0f;
+                                  const glm::mat4& previousModel, const std::vector<scene::PbrTextureSet>& textureSets,
+                                  gpu::GpuMaterialIndex materialIndex) {
+            if (!materialIndex.isValid()) {
+                throw std::invalid_argument("Model object data requires a valid GPU material index.");
+            }
+            const std::uint32_t textureDescriptorIndex = textureDescriptorIndexFor(model.material, textureSets);
+            const gpu::GpuMaterialData material = gpu::packGpuMaterial(model.material, textureDescriptorIndex);
             return ObjectData{
                 .model = currentModel,
                 .previousModel = previousModel,
                 .normalMatrix = glm::inverseTranspose(currentModel),
-                .baseColorMetallic = glm::vec4{model.material.albedo, model.material.metallic},
-                .materialParameters =
-                    glm::vec4{model.material.roughness, model.material.textureScale,
-                              static_cast<float>(textureDescriptorIndexFor(model.material, textureSets)), normalYSign},
+                .baseColorMetallic = material.baseColorMetallic,
+                // 旧 raster object ABI 暂时读取统一等效粗糙度；完整表面模型参数由 GpuMaterialData 提供。
+                .materialParameters = glm::vec4{material.surfaceParameters.x, material.surfaceParameters.y,
+                                                static_cast<float>(material.metadata.y), material.surfaceParameters.z},
+                .metadata = glm::uvec4{materialIndex.value(), 0U, 0U, 0U},
             };
         }
 
@@ -194,22 +201,29 @@ namespace lumin::render {
         nvrhi::BufferHandle indexBuffer;
         nvrhi::BufferHandle indirectBuffer;
         std::vector<nvrhi::BufferHandle> objectBuffers;
+        std::vector<nvrhi::BufferHandle> materialBuffers;
         std::vector<nvrhi::BufferHandle> uniformBuffers;
         std::vector<nvrhi::BufferHandle> shadowUniformBuffers;
         std::vector<nvrhi::TextureHandle> baseColorTextures;
         std::vector<nvrhi::TextureHandle> normalRoughnessTextures;
         nvrhi::SamplerHandle materialSampler;
         std::vector<glm::mat4> previousModels;
+        std::vector<glm::mat4> pendingModels;
         detail::FrameSlotReadiness frameSlotReadiness;
+        std::vector<bool> materialBufferInitialized;
+        std::uint32_t pendingFrameIndex = std::numeric_limits<std::uint32_t>::max();
         bool hasPreviousModels = false;
+        bool hasPendingModels = false;
 
-        Impl(VulkanContext& context, const scene::Level& level, std::filesystem::path shaderDirectory,
-             std::span<const nvrhi::Format> colorFormats, nvrhi::Format depthFormat, nvrhi::Format shadowDepthFormat,
-             std::uint32_t frameCountValue, ModelRendererCapabilities capabilities)
+        Impl(VulkanContext& context, const world::RenderWorldSnapshot& worldSnapshot,
+             std::filesystem::path shaderDirectory, std::span<const nvrhi::Format> colorFormats,
+             nvrhi::Format depthFormat, nvrhi::Format shadowDepthFormat, std::uint32_t frameCountValue,
+             ModelRendererCapabilities capabilities)
             : device(*context.rhiDevice()), resources(device), shaders(device, std::move(shaderDirectory)),
-              pipelineFactory(device), textureSets(collectTextureSets(level)), batch(ModelRenderer::buildBatch(level)),
-              frameCount(frameCountValue), limits(detail::toDescriptorIndexingLimits(capabilities)),
-              frameSlotReadiness(frameCountValue) {
+              pipelineFactory(device), textureSets(collectTextureSets(worldSnapshot)),
+              batch(ModelRenderer::buildBatch(worldSnapshot)), frameCount(frameCountValue),
+              limits(detail::toDescriptorIndexingLimits(capabilities)), frameSlotReadiness(frameCountValue),
+              materialBufferInitialized(frameCountValue, false) {
             if (batch.commands.empty()) {
                 throw std::invalid_argument("ModelRenderer requires at least one model.");
             }
@@ -220,8 +234,10 @@ namespace lumin::render {
                     descriptorPlan = plan;
                     bindingContract = detail::makeModelRendererBindingContract(plan);
                     previousModels.reserve(batch.objects.size());
+                    pendingModels.reserve(batch.objects.size());
                     for (const ObjectData& object : batch.objects) {
                         previousModels.push_back(object.model);
+                        pendingModels.push_back(object.model);
                     }
                     createBuffers();
                     createMaterialTextures();
@@ -278,6 +294,7 @@ namespace lumin::render {
             const std::size_t indexBytes = sizeof(std::uint32_t) * batch.indices.size();
             const std::size_t indirectBytes = sizeof(ModelBatch::Command) * batch.commands.size();
             const std::size_t objectBytes = sizeof(ObjectData) * batch.objects.size();
+            const std::size_t materialBytes = sizeof(gpu::GpuMaterialData) * batch.materials.size();
 
             nvrhi::BufferDesc desc;
             desc.byteSize = vertexBytes;
@@ -304,6 +321,7 @@ namespace lumin::render {
             indirectBuffer = createStaticBuffer(desc, batch.commands.data(), indirectBytes);
 
             objectBuffers.reserve(frameCount);
+            materialBuffers.reserve(frameCount);
             uniformBuffers.reserve(frameCount);
             for (std::uint32_t frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
                 desc = {};
@@ -313,6 +331,14 @@ namespace lumin::render {
                 nvrhi::BufferHandle objects = createCpuBuffer(desc);
                 writeCpuBuffer(objects, batch.objects.data(), objectBytes);
                 objectBuffers.push_back(std::move(objects));
+
+                desc = {};
+                desc.byteSize = materialBytes;
+                desc.structStride = sizeof(gpu::GpuMaterialData);
+                desc.debugName = "Model materials " + std::to_string(frameIndex);
+                nvrhi::BufferHandle materials = createCpuBuffer(desc);
+                writeCpuBuffer(materials, batch.materials.data(), materialBytes);
+                materialBuffers.push_back(std::move(materials));
 
                 desc = {};
                 desc.byteSize = sizeof(FrameUniforms);
@@ -429,22 +455,18 @@ namespace lumin::render {
         [[nodiscard]] nvrhi::BindingSetHandle createGBufferBindingSet(std::uint32_t frameIndex) {
             nvrhi::BindingSetDesc desc;
             desc.addItem(nvrhi::BindingSetItem::ConstantBuffer(bindingContract.gbufferItems[0].binding,
-                                                                uniformBuffers[frameIndex]))
+                                                               uniformBuffers[frameIndex]))
                 .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(bindingContract.gbufferItems[1].binding,
-                                                                      objectBuffers[frameIndex]));
-            detail::forEachMaterialTextureArrayElement(bindingContract,
-                                                       [&](std::uint32_t baseColorBinding,
-                                                           std::uint32_t normalRoughnessBinding,
-                                                           std::uint32_t textureIndex) {
-                                                           desc.addItem(nvrhi::BindingSetItem::Texture_SRV(
-                                                                            baseColorBinding,
-                                                                            baseColorTextures[textureIndex])
-                                                                            .setArrayElement(textureIndex));
-                                                           desc.addItem(nvrhi::BindingSetItem::Texture_SRV(
-                                                                            normalRoughnessBinding,
-                                                                            normalRoughnessTextures[textureIndex])
-                                                                            .setArrayElement(textureIndex));
-                                                       });
+                                                                     objectBuffers[frameIndex]));
+            detail::forEachMaterialTextureArrayElement(
+                bindingContract,
+                [&](std::uint32_t baseColorBinding, std::uint32_t normalRoughnessBinding, std::uint32_t textureIndex) {
+                    desc.addItem(nvrhi::BindingSetItem::Texture_SRV(baseColorBinding, baseColorTextures[textureIndex])
+                                     .setArrayElement(textureIndex));
+                    desc.addItem(nvrhi::BindingSetItem::Texture_SRV(normalRoughnessBinding,
+                                                                    normalRoughnessTextures[textureIndex])
+                                     .setArrayElement(textureIndex));
+                });
             desc.addItem(nvrhi::BindingSetItem::Sampler(bindingContract.gbufferItems[4].binding, materialSampler));
             return device.createBindingSet(desc, gbufferBindingLayout);
         }
@@ -462,9 +484,9 @@ namespace lumin::render {
                     const std::uint32_t index = shadowIndex(frameIndex, cascadeIndex);
                     nvrhi::BindingSetDesc desc;
                     desc.addItem(nvrhi::BindingSetItem::ConstantBuffer(bindingContract.shadowItems[0].binding,
-                                                                        shadowUniformBuffers[index]))
+                                                                       shadowUniformBuffers[index]))
                         .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(bindingContract.shadowItems[1].binding,
-                                                                              objectBuffers[frameIndex]));
+                                                                             objectBuffers[frameIndex]));
                     nvrhi::BindingSetHandle shadowSet = device.createBindingSet(desc, shadowBindingLayout);
                     if (!shadowSet) {
                         throw std::runtime_error("Failed to create a shadow model binding set.");
@@ -546,13 +568,14 @@ namespace lumin::render {
         }
     };
 
-    ModelBatch ModelRenderer::buildBatch(const scene::Level& level) {
+    ModelBatch ModelRenderer::buildBatch(const world::RenderWorldSnapshot& worldSnapshot) {
         ModelBatch batch;
-        const std::vector<scene::PbrTextureSet> textureSets = collectTextureSets(level);
+        const std::vector<scene::PbrTextureSet> textureSets = collectTextureSets(worldSnapshot);
         std::vector<MeshRange> meshRanges;
-        meshRanges.reserve(level.meshes().size());
+        meshRanges.reserve(worldSnapshot.meshes().size());
 
-        for (const assets::Mesh& mesh : level.meshes()) {
+        for (const world::RenderWorldMesh& renderMesh : worldSnapshot.meshes()) {
+            const assets::Mesh& mesh = renderMesh.mesh;
             const MeshRange range{
                 checkedU32(batch.indices.size(), "Packed model indices exceed the uint32 range."),
                 checkedU32(mesh.indices.size(), "A model has too many indices for an indirect draw."),
@@ -563,14 +586,24 @@ namespace lumin::render {
             batch.indices.insert(batch.indices.end(), mesh.indices.begin(), mesh.indices.end());
         }
 
-        batch.commands.reserve(level.models().size());
-        batch.objects.reserve(level.models().size());
-        for (const scene::ModelInstance& model : level.models()) {
-            if (!model.mesh.isValid() || model.mesh.index >= meshRanges.size()) {
-                throw std::out_of_range("A level model references an invalid mesh while building the render batch.");
+        batch.commands.reserve(worldSnapshot.instances().size());
+        batch.objects.reserve(worldSnapshot.instances().size());
+        std::size_t materialCount = 0;
+        for (const world::RenderWorldInstance& instance : worldSnapshot.instances()) {
+            const gpu::RenderInstanceId instanceId{instance.modelHandle};
+            if (!instanceId.isValid()) {
+                throw std::logic_error("A render-world instance has an invalid stable model handle.");
+            }
+            materialCount = std::max(materialCount, static_cast<std::size_t>(instanceId.slot()) + 1U);
+        }
+        batch.materials.resize(materialCount);
+        for (const world::RenderWorldInstance& instance : worldSnapshot.instances()) {
+            const scene::ModelInstance& model = instance.model;
+            if (!model.mesh.isValid() || instance.meshIndex >= meshRanges.size()) {
+                throw std::out_of_range("A render-world instance references an invalid compact mesh index.");
             }
 
-            const MeshRange range = meshRanges[model.mesh.index];
+            const MeshRange range = meshRanges[instance.meshIndex];
             batch.commands.push_back(ModelBatch::Command{
                 .indexCount = range.indexCount,
                 .instanceCount = 1,
@@ -579,7 +612,11 @@ namespace lumin::render {
                 .startInstanceLocation = 0,
             });
             const glm::mat4 modelMatrix = model.transform.matrix();
-            batch.objects.push_back(makeObjectData(model, modelMatrix, modelMatrix, textureSets));
+            const gpu::GpuMaterialIndex materialIndex =
+                gpu::materialIndexFor(gpu::RenderInstanceId{instance.modelHandle});
+            const std::uint32_t textureDescriptorIndex = textureDescriptorIndexFor(model.material, textureSets);
+            batch.materials[materialIndex.value()] = gpu::packGpuMaterial(model.material, textureDescriptorIndex);
+            batch.objects.push_back(makeObjectData(model, modelMatrix, modelMatrix, textureSets, materialIndex));
         }
 
         if (batch.commands.size() != batch.objects.size()) {
@@ -588,37 +625,70 @@ namespace lumin::render {
         return batch;
     }
 
-    ModelRenderer::ModelRenderer(VulkanContext& context, const scene::Level& level,
+    ModelRenderer::ModelRenderer(VulkanContext& context, const world::RenderWorldSnapshot& worldSnapshot,
                                  std::filesystem::path shaderDirectory, std::span<const nvrhi::Format> colorFormats,
                                  nvrhi::Format depthFormat, nvrhi::Format shadowDepthFormat, std::uint32_t frameCount,
                                  ModelRendererCapabilities capabilities)
-        : impl_(std::make_unique<Impl>(context, level, std::move(shaderDirectory), colorFormats, depthFormat,
+        : impl_(std::make_unique<Impl>(context, worldSnapshot, std::move(shaderDirectory), colorFormats, depthFormat,
                                        shadowDepthFormat, frameCount, capabilities)) {
     }
 
     ModelRenderer::~ModelRenderer() = default;
 
-    void ModelRenderer::sync(const scene::Level& level, std::uint32_t frameIndex, bool resetMotion) {
+    void ModelRenderer::sync(const world::RenderWorldSnapshot& worldSnapshot, std::uint32_t frameIndex,
+                             bool resetMotion) {
         if (frameIndex >= impl_->frameCount) {
             throw std::out_of_range("ModelRenderer sync frame index is out of range.");
         }
-        if (level.models().size() != impl_->batch.objects.size()) {
-            throw std::logic_error("Level topology changed without rebuilding ModelRenderer.");
+        if (worldSnapshot.instances().size() != impl_->batch.objects.size()) {
+            throw std::logic_error("Render-world topology changed without rebuilding ModelRenderer.");
         }
 
-        for (std::size_t index = 0; index < level.models().size(); ++index) {
-            const scene::ModelInstance& model = level.models()[index];
+        impl_->hasPendingModels = false;
+        for (std::size_t index = 0; index < worldSnapshot.instances().size(); ++index) {
+            const world::RenderWorldInstance& instance = worldSnapshot.instances()[index];
+            const scene::ModelInstance& model = instance.model;
+            const gpu::GpuMaterialIndex materialIndex =
+                gpu::materialIndexFor(gpu::RenderInstanceId{instance.modelHandle});
+            if (!materialIndex.isValid() || materialIndex.value() >= impl_->batch.materials.size()) {
+                throw std::logic_error("Render-world material slots changed without rebuilding ModelRenderer.");
+            }
             const glm::mat4 currentModel = model.transform.matrix();
             const glm::mat4 previousModel = detail::requiresPreviousModelReset(resetMotion, impl_->hasPreviousModels)
                                                 ? currentModel
                                                 : impl_->previousModels[index];
-            impl_->batch.objects[index] = makeObjectData(model, currentModel, previousModel, impl_->textureSets);
-            impl_->previousModels[index] = currentModel;
+            const std::uint32_t textureDescriptorIndex = textureDescriptorIndexFor(model.material, impl_->textureSets);
+            impl_->batch.materials[materialIndex.value()] =
+                gpu::packGpuMaterial(model.material, textureDescriptorIndex);
+            impl_->batch.objects[index] =
+                makeObjectData(model, currentModel, previousModel, impl_->textureSets, materialIndex);
+            impl_->pendingModels[index] = currentModel;
         }
-        impl_->hasPreviousModels = true;
         impl_->writeCpuBuffer(impl_->objectBuffers[frameIndex], impl_->batch.objects.data(),
                               sizeof(ObjectData) * impl_->batch.objects.size());
+        impl_->writeCpuBuffer(impl_->materialBuffers[frameIndex], impl_->batch.materials.data(),
+                              sizeof(gpu::GpuMaterialData) * impl_->batch.materials.size());
         impl_->frameSlotReadiness.markReady(frameIndex);
+        impl_->pendingFrameIndex = frameIndex;
+        impl_->hasPendingModels = true;
+    }
+
+    void ModelRenderer::commitSubmittedFrame() noexcept {
+        if (!impl_->hasPendingModels) {
+            return;
+        }
+        impl_->previousModels.swap(impl_->pendingModels);
+        impl_->hasPreviousModels = true;
+        if (impl_->pendingFrameIndex < impl_->materialBufferInitialized.size()) {
+            impl_->materialBufferInitialized[impl_->pendingFrameIndex] = true;
+        }
+        impl_->pendingFrameIndex = std::numeric_limits<std::uint32_t>::max();
+        impl_->hasPendingModels = false;
+    }
+
+    void ModelRenderer::discardPendingFrame() noexcept {
+        impl_->pendingFrameIndex = std::numeric_limits<std::uint32_t>::max();
+        impl_->hasPendingModels = false;
     }
 
     void ModelRenderer::recordGBuffer(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
@@ -627,9 +697,8 @@ namespace lumin::render {
         impl_->requireFrameSlotReady(frameIndex);
         const Impl::FrameUniforms uniforms{viewProjection, previousViewProjection};
         impl_->writeCpuBuffer(impl_->uniformBuffers[frameIndex], &uniforms, sizeof(uniforms));
-        const nvrhi::GraphicsState state =
-            impl_->graphicsState(framebuffer, *impl_->gbufferPipeline, *impl_->gbufferBindingSets[frameIndex], width,
-                                 height);
+        const nvrhi::GraphicsState state = impl_->graphicsState(framebuffer, *impl_->gbufferPipeline,
+                                                                *impl_->gbufferBindingSets[frameIndex], width, height);
         detail::recordModelIndexedIndirect(commandList, state, drawCount());
         impl_->frameSlotReadiness.consumeReady(frameIndex);
     }
@@ -677,6 +746,21 @@ namespace lumin::render {
             throw std::out_of_range("ModelRenderer object buffer frame index is out of range.");
         }
         return impl_->objectBuffers[frameIndex];
+    }
+
+    const nvrhi::BufferHandle& ModelRenderer::materialBuffer(std::uint32_t frameIndex) const {
+        if (frameIndex >= impl_->materialBuffers.size()) {
+            throw std::out_of_range("ModelRenderer material-buffer frame index is out of range.");
+        }
+        return impl_->materialBuffers[frameIndex];
+    }
+
+    nvrhi::ResourceStates ModelRenderer::materialBufferInitialState(std::uint32_t frameIndex) const {
+        if (frameIndex >= impl_->materialBufferInitialized.size()) {
+            throw std::out_of_range("ModelRenderer material-buffer state frame index is out of range.");
+        }
+        return impl_->materialBufferInitialized[frameIndex] ? nvrhi::ResourceStates::ShaderResource
+                                                            : nvrhi::ResourceStates::Common;
     }
 
     const nvrhi::BufferHandle& ModelRenderer::frameUniformBuffer(std::uint32_t frameIndex) const {

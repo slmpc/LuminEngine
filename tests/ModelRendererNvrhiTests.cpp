@@ -1,4 +1,5 @@
-#include "lumin/render/ModelRenderer.hpp"
+#include "render/ModelRenderer.hpp"
+#include "render/world/RenderWorld.hpp"
 #include "render/DescriptorIndexingLimits.hpp"
 
 #include <array>
@@ -69,8 +70,8 @@ namespace {
             bindingSetCreations += contract.gbufferSetCount + contract.shadowSetCount;
             pipelineCreations += 2;
             lumin::render::detail::forEachMaterialTextureArrayElement(
-                contract, [&](std::uint32_t baseColorBinding, std::uint32_t normalRoughnessBinding,
-                              std::uint32_t arrayElement) {
+                contract,
+                [&](std::uint32_t baseColorBinding, std::uint32_t normalRoughnessBinding, std::uint32_t arrayElement) {
                     materialArrayElements.emplace_back(baseColorBinding, arrayElement);
                     materialArrayElements.emplace_back(normalRoughnessBinding, arrayElement);
                 });
@@ -92,17 +93,22 @@ namespace {
 
     void testPublicNvRhiContract() {
         static_assert(std::same_as<typename lumin::render::ModelBatch::Command, nvrhi::DrawIndexedIndirectArguments>);
-        static_assert(requires(lumin::render::VulkanContext& context, const lumin::scene::Level& level,
+        static_assert(requires(lumin::render::VulkanContext& context,
+                               const lumin::render::world::RenderWorldSnapshot& world,
                                std::filesystem::path shaderDirectory, std::span<const nvrhi::Format> colorFormats) {
-            lumin::render::ModelRenderer(context, level, shaderDirectory, colorFormats, nvrhi::Format::RGBA8_UNORM,
+            lumin::render::ModelRenderer(context, world, shaderDirectory, colorFormats, nvrhi::Format::RGBA8_UNORM,
                                          nvrhi::Format::D32, 2, lumin::render::ModelRendererCapabilities{});
         });
         static_assert(requires(lumin::render::ModelRenderer& renderer, nvrhi::ICommandList& commandList,
                                nvrhi::IFramebuffer& framebuffer, const glm::mat4& matrix) {
+            renderer.commitSubmittedFrame();
             renderer.recordGBuffer(commandList, framebuffer, 1280, 720, 0, matrix, matrix);
             renderer.recordShadow(commandList, framebuffer, 2048, 2048, 0, 0, matrix);
+            { renderer.materialBuffer(0) } -> std::same_as<const nvrhi::BufferHandle&>;
+            { renderer.materialBufferInitialState(0) } -> std::same_as<nvrhi::ResourceStates>;
         });
-        static_assert(sizeof(lumin::render::ObjectData) == 224);
+        static_assert(noexcept(std::declval<lumin::render::ModelRenderer&>().commitSubmittedFrame()));
+        static_assert(sizeof(lumin::render::ObjectData) == 240);
         static_assert(alignof(lumin::render::ObjectData) == 16);
         constexpr lumin::render::ModelRendererCapabilities defaults;
         static_assert(defaults.maxMaterialTextureArrayLength < std::numeric_limits<std::uint16_t>::max());
@@ -149,11 +155,33 @@ namespace {
             std::filesystem::path(__FILE__).parent_path().parent_path() / "src/render/ModelRenderer.cpp";
         std::ifstream source(sourcePath, std::ios::binary);
         const std::string contents{std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>()};
-        for (const char* state : {"ResourceStates::VertexBuffer", "ResourceStates::IndexBuffer",
-                                  "ResourceStates::IndirectArgument"}) {
+        for (const char* state :
+             {"ResourceStates::VertexBuffer", "ResourceStates::IndexBuffer", "ResourceStates::IndirectArgument"}) {
             require(contents.find(state) != std::string::npos,
                     "Every uploaded model buffer must declare its stable draw-time state.");
         }
+    }
+
+    void testSubmittedMotionHistoryContract() {
+        const std::filesystem::path sourcePath =
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "src/render/ModelRenderer.cpp";
+        std::ifstream source(sourcePath, std::ios::binary);
+        const std::string contents{std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>()};
+        const std::size_t sync = contents.find("void ModelRenderer::sync");
+        const std::size_t commit = contents.find("void ModelRenderer::commitSubmittedFrame", sync);
+        require(sync != std::string::npos && commit != std::string::npos,
+                "Model motion history requires explicit prepare and commit phases.");
+
+        const std::string syncBody = contents.substr(sync, commit - sync);
+        require(syncBody.find("pendingModels[index] = currentModel") != std::string::npos &&
+                    syncBody.find("previousModels[index] = currentModel") == std::string::npos,
+                "ModelRenderer::sync must stage transforms without advancing submitted history.");
+        require(contents.find("previousModels.swap(impl_->pendingModels)", commit) != std::string::npos,
+                "Only commitSubmittedFrame may publish staged model transforms as history.");
+        require(syncBody.find("impl_->materialBuffers[frameIndex]") != std::string::npos &&
+                    contents.find("materialBufferInitialized[impl_->pendingFrameIndex] = true", commit) !=
+                        std::string::npos,
+                "Material buffers must be written per frame slot and advance state only after submission.");
     }
 
     void testRecordedCreationContract() {
@@ -164,12 +192,14 @@ namespace {
         };
         ResourceRecorder recorder;
         (void)lumin::render::detail::createModelRendererResourcesAfterPreflight(
-            capabilities, 2, 2, 4, 3,
-            [&](const lumin::render::detail::DescriptorIndexingPlan& plan) { recorder.create(plan); });
+            capabilities, 2, 2, 4, 3, [&](const lumin::render::detail::DescriptorIndexingPlan& plan) {
+                recorder.create(plan);
+            });
 
         require(recorder.gbufferItems[0].kind == lumin::render::detail::ModelRendererBindingKind::ConstantBuffer &&
                     recorder.gbufferItems[0].binding == 0 &&
-                    recorder.gbufferItems[1].kind == lumin::render::detail::ModelRendererBindingKind::StructuredBuffer &&
+                    recorder.gbufferItems[1].kind ==
+                        lumin::render::detail::ModelRendererBindingKind::StructuredBuffer &&
                     recorder.gbufferItems[1].binding == 1 &&
                     recorder.gbufferItems[2].kind == lumin::render::detail::ModelRendererBindingKind::Texture &&
                     recorder.gbufferItems[2].binding == 2 && recorder.gbufferItems[2].arrayLength == 3 &&
@@ -193,8 +223,9 @@ namespace {
         requireThrows<std::length_error>(
             [&] {
                 (void)lumin::render::detail::createModelRendererResourcesAfterPreflight(
-                    capabilities, 2, 2, 4, 3,
-                    [&](const lumin::render::detail::DescriptorIndexingPlan& plan) { rejected.create(plan); });
+                    capabilities, 2, 2, 4, 3, [&](const lumin::render::detail::DescriptorIndexingPlan& plan) {
+                        rejected.create(plan);
+                    });
             },
             "Capacity rejection must occur before any resource, binding, or pipeline creation.");
         require(rejected.totalCreations() == 0,
@@ -209,7 +240,9 @@ namespace {
             [&] {
                 (void)lumin::render::detail::createModelRendererResourcesAfterPreflight(
                     capabilities, 1, 2, 4, 1, oversizedImage,
-                    [&](const lumin::render::detail::DescriptorIndexingPlan& plan) { imageRejected.create(plan); });
+                    [&](const lumin::render::detail::DescriptorIndexingPlan& plan) {
+                        imageRejected.create(plan);
+                    });
             },
             "Image rejection must occur before any resource, binding, or pipeline creation.");
         require(imageRejected.totalCreations() == 0,
@@ -220,21 +253,27 @@ namespace {
         requireThrows<std::length_error>(
             [&] {
                 (void)lumin::render::detail::createModelRendererResourcesAfterPreflight(
-                    capabilities, 1, 2, 4, 3,
-                    [&](const lumin::render::detail::DescriptorIndexingPlan& plan) { drawRejected.create(plan); });
+                    capabilities, 1, 2, 4, 3, [&](const lumin::render::detail::DescriptorIndexingPlan& plan) {
+                        drawRejected.create(plan);
+                    });
             },
             "Draw-count rejection must occur before any resource, binding, or pipeline creation.");
-        require(drawRejected.totalCreations() == 0,
-                "Rejected draw count must leave all creation counters at zero.");
+        require(drawRejected.totalCreations() == 0, "Rejected draw count must leave all creation counters at zero.");
     }
 
     void testFrameSlotsAndTopologyReset() {
         lumin::render::detail::FrameSlotReadiness slots(2);
         SlotWriteRecorder recorder;
-        requireThrows<std::logic_error>([&] { recorder.write(slots, 0); },
-                                        "Slot zero writes must wait for slot zero readiness.");
-        requireThrows<std::logic_error>([&] { recorder.write(slots, 1); },
-                                        "Slot one writes must wait for slot one readiness.");
+        requireThrows<std::logic_error>(
+            [&] {
+                recorder.write(slots, 0);
+            },
+            "Slot zero writes must wait for slot zero readiness.");
+        requireThrows<std::logic_error>(
+            [&] {
+                recorder.write(slots, 1);
+            },
+            "Slot one writes must wait for slot one readiness.");
         slots.markReady(0);
         recorder.write(slots, 0);
         slots.markReady(1);
@@ -242,8 +281,11 @@ namespace {
         require(recorder.writtenSlots == std::vector<std::uint32_t>{0, 1},
                 "Slot zero and slot one writes must follow their matching ready events.");
         slots.consumeReady(0);
-        requireThrows<std::logic_error>([&] { recorder.write(slots, 0); },
-                                        "Consumed slot readiness must not permit a stale write.");
+        requireThrows<std::logic_error>(
+            [&] {
+                recorder.write(slots, 0);
+            },
+            "Consumed slot readiness must not permit a stale write.");
 
         require(lumin::render::detail::requiresPreviousModelReset(false, false),
                 "A rebuilt renderer must reset previous models before its first sync.");
@@ -261,14 +303,16 @@ namespace {
         };
         requireThrows<std::invalid_argument>(
             [&] {
-                (void)lumin::render::detail::createModelRendererResourcesAfterPreflight(
-                    capabilities, 1, 0, 4, 1, [](const auto&) {});
+                (void)lumin::render::detail::createModelRendererResourcesAfterPreflight(capabilities, 1, 0, 4, 1,
+                                                                                        [](const auto&) {
+                                                                                        });
             },
             "Zero frame slots must be rejected before creation.");
         requireThrows<std::invalid_argument>(
             [&] {
-                (void)lumin::render::detail::createModelRendererResourcesAfterPreflight(
-                    capabilities, 1, 1, 0, 1, [](const auto&) {});
+                (void)lumin::render::detail::createModelRendererResourcesAfterPreflight(capabilities, 1, 1, 0, 1,
+                                                                                        [](const auto&) {
+                                                                                        });
             },
             "Zero cascades must be rejected before creation.");
         requireThrows<std::invalid_argument>(
@@ -279,7 +323,7 @@ namespace {
             "Zero image dimensions must be rejected before creation.");
     }
 
-}
+} // namespace
 
 int main() {
     try {
@@ -287,6 +331,7 @@ int main() {
         testRecordedGBufferAndShadowContract();
         testViewportExtentContract();
         testStaticBufferStateContract();
+        testSubmittedMotionHistoryContract();
         testRecordedCreationContract();
         testFrameSlotsAndTopologyReset();
         testMalformedCapacityInputs();

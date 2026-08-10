@@ -1,15 +1,4 @@
-struct PostProcessUniforms {
-    float4x4 inverseViewProjection;
-    float4x4 viewProjection;
-    float4x4 cascadeViewProjections[4];
-    float4 cascadeSplits;
-    float4 cameraPosition;
-    float4 cameraForward;
-    float4 lightDirection;
-    float4 renderSize;
-    float4 renderOptions;
-    float4 tonemapOptions;
-};
+#include "PostProcessUniforms.slang"
 
 [[vk::binding(0, 0)]] Texture2D<float4> positionTexture;
 [[vk::binding(1, 0)]] Texture2D<float4> normalTexture;
@@ -39,7 +28,8 @@ float hash12(float2 p) {
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target {
     float4 centerSample = positionTexture.SampleLevel(renderSampler, input.uv, 0.0);
-    if (centerSample.w < 0.5 || frame.renderOptions.y < 0.5) {
+    // Raster position.w=1，RT surface position.w 为正 hit distance，两个路径都以非正值表示背景。
+    if (centerSample.w <= 0.0 || frame.renderOptions.y < 0.5) {
         return float4(0.0, 0.0, 0.0, 1.0);
     }
 
@@ -61,7 +51,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target {
         float2 direction = mul(rotation, float2(cos(angle), sin(angle)));
         float2 sampleUv = input.uv + direction * texel * pixelRadius * radius;
         float4 neighborSample = positionTexture.SampleLevel(renderSampler, sampleUv, 0.0);
-        if (neighborSample.w < 0.5) {
+        if (neighborSample.w <= 0.0) {
             continue;
         }
         float3 delta = neighborSample.xyz - center;

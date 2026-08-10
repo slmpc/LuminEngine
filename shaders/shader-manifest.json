@@ -1,0 +1,1243 @@
+{
+  "schemaVersion": 1,
+  "compiler": {
+    "target": "spirv",
+    "profile": "spirv_1_5",
+    "matrixLayout": "column-major",
+    "warningsAsErrors": "all",
+    "includeDirectories": [
+      "include"
+    ]
+  },
+  "abi": {
+    "structs": [
+      {
+        "name": "PostProcessUniforms",
+        "size": 496,
+        "fields": [
+          { "name": "inverseViewProjection", "offset": 0, "size": 64 },
+          { "name": "viewProjection", "offset": 64, "size": 64 },
+          { "name": "cascadeViewProjections", "offset": 128, "size": 256 },
+          { "name": "cascadeSplits", "offset": 384, "size": 16 },
+          { "name": "cameraPosition", "offset": 400, "size": 16 },
+          { "name": "cameraForward", "offset": 416, "size": 16 },
+          { "name": "lightDirection", "offset": 432, "size": 16 },
+          { "name": "renderSize", "offset": 448, "size": 16 },
+          { "name": "renderOptions", "offset": 464, "size": 16 },
+          { "name": "tonemapOptions", "offset": 480, "size": 16 }
+        ]
+      },
+      {
+        "name": "FrameUniforms",
+        "size": 128,
+        "fields": [
+          { "name": "viewProjection", "offset": 0, "size": 64 },
+          { "name": "previousViewProjection", "offset": 64, "size": 64 }
+        ]
+      },
+      {
+        "name": "ObjectData",
+        "size": 240,
+        "fields": [
+          { "name": "model", "offset": 0, "size": 64 },
+          { "name": "previousModel", "offset": 64, "size": 64 },
+          { "name": "normalMatrix", "offset": 128, "size": 64 },
+          { "name": "baseColorMetallic", "offset": 192, "size": 16 },
+          { "name": "materialParameters", "offset": 208, "size": 16 },
+          { "name": "metadata", "offset": 224, "size": 16 }
+        ]
+      },
+      {
+        "name": "ShadowUniforms",
+        "size": 64,
+        "fields": [
+          { "name": "lightViewProjection", "offset": 0, "size": 64 }
+        ]
+      },
+      {
+        "name": "PushConstants",
+        "size": 16,
+        "fields": [
+          { "name": "scale", "offset": 0, "size": 8 },
+          { "name": "translate", "offset": 8, "size": 8 }
+        ]
+      },
+      {
+        "name": "GpuPackedVertex",
+        "size": 32,
+        "fields": [
+          { "name": "position", "offset": 0, "size": 12 },
+          { "name": "positionPadding", "offset": 12, "size": 4 },
+          { "name": "normal", "offset": 16, "size": 12 },
+          { "name": "normalPadding", "offset": 28, "size": 4 }
+        ]
+      },
+      {
+        "name": "GpuInstanceData",
+        "size": 144,
+        "fields": [
+          { "name": "model", "offset": 0, "size": 64 },
+          { "name": "normalMatrix", "offset": 64, "size": 64 },
+          { "name": "metadata", "offset": 128, "size": 16 }
+        ]
+      },
+      {
+        "name": "GpuMaterialData",
+        "size": 64,
+        "fields": [
+          { "name": "baseColorMetallic", "offset": 0, "size": 16 },
+          { "name": "specularColorShininess", "offset": 16, "size": 16 },
+          { "name": "surfaceParameters", "offset": 32, "size": 16 },
+          { "name": "metadata", "offset": 48, "size": 16 }
+        ]
+      },
+      {
+        "name": "RayTracedGiConstants",
+        "size": 96,
+        "fields": [
+          { "name": "cameraPosition", "offset": 0, "size": 16 },
+          { "name": "cameraForward", "offset": 16, "size": 16 },
+          { "name": "toSunWorld", "offset": 32, "size": 16 },
+          { "name": "sunRadiance", "offset": 48, "size": 16 },
+          { "name": "renderSize", "offset": 64, "size": 16 },
+          { "name": "traceParameters", "offset": 80, "size": 16 }
+        ]
+      },
+      {
+        "name": "RayTracedDiConstants",
+        "size": 224,
+        "fields": [
+          { "name": "inverseViewProjection", "offset": 0, "size": 64 },
+          { "name": "previousViewProjection", "offset": 64, "size": 64 },
+          { "name": "cameraPosition", "offset": 128, "size": 16 },
+          { "name": "cameraForward", "offset": 144, "size": 16 },
+          { "name": "toSunWorld", "offset": 160, "size": 16 },
+          { "name": "sunRadiance", "offset": 176, "size": 16 },
+          { "name": "renderSize", "offset": 192, "size": 16 },
+          { "name": "traceParameters", "offset": 208, "size": 16 }
+        ]
+      },
+      {
+        "name": "GiCompositeConstants",
+        "size": 32,
+        "fields": [
+          { "name": "cameraPosition", "offset": 0, "size": 16 },
+          { "name": "renderInfo", "offset": 16, "size": 16 }
+        ]
+      },
+      {
+        "name": "HybridLightingCompositeConstants",
+        "size": 16,
+        "fields": [
+          { "name": "renderInfo", "offset": 0, "size": 16 }
+        ]
+      },
+      {
+        "name": "SharcGpuConstants",
+        "size": 128,
+        "fields": [
+          { "name": "cameraPositionSceneScale", "offset": 0, "size": 16 },
+          { "name": "previousCameraPositionLogarithmBase", "offset": 16, "size": 16 },
+          { "name": "toSunWorldRadianceScale", "offset": 32, "size": 16 },
+          { "name": "sunRadiance", "offset": 48, "size": 16 },
+          { "name": "traceParameters", "offset": 64, "size": 16 },
+          { "name": "cacheParameters", "offset": 80, "size": 16 },
+          { "name": "renderParameters", "offset": 96, "size": 16 },
+          { "name": "reserved", "offset": 112, "size": 16 }
+        ]
+      },
+      {
+        "name": "SharcAccumulationData",
+        "size": 16,
+        "fields": [
+          { "name": "data", "offset": 0, "size": 16 }
+        ]
+      },
+      {
+        "name": "SharcPackedData",
+        "size": 16,
+        "fields": [
+          { "name": "radianceData", "offset": 0, "size": 8 },
+          { "name": "sampleData", "offset": 8, "size": 4 },
+          { "name": "sampleDataExt", "offset": 12, "size": 4 }
+        ]
+      },
+      {
+        "name": "AtmosphereGpuConstants",
+        "size": 528,
+        "fields": [
+          { "name": "view", "offset": 0, "size": 64 },
+          { "name": "projection", "offset": 64, "size": 64 },
+          { "name": "inverseView", "offset": 128, "size": 64 },
+          { "name": "inverseProjection", "offset": 192, "size": 64 },
+          { "name": "inverseViewProjection", "offset": 256, "size": 64 },
+          { "name": "cameraPositionWorld", "offset": 320, "size": 16 },
+          { "name": "cameraPlanetPositionKm", "offset": 336, "size": 16 },
+          { "name": "toSunWorld", "offset": 352, "size": 16 },
+          { "name": "sunColorIlluminanceLux", "offset": 368, "size": 16 },
+          { "name": "atmosphereRadiiKm", "offset": 384, "size": 16 },
+          { "name": "worldMappingAndClipKm", "offset": 400, "size": 16 },
+          { "name": "renderExtent", "offset": 416, "size": 16 },
+          { "name": "rayleighScatteringAndInvScaleHeight", "offset": 432, "size": 16 },
+          { "name": "mieScatteringAndInvScaleHeight", "offset": 448, "size": 16 },
+          { "name": "mieAbsorptionAndPhaseG", "offset": 464, "size": 16 },
+          { "name": "ozoneAbsorptionPerKm", "offset": 480, "size": 16 },
+          { "name": "ozoneDensityProfileKm", "offset": 496, "size": 16 },
+          { "name": "groundAlbedoAndEnabled", "offset": 512, "size": 16 }
+        ]
+      }
+    ]
+  },
+  "shaders": [
+    {
+      "name": "gbuffer.vertex",
+      "source": "gbuffer.slang",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "gbuffer.vert.spv",
+      "reflection": "reflection/gbuffer.vert.json",
+      "depfile": "deps/gbuffer.vert.d",
+      "bindings": [
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 0 },
+        { "name": "objects", "kind": "structuredBuffer", "set": 0, "binding": 1 },
+        { "name": "baseColorTextures", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "normalRoughnessTextures", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "materialSampler", "kind": "sampler", "set": 0, "binding": 4 }
+      ],
+      "abiStructs": ["FrameUniforms", "ObjectData"]
+    },
+    {
+      "name": "gbuffer.fragment",
+      "source": "gbuffer.slang",
+      "entry": "fragmentMain",
+      "stage": "fragment",
+      "output": "gbuffer.frag.spv",
+      "reflection": "reflection/gbuffer.frag.json",
+      "depfile": "deps/gbuffer.frag.d",
+      "capabilities": [
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 0 },
+        { "name": "objects", "kind": "structuredBuffer", "set": 0, "binding": 1 },
+        { "name": "baseColorTextures", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "normalRoughnessTextures", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "materialSampler", "kind": "sampler", "set": 0, "binding": 4 }
+      ],
+      "abiStructs": ["FrameUniforms", "ObjectData"]
+    },
+    {
+      "name": "postprocess.vertex",
+      "source": "postprocess.slang",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "postprocess.vert.spv",
+      "reflection": "reflection/postprocess.vert.json",
+      "depfile": "deps/postprocess.vert.d",
+      "bindings": [
+        { "name": "resolvedTexture", "kind": "sampledImage", "set": 0, "binding": 7 },
+        { "name": "renderSampler", "kind": "sampler", "set": 0, "binding": 12 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 13 }
+      ],
+      "abiStructs": ["PostProcessUniforms"]
+    },
+    {
+      "name": "postprocess.fragment",
+      "source": "postprocess.slang",
+      "entry": "fragmentMain",
+      "stage": "fragment",
+      "output": "postprocess.frag.spv",
+      "reflection": "reflection/postprocess.frag.json",
+      "depfile": "deps/postprocess.frag.d",
+      "bindings": [
+        { "name": "resolvedTexture", "kind": "sampledImage", "set": 0, "binding": 7 },
+        { "name": "renderSampler", "kind": "sampler", "set": 0, "binding": 12 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 13 }
+      ],
+      "abiStructs": ["PostProcessUniforms"]
+    },
+    {
+      "name": "shadow.vertex",
+      "source": "shadow.slang",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "shadow.vert.spv",
+      "reflection": "reflection/shadow.vert.json",
+      "depfile": "deps/shadow.vert.d",
+      "bindings": [
+        { "name": "shadow", "kind": "constantBuffer", "set": 0, "binding": 0 },
+        { "name": "objects", "kind": "structuredBuffer", "set": 0, "binding": 1 }
+      ],
+      "abiStructs": ["ShadowUniforms", "ObjectData"]
+    },
+    {
+      "name": "ssao.vertex",
+      "source": "ssao.slang",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "ssao.vert.spv",
+      "reflection": "reflection/ssao.vert.json",
+      "depfile": "deps/ssao.vert.d",
+      "bindings": [
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 0 },
+        { "name": "normalTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "renderSampler", "kind": "sampler", "set": 0, "binding": 2 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 3 }
+      ],
+      "abiStructs": ["PostProcessUniforms"]
+    },
+    {
+      "name": "ssao.fragment",
+      "source": "ssao.slang",
+      "entry": "fragmentMain",
+      "stage": "fragment",
+      "output": "ssao.frag.spv",
+      "reflection": "reflection/ssao.frag.json",
+      "depfile": "deps/ssao.frag.d",
+      "bindings": [
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 0 },
+        { "name": "normalTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "renderSampler", "kind": "sampler", "set": 0, "binding": 2 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 3 }
+      ],
+      "abiStructs": ["PostProcessUniforms"]
+    },
+    {
+      "name": "deferred.vertex",
+      "source": "deferred.slang",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "deferred.vert.spv",
+      "reflection": "reflection/deferred.vert.json",
+      "depfile": "deps/deferred.vert.d",
+      "bindings": [
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 0 },
+        { "name": "normalTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "albedoTexture", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "globalIlluminationTexture", "kind": "sampledImage", "set": 0, "binding": 4 },
+        { "name": "shadowTexture0", "kind": "sampledImage", "set": 0, "binding": 8 },
+        { "name": "shadowTexture1", "kind": "sampledImage", "set": 0, "binding": 9 },
+        { "name": "shadowTexture2", "kind": "sampledImage", "set": 0, "binding": 10 },
+        { "name": "shadowTexture3", "kind": "sampledImage", "set": 0, "binding": 11 },
+        { "name": "renderSampler", "kind": "sampler", "set": 0, "binding": 12 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 13 },
+        { "name": "materialIdTexture", "kind": "sampledImage", "set": 1, "binding": 0 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 1, "binding": 1 }
+      ],
+      "abiStructs": ["PostProcessUniforms", "GpuMaterialData"]
+    },
+    {
+      "name": "deferred.fragment",
+      "source": "deferred.slang",
+      "entry": "fragmentMain",
+      "stage": "fragment",
+      "output": "deferred.frag.spv",
+      "reflection": "reflection/deferred.frag.json",
+      "depfile": "deps/deferred.frag.d",
+      "bindings": [
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 0 },
+        { "name": "normalTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "albedoTexture", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "globalIlluminationTexture", "kind": "sampledImage", "set": 0, "binding": 4 },
+        { "name": "shadowTexture0", "kind": "sampledImage", "set": 0, "binding": 8 },
+        { "name": "shadowTexture1", "kind": "sampledImage", "set": 0, "binding": 9 },
+        { "name": "shadowTexture2", "kind": "sampledImage", "set": 0, "binding": 10 },
+        { "name": "shadowTexture3", "kind": "sampledImage", "set": 0, "binding": 11 },
+        { "name": "renderSampler", "kind": "sampler", "set": 0, "binding": 12 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 13 },
+        { "name": "materialIdTexture", "kind": "sampledImage", "set": 1, "binding": 0 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 1, "binding": 1 }
+      ],
+      "abiStructs": ["PostProcessUniforms", "GpuMaterialData"]
+    },
+    {
+      "name": "sky.vertex",
+      "source": "sky.slang",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "sky.vert.spv",
+      "reflection": "reflection/sky.vert.json",
+      "depfile": "deps/sky.vert.d",
+      "bindings": [
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 13 }
+      ],
+      "abiStructs": ["PostProcessUniforms", "AtmosphereGpuConstants"]
+    },
+    {
+      "name": "sky.fragment",
+      "source": "sky.slang",
+      "entry": "fragmentMain",
+      "stage": "fragment",
+      "output": "sky.frag.spv",
+      "reflection": "reflection/sky.frag.json",
+      "depfile": "deps/sky.frag.d",
+      "bindings": [
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 13 }
+      ],
+      "abiStructs": ["PostProcessUniforms", "AtmosphereGpuConstants"]
+    },
+    {
+      "name": "taa.vertex",
+      "source": "taa.slang",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "taa.vert.spv",
+      "reflection": "reflection/taa.vert.json",
+      "depfile": "deps/taa.vert.d",
+      "bindings": [
+        { "name": "motionTexture", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "lightingTexture", "kind": "sampledImage", "set": 0, "binding": 5 },
+        { "name": "historyTexture", "kind": "sampledImage", "set": 0, "binding": 6 },
+        { "name": "renderSampler", "kind": "sampler", "set": 0, "binding": 12 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 13 }
+      ],
+      "abiStructs": ["PostProcessUniforms"]
+    },
+    {
+      "name": "taa.fragment",
+      "source": "taa.slang",
+      "entry": "fragmentMain",
+      "stage": "fragment",
+      "output": "taa.frag.spv",
+      "reflection": "reflection/taa.frag.json",
+      "depfile": "deps/taa.frag.d",
+      "bindings": [
+        { "name": "motionTexture", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "lightingTexture", "kind": "sampledImage", "set": 0, "binding": 5 },
+        { "name": "historyTexture", "kind": "sampledImage", "set": 0, "binding": 6 },
+        { "name": "renderSampler", "kind": "sampler", "set": 0, "binding": 12 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 13 }
+      ],
+      "abiStructs": ["PostProcessUniforms"]
+    },
+    {
+      "name": "atmosphere.transmittance",
+      "source": "atmosphere/TransmittanceLut.slang",
+      "entry": "transmittanceMain",
+      "stage": "compute",
+      "output": "atmosphere.transmittance.comp.spv",
+      "reflection": "reflection/atmosphere.transmittance.comp.json",
+      "depfile": "deps/atmosphere.transmittance.comp.d",
+      "bindings": [
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 0, "binding": 0 },
+        { "name": "transmittanceOutput", "kind": "storageImage", "set": 0, "binding": 4 }
+      ],
+      "abiStructs": ["AtmosphereGpuConstants"]
+    },
+    {
+      "name": "atmosphere.multi-scattering",
+      "source": "atmosphere/MultiScatteringLut.slang",
+      "entry": "multiScatteringMain",
+      "stage": "compute",
+      "output": "atmosphere.multi-scattering.comp.spv",
+      "reflection": "reflection/atmosphere.multi-scattering.comp.json",
+      "depfile": "deps/atmosphere.multi-scattering.comp.d",
+      "bindings": [
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 0, "binding": 0 },
+        { "name": "transmittanceLut", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 0, "binding": 3 },
+        { "name": "multiScatteringOutput", "kind": "storageImage", "set": 0, "binding": 4 }
+      ],
+      "abiStructs": ["AtmosphereGpuConstants"]
+    },
+    {
+      "name": "atmosphere.sky-view",
+      "source": "atmosphere/SkyViewLut.slang",
+      "entry": "skyViewMain",
+      "stage": "compute",
+      "output": "atmosphere.sky-view.comp.spv",
+      "reflection": "reflection/atmosphere.sky-view.comp.json",
+      "depfile": "deps/atmosphere.sky-view.comp.d",
+      "bindings": [
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 0, "binding": 0 },
+        { "name": "transmittanceLut", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "multiScatteringLut", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 0, "binding": 3 },
+        { "name": "skyViewOutput", "kind": "storageImage", "set": 0, "binding": 4 }
+      ],
+      "abiStructs": ["AtmosphereGpuConstants"]
+    },
+    {
+      "name": "atmosphere.aerial-perspective",
+      "source": "atmosphere/AerialPerspectiveLut.slang",
+      "entry": "aerialPerspectiveMain",
+      "stage": "compute",
+      "output": "atmosphere.aerial-perspective.comp.spv",
+      "reflection": "reflection/atmosphere.aerial-perspective.comp.json",
+      "depfile": "deps/atmosphere.aerial-perspective.comp.d",
+      "bindings": [
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 0, "binding": 0 },
+        { "name": "transmittanceLut", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "multiScatteringLut", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 0, "binding": 3 },
+        { "name": "aerialPerspectiveOutput", "kind": "storageImage3D", "set": 0, "binding": 4 }
+      ],
+      "abiStructs": ["AtmosphereGpuConstants"]
+    },
+    {
+      "name": "gi-composite.compute",
+      "source": "gi_composite.slang",
+      "entry": "compositeMain",
+      "stage": "compute",
+      "output": "gi_composite.comp.spv",
+      "reflection": "reflection/gi_composite.comp.json",
+      "depfile": "deps/gi_composite.comp.d",
+      "requires": ["rayTracing", "nrd"],
+      "bindings": [
+        { "name": "denoisedDiffuseRadianceHitDistance", "kind": "sampledImage", "set": 0, "binding": 0 },
+        { "name": "denoisedSpecularRadianceHitDistance", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "normalRoughnessTexture", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "albedoMetallicTexture", "kind": "sampledImage", "set": 0, "binding": 4 },
+        { "name": "materialIdTexture", "kind": "sampledImage", "set": 0, "binding": 5 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 6 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 7 },
+        { "name": "globalIlluminationOutput", "kind": "storageImage", "set": 0, "binding": 8 }
+      ],
+      "abiStructs": ["GpuMaterialData", "GiCompositeConstants"]
+    },
+    {
+      "name": "rt-gi.ray-generation",
+      "source": "rt_gi.slang",
+      "entry": "rayGenerationMain",
+      "stage": "raygeneration",
+      "output": "rt_gi.rgen.spv",
+      "reflection": "reflection/rt_gi.rgen.json",
+      "depfile": "deps/rt_gi.rgen.d",
+      "requires": ["rayTracing", "nrd"],
+      "includeDirectories": ["../thirdparty/nrd/Shaders"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "normalRoughnessTexture", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "albedoMetallicTexture", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "motionTexture", "kind": "sampledImage", "set": 0, "binding": 4 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 5 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 6 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 7 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 8 },
+        { "name": "diffuseRadianceHitDistance", "kind": "storageImage", "set": 0, "binding": 9 },
+        { "name": "specularRadianceHitDistance", "kind": "storageImage", "set": 0, "binding": 10 },
+        { "name": "viewZ", "kind": "storageImage", "set": 0, "binding": 11 },
+        { "name": "denoiserNormalRoughness", "kind": "storageImage", "set": 0, "binding": 12 },
+        { "name": "denoiserMotion", "kind": "storageImage", "set": 0, "binding": 13 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 14 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "RayTracedGiConstants",
+        "AtmosphereGpuConstants"
+      ]
+    },
+    {
+      "name": "hybrid-lighting-composite.compute",
+      "source": "hybrid_lighting_composite.slang",
+      "entry": "compositeMain",
+      "stage": "compute",
+      "output": "hybrid_lighting_composite.comp.spv",
+      "reflection": "reflection/hybrid_lighting_composite.comp.json",
+      "depfile": "deps/hybrid_lighting_composite.comp.d",
+      "requires": ["rayTracing", "nrd", "sharc"],
+      "bindings": [
+        { "name": "directRadiance", "kind": "sampledImage", "set": 0, "binding": 0 },
+        { "name": "indirectRadiance", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "lightingOutput", "kind": "storageImage", "set": 0, "binding": 2 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 3 }
+      ],
+      "abiStructs": ["HybridLightingCompositeConstants"]
+    },
+    {
+      "name": "rt-gi.radiance-miss",
+      "source": "rt_gi.slang",
+      "entry": "radianceMissMain",
+      "stage": "miss",
+      "output": "rt_gi.radiance.rmiss.spv",
+      "reflection": "reflection/rt_gi.radiance.rmiss.json",
+      "depfile": "deps/rt_gi.radiance.rmiss.d",
+      "requires": ["rayTracing", "nrd"],
+      "includeDirectories": ["../thirdparty/nrd/Shaders"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "normalRoughnessTexture", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "albedoMetallicTexture", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "motionTexture", "kind": "sampledImage", "set": 0, "binding": 4 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 5 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 6 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 7 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 8 },
+        { "name": "diffuseRadianceHitDistance", "kind": "storageImage", "set": 0, "binding": 9 },
+        { "name": "specularRadianceHitDistance", "kind": "storageImage", "set": 0, "binding": 10 },
+        { "name": "viewZ", "kind": "storageImage", "set": 0, "binding": 11 },
+        { "name": "denoiserNormalRoughness", "kind": "storageImage", "set": 0, "binding": 12 },
+        { "name": "denoiserMotion", "kind": "storageImage", "set": 0, "binding": 13 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 14 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "RayTracedGiConstants",
+        "AtmosphereGpuConstants"
+      ]
+    },
+    {
+      "name": "rt-gi.shadow-miss",
+      "source": "rt_gi.slang",
+      "entry": "shadowMissMain",
+      "stage": "miss",
+      "output": "rt_gi.shadow.rmiss.spv",
+      "reflection": "reflection/rt_gi.shadow.rmiss.json",
+      "depfile": "deps/rt_gi.shadow.rmiss.d",
+      "requires": ["rayTracing", "nrd"],
+      "includeDirectories": ["../thirdparty/nrd/Shaders"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "normalRoughnessTexture", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "albedoMetallicTexture", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "motionTexture", "kind": "sampledImage", "set": 0, "binding": 4 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 5 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 6 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 7 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 8 },
+        { "name": "diffuseRadianceHitDistance", "kind": "storageImage", "set": 0, "binding": 9 },
+        { "name": "specularRadianceHitDistance", "kind": "storageImage", "set": 0, "binding": 10 },
+        { "name": "viewZ", "kind": "storageImage", "set": 0, "binding": 11 },
+        { "name": "denoiserNormalRoughness", "kind": "storageImage", "set": 0, "binding": 12 },
+        { "name": "denoiserMotion", "kind": "storageImage", "set": 0, "binding": 13 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 14 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "RayTracedGiConstants",
+        "AtmosphereGpuConstants"
+      ]
+    },
+    {
+      "name": "rt-gi.closest-hit",
+      "source": "rt_gi.slang",
+      "entry": "closestHitMain",
+      "stage": "closesthit",
+      "output": "rt_gi.rchit.spv",
+      "reflection": "reflection/rt_gi.rchit.json",
+      "depfile": "deps/rt_gi.rchit.d",
+      "requires": ["rayTracing", "nrd"],
+      "includeDirectories": ["../thirdparty/nrd/Shaders"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "normalRoughnessTexture", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "albedoMetallicTexture", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "motionTexture", "kind": "sampledImage", "set": 0, "binding": 4 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 5 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 6 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 7 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 8 },
+        { "name": "diffuseRadianceHitDistance", "kind": "storageImage", "set": 0, "binding": 9 },
+        { "name": "specularRadianceHitDistance", "kind": "storageImage", "set": 0, "binding": 10 },
+        { "name": "viewZ", "kind": "storageImage", "set": 0, "binding": 11 },
+        { "name": "denoiserNormalRoughness", "kind": "storageImage", "set": 0, "binding": 12 },
+        { "name": "denoiserMotion", "kind": "storageImage", "set": 0, "binding": 13 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 14 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "RayTracedGiConstants",
+        "AtmosphereGpuConstants"
+      ]
+    },
+    {
+      "name": "rt-gi.sharc-closest-hit",
+      "source": "rt_gi_sharc.slang",
+      "entry": "closestHitMain",
+      "stage": "closesthit",
+      "output": "rt_gi.sharc.rchit.spv",
+      "reflection": "reflection/rt_gi.sharc.rchit.json",
+      "depfile": "deps/rt_gi.sharc.rchit.d",
+      "requires": ["rayTracing", "nrd", "sharc"],
+      "includeDirectories": ["../thirdparty/nrd/Shaders", "../thirdparty/sharc/include"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "normalRoughnessTexture", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "albedoMetallicTexture", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "motionTexture", "kind": "sampledImage", "set": 0, "binding": 4 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 5 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 6 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 7 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 8 },
+        { "name": "diffuseRadianceHitDistance", "kind": "storageImage", "set": 0, "binding": 9 },
+        { "name": "specularRadianceHitDistance", "kind": "storageImage", "set": 0, "binding": 10 },
+        { "name": "viewZ", "kind": "storageImage", "set": 0, "binding": 11 },
+        { "name": "denoiserNormalRoughness", "kind": "storageImage", "set": 0, "binding": 12 },
+        { "name": "denoiserMotion", "kind": "storageImage", "set": 0, "binding": 13 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 14 },
+        { "name": "sharcHashEntries", "kind": "structuredBuffer", "set": 0, "binding": 15 },
+        { "name": "sharcAccumulation", "kind": "structuredBuffer", "set": 0, "binding": 16 },
+        { "name": "sharcResolved", "kind": "structuredBuffer", "set": 0, "binding": 17 },
+        { "name": "sharcLocks", "kind": "structuredBuffer", "set": 0, "binding": 18 },
+        { "name": "sharcStatistics", "kind": "structuredBuffer", "set": 0, "binding": 19 },
+        { "name": "sharcFrame", "kind": "constantBuffer", "set": 0, "binding": 20 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "RayTracedGiConstants",
+        "AtmosphereGpuConstants",
+        "SharcGpuConstants",
+        "SharcAccumulationData",
+        "SharcPackedData"
+      ]
+    },
+    {
+      "name": "rt-di.ray-generation",
+      "source": "rt_di.slang",
+      "entry": "rayGenerationMain",
+      "stage": "raygeneration",
+      "output": "rt_di.rgen.spv",
+      "reflection": "reflection/rt_di.rgen.json",
+      "depfile": "deps/rt_di.rgen.d",
+      "requires": ["rayTracing"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 1 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 2 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 3 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 4 },
+        { "name": "worldPositionHitT", "kind": "storageImage", "set": 0, "binding": 5 },
+        { "name": "normalRoughness", "kind": "storageImage", "set": 0, "binding": 6 },
+        { "name": "albedoMetallic", "kind": "storageImage", "set": 0, "binding": 7 },
+        { "name": "materialIdOutput", "kind": "storageImage", "set": 0, "binding": 8 },
+        { "name": "viewZ", "kind": "storageImage", "set": 0, "binding": 9 },
+        { "name": "motion", "kind": "storageImage", "set": 0, "binding": 10 },
+        { "name": "directRadiance", "kind": "storageImage", "set": 0, "binding": 11 },
+        { "name": "visibilityMask", "kind": "storageImage", "set": 0, "binding": 12 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 13 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": ["GpuPackedVertex", "GpuInstanceData", "GpuMaterialData", "RayTracedDiConstants", "AtmosphereGpuConstants"]
+    },
+    {
+      "name": "rt-di.radiance-miss",
+      "source": "rt_di.slang",
+      "entry": "primaryMissMain",
+      "stage": "miss",
+      "output": "rt_di.radiance.rmiss.spv",
+      "reflection": "reflection/rt_di.radiance.rmiss.json",
+      "depfile": "deps/rt_di.radiance.rmiss.d",
+      "requires": ["rayTracing"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 1 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 2 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 3 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 4 },
+        { "name": "worldPositionHitT", "kind": "storageImage", "set": 0, "binding": 5 },
+        { "name": "normalRoughness", "kind": "storageImage", "set": 0, "binding": 6 },
+        { "name": "albedoMetallic", "kind": "storageImage", "set": 0, "binding": 7 },
+        { "name": "materialIdOutput", "kind": "storageImage", "set": 0, "binding": 8 },
+        { "name": "viewZ", "kind": "storageImage", "set": 0, "binding": 9 },
+        { "name": "motion", "kind": "storageImage", "set": 0, "binding": 10 },
+        { "name": "directRadiance", "kind": "storageImage", "set": 0, "binding": 11 },
+        { "name": "visibilityMask", "kind": "storageImage", "set": 0, "binding": 12 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 13 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": ["GpuPackedVertex", "GpuInstanceData", "GpuMaterialData", "RayTracedDiConstants", "AtmosphereGpuConstants"]
+    },
+    {
+      "name": "rt-di.shadow-miss",
+      "source": "rt_di.slang",
+      "entry": "shadowMissMain",
+      "stage": "miss",
+      "output": "rt_di.shadow.rmiss.spv",
+      "reflection": "reflection/rt_di.shadow.rmiss.json",
+      "depfile": "deps/rt_di.shadow.rmiss.d",
+      "requires": ["rayTracing"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 1 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 2 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 3 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 4 },
+        { "name": "worldPositionHitT", "kind": "storageImage", "set": 0, "binding": 5 },
+        { "name": "normalRoughness", "kind": "storageImage", "set": 0, "binding": 6 },
+        { "name": "albedoMetallic", "kind": "storageImage", "set": 0, "binding": 7 },
+        { "name": "materialIdOutput", "kind": "storageImage", "set": 0, "binding": 8 },
+        { "name": "viewZ", "kind": "storageImage", "set": 0, "binding": 9 },
+        { "name": "motion", "kind": "storageImage", "set": 0, "binding": 10 },
+        { "name": "directRadiance", "kind": "storageImage", "set": 0, "binding": 11 },
+        { "name": "visibilityMask", "kind": "storageImage", "set": 0, "binding": 12 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 13 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": ["GpuPackedVertex", "GpuInstanceData", "GpuMaterialData", "RayTracedDiConstants", "AtmosphereGpuConstants"]
+    },
+    {
+      "name": "rt-di.closest-hit",
+      "source": "rt_di.slang",
+      "entry": "primaryClosestHitMain",
+      "stage": "closesthit",
+      "output": "rt_di.rchit.spv",
+      "reflection": "reflection/rt_di.rchit.json",
+      "depfile": "deps/rt_di.rchit.d",
+      "requires": ["rayTracing"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 1 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 2 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 3 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 4 },
+        { "name": "worldPositionHitT", "kind": "storageImage", "set": 0, "binding": 5 },
+        { "name": "normalRoughness", "kind": "storageImage", "set": 0, "binding": 6 },
+        { "name": "albedoMetallic", "kind": "storageImage", "set": 0, "binding": 7 },
+        { "name": "materialIdOutput", "kind": "storageImage", "set": 0, "binding": 8 },
+        { "name": "viewZ", "kind": "storageImage", "set": 0, "binding": 9 },
+        { "name": "motion", "kind": "storageImage", "set": 0, "binding": 10 },
+        { "name": "directRadiance", "kind": "storageImage", "set": 0, "binding": 11 },
+        { "name": "visibilityMask", "kind": "storageImage", "set": 0, "binding": 12 },
+        { "name": "frame", "kind": "constantBuffer", "set": 0, "binding": 13 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": ["GpuPackedVertex", "GpuInstanceData", "GpuMaterialData", "RayTracedDiConstants", "AtmosphereGpuConstants"]
+    },
+    {
+      "name": "sharc-update.ray-generation",
+      "source": "sharc_update.slang",
+      "entry": "sharcUpdateRayGenerationMain",
+      "stage": "raygeneration",
+      "output": "sharc_update.rgen.spv",
+      "reflection": "reflection/sharc_update.rgen.json",
+      "depfile": "deps/sharc_update.rgen.d",
+      "requires": ["rayTracing", "sharc"],
+      "includeDirectories": ["../thirdparty/sharc/include"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "normalRoughnessTexture", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "albedoMetallicTexture", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 4 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 5 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 6 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 7 },
+        { "name": "sharcHashEntries", "kind": "structuredBuffer", "set": 0, "binding": 8 },
+        { "name": "sharcAccumulation", "kind": "structuredBuffer", "set": 0, "binding": 9 },
+        { "name": "sharcResolved", "kind": "structuredBuffer", "set": 0, "binding": 10 },
+        { "name": "sharcLocks", "kind": "structuredBuffer", "set": 0, "binding": 11 },
+        { "name": "sharcStatistics", "kind": "structuredBuffer", "set": 0, "binding": 12 },
+        { "name": "sharcFrame", "kind": "constantBuffer", "set": 0, "binding": 13 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "AtmosphereGpuConstants",
+        "SharcGpuConstants",
+        "SharcAccumulationData",
+        "SharcPackedData"
+      ]
+    },
+    {
+      "name": "sharc-update.radiance-miss",
+      "source": "sharc_update.slang",
+      "entry": "sharcUpdateRadianceMissMain",
+      "stage": "miss",
+      "output": "sharc_update.radiance.rmiss.spv",
+      "reflection": "reflection/sharc_update.radiance.rmiss.json",
+      "depfile": "deps/sharc_update.radiance.rmiss.d",
+      "requires": ["rayTracing", "sharc"],
+      "includeDirectories": ["../thirdparty/sharc/include"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "normalRoughnessTexture", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "albedoMetallicTexture", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 4 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 5 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 6 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 7 },
+        { "name": "sharcHashEntries", "kind": "structuredBuffer", "set": 0, "binding": 8 },
+        { "name": "sharcAccumulation", "kind": "structuredBuffer", "set": 0, "binding": 9 },
+        { "name": "sharcResolved", "kind": "structuredBuffer", "set": 0, "binding": 10 },
+        { "name": "sharcLocks", "kind": "structuredBuffer", "set": 0, "binding": 11 },
+        { "name": "sharcStatistics", "kind": "structuredBuffer", "set": 0, "binding": 12 },
+        { "name": "sharcFrame", "kind": "constantBuffer", "set": 0, "binding": 13 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "AtmosphereGpuConstants",
+        "SharcGpuConstants",
+        "SharcAccumulationData",
+        "SharcPackedData"
+      ]
+    },
+    {
+      "name": "sharc-update.shadow-miss",
+      "source": "sharc_update.slang",
+      "entry": "sharcUpdateShadowMissMain",
+      "stage": "miss",
+      "output": "sharc_update.shadow.rmiss.spv",
+      "reflection": "reflection/sharc_update.shadow.rmiss.json",
+      "depfile": "deps/sharc_update.shadow.rmiss.d",
+      "requires": ["rayTracing", "sharc"],
+      "includeDirectories": ["../thirdparty/sharc/include"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "normalRoughnessTexture", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "albedoMetallicTexture", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 4 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 5 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 6 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 7 },
+        { "name": "sharcHashEntries", "kind": "structuredBuffer", "set": 0, "binding": 8 },
+        { "name": "sharcAccumulation", "kind": "structuredBuffer", "set": 0, "binding": 9 },
+        { "name": "sharcResolved", "kind": "structuredBuffer", "set": 0, "binding": 10 },
+        { "name": "sharcLocks", "kind": "structuredBuffer", "set": 0, "binding": 11 },
+        { "name": "sharcStatistics", "kind": "structuredBuffer", "set": 0, "binding": 12 },
+        { "name": "sharcFrame", "kind": "constantBuffer", "set": 0, "binding": 13 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "AtmosphereGpuConstants",
+        "SharcGpuConstants",
+        "SharcAccumulationData",
+        "SharcPackedData"
+      ]
+    },
+    {
+      "name": "sharc-update.closest-hit",
+      "source": "sharc_update.slang",
+      "entry": "sharcUpdateClosestHitMain",
+      "stage": "closesthit",
+      "output": "sharc_update.rchit.spv",
+      "reflection": "reflection/sharc_update.rchit.json",
+      "depfile": "deps/sharc_update.rchit.d",
+      "requires": ["rayTracing", "sharc"],
+      "includeDirectories": ["../thirdparty/sharc/include"],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        { "name": "sceneTlas", "kind": "accelerationStructure", "set": 0, "binding": 0 },
+        { "name": "positionTexture", "kind": "sampledImage", "set": 0, "binding": 1 },
+        { "name": "normalRoughnessTexture", "kind": "sampledImage", "set": 0, "binding": 2 },
+        { "name": "albedoMetallicTexture", "kind": "sampledImage", "set": 0, "binding": 3 },
+        { "name": "vertexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 4 },
+        { "name": "indexBuffers", "kind": "structuredBuffer", "set": 0, "binding": 5 },
+        { "name": "instances", "kind": "structuredBuffer", "set": 0, "binding": 6 },
+        { "name": "materials", "kind": "structuredBuffer", "set": 0, "binding": 7 },
+        { "name": "sharcHashEntries", "kind": "structuredBuffer", "set": 0, "binding": 8 },
+        { "name": "sharcAccumulation", "kind": "structuredBuffer", "set": 0, "binding": 9 },
+        { "name": "sharcResolved", "kind": "structuredBuffer", "set": 0, "binding": 10 },
+        { "name": "sharcLocks", "kind": "structuredBuffer", "set": 0, "binding": 11 },
+        { "name": "sharcStatistics", "kind": "structuredBuffer", "set": 0, "binding": 12 },
+        { "name": "sharcFrame", "kind": "constantBuffer", "set": 0, "binding": 13 },
+        { "name": "atmosphere", "kind": "constantBuffer", "set": 2, "binding": 0 },
+        { "name": "atmosphereTransmittanceLut", "kind": "sampledImage", "set": 2, "binding": 1 },
+        { "name": "atmosphereMultiScatteringLut", "kind": "sampledImage", "set": 2, "binding": 2 },
+        { "name": "atmosphereSkyViewLut", "kind": "sampledImage", "set": 2, "binding": 3 },
+        { "name": "atmosphereAerialPerspectiveLut", "kind": "sampledImage3D", "set": 2, "binding": 4 },
+        { "name": "atmosphereSampler", "kind": "sampler", "set": 2, "binding": 5 }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "AtmosphereGpuConstants",
+        "SharcGpuConstants",
+        "SharcAccumulationData",
+        "SharcPackedData"
+      ]
+    },
+    {
+      "name": "sharc-resolve.compute",
+      "source": "sharc_resolve.slang",
+      "entry": "sharcResolveMain",
+      "stage": "compute",
+      "output": "sharc_resolve.comp.spv",
+      "reflection": "reflection/sharc_resolve.comp.json",
+      "depfile": "deps/sharc_resolve.comp.d",
+      "requires": ["rayTracing", "sharc"],
+      "includeDirectories": ["../thirdparty/sharc/include"],
+      "bindings": [
+        { "name": "sharcHashEntries", "kind": "structuredBuffer", "set": 0, "binding": 0 },
+        { "name": "sharcAccumulation", "kind": "structuredBuffer", "set": 0, "binding": 1 },
+        { "name": "sharcResolved", "kind": "structuredBuffer", "set": 0, "binding": 2 },
+        { "name": "sharcLocks", "kind": "structuredBuffer", "set": 0, "binding": 3 },
+        { "name": "sharcStatistics", "kind": "structuredBuffer", "set": 0, "binding": 4 },
+        { "name": "sharcFrame", "kind": "constantBuffer", "set": 0, "binding": 5 }
+      ],
+      "abiStructs": ["SharcGpuConstants", "SharcAccumulationData", "SharcPackedData"]
+    },
+    {
+      "name": "imgui.vertex",
+      "source": "imgui.slang",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "imgui.vert.spv",
+      "reflection": "reflection/imgui.vert.json",
+      "depfile": "deps/imgui.vert.d",
+      "bindings": [
+        { "name": "constants", "kind": "pushConstant", "binding": 0 },
+        { "name": "fontTexture", "kind": "sampledImage", "set": 0, "binding": 0 },
+        { "name": "fontSampler", "kind": "sampler", "set": 0, "binding": 128 }
+      ],
+      "abiStructs": ["PushConstants"]
+    },
+    {
+      "name": "imgui.fragment",
+      "source": "imgui.slang",
+      "entry": "fragmentMain",
+      "stage": "fragment",
+      "output": "imgui.frag.spv",
+      "reflection": "reflection/imgui.frag.json",
+      "depfile": "deps/imgui.frag.d",
+      "bindings": [
+        { "name": "constants", "kind": "pushConstant", "binding": 0 },
+        { "name": "fontTexture", "kind": "sampledImage", "set": 0, "binding": 0 },
+        { "name": "fontSampler", "kind": "sampler", "set": 0, "binding": 128 }
+      ],
+      "abiStructs": ["PushConstants"]
+    }
+  ]
+}
