@@ -62,3 +62,8 @@ reflection、depfile、capability、binding 和 `requires` feature。公共 ABI 
 临时 `shader-manifest.json` 和 `shader-targets.cmake`。CMake 不再解析 JSON，也不再维护入口列表；它只
 include 生成文件并定义 `lumin_shader_abi` / `lumin_shaders` 两个 target。`LUMIN_RAY_TRACING`、
 `LUMIN_ENABLE_NRD` 和 `LUMIN_ENABLE_SHARC` 会在生成阶段过滤对应 entry。
+
+`.slang` 源码和其 include 依赖由 `slangc` depfile 在构建阶段跟踪，保存源码不会触发 CMake 重新配置；
+companion JSON、`shader-abi.json` 或生成脚本变化时才重新生成构建描述。生成内容未变化时会保留文件时间戳，
+并且每个编译命令只依赖自身源码，因此普通配置刷新和单个 shader 修改都不会导致全量 shader 重编译；
+shader ABI 校验同样只在 manifest、reflection 或校验器发生变化后运行。

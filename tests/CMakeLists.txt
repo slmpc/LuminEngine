@@ -150,6 +150,18 @@ add_test(
 )
 set_tests_properties(ShaderReflectionAbi PROPERTIES LABELS "cpu;shader;raytracing;unit;contract" TIMEOUT 30)
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(
+    NAME ShaderManifestIncrementalGeneration
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/ShaderManifestGeneratorTests.py"
+            "${PROJECT_SOURCE_DIR}/scripts/shader_manifest.py"
+)
+set_tests_properties(
+    ShaderManifestIncrementalGeneration
+    PROPERTIES LABELS "cpu;shader;build;unit;contract" TIMEOUT 30
+)
+
 add_executable(lumin_render_pipeline_contract_tests
     RenderPipelineContractsTests.cpp
     "${PROJECT_SOURCE_DIR}/render/PipelineFactory.cpp"

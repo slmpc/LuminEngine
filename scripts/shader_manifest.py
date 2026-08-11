@@ -29,11 +29,20 @@ def read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def write_json(path: Path, value: dict[str, Any]) -> None:
+def write_text_if_changed(path: Path, text: str) -> bool:
+    try:
+        if path.read_text(encoding="utf-8") == text:
+            return False
+    except FileNotFoundError:
+        pass
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="\n") as stream:
-        json.dump(value, stream, ensure_ascii=False, indent=2)
-        stream.write("\n")
+    path.write_text(text, encoding="utf-8", newline="\n")
+    return True
+
+
+def write_json(path: Path, value: dict[str, Any]) -> bool:
+    text = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+    return write_text_if_changed(path, text)
 
 
 def as_bool(value: str) -> bool:
@@ -221,7 +230,7 @@ def generate_cmake(
             "    COMMAND ${CMAKE_COMMAND} -E make_directory "
             f"{cmake_list([output_parent, reflection_parent, depfile_parent])}",
             "    COMMAND " + " ".join(command),
-            f"    DEPENDS {cmake_list([source, manifest_path])}",
+            f"    DEPENDS {cmake_quote(source)}",
             f"    DEPFILE {cmake_quote(depfile)}",
             f"    COMMENT {cmake_quote('Compiling ' + entry['name'])}",
             "    VERBATIM",
@@ -265,11 +274,7 @@ def command_generate(args: argparse.Namespace) -> None:
     manifest_path = output_dir / "shader-manifest.json"
     cmake_path = output_dir / "shader-targets.cmake"
     write_json(manifest_path, manifest)
-    cmake_path.write_text(
-        generate_cmake(manifest, entries, source_dir, output_dir, slangc, features),
-        encoding="utf-8",
-        newline="\n",
-    )
+    write_text_if_changed(cmake_path, generate_cmake(manifest, entries, source_dir, output_dir, slangc, features))
 
 
 def build_parser() -> argparse.ArgumentParser:

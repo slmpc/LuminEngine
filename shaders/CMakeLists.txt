@@ -1,12 +1,15 @@
 include(LuminShaders)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
-file(GLOB_RECURSE _lumin_shader_inputs CONFIGURE_DEPENDS
+file(GLOB_RECURSE _lumin_shader_configs CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/*.slang"
+)
+# Shader sources and includes are build inputs tracked by each slangc depfile. Only
+# metadata changes need to regenerate the CMake custom commands.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${_lumin_shader_configs}
     "${PROJECT_SOURCE_DIR}/scripts/shader_manifest.py"
 )
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_lumin_shader_inputs})
 
 set(LUMIN_SHADER_MANIFEST "${LUMIN_SHADER_OUTPUT_DIR}/shader-manifest.json")
 execute_process(
@@ -31,9 +34,11 @@ endif()
 
 include("${LUMIN_SHADER_OUTPUT_DIR}/shader-targets.cmake")
 set(LUMIN_SHADER_ABI_VALIDATOR "${PROJECT_SOURCE_DIR}/cmake/ValidateShaderAbi.cmake")
+set(LUMIN_SHADER_ABI_STAMP "${LUMIN_SHADER_OUTPUT_DIR}/shader-abi.validated")
 
-# 该 target 可单独重复执行，并且也是默认 shader build 的 ABI 闸门。
-add_custom_target(lumin_shader_abi
+# ABI validation only needs to rerun when its generated inputs or validator change.
+add_custom_command(
+    OUTPUT "${LUMIN_SHADER_ABI_STAMP}"
     COMMAND "${CMAKE_COMMAND}"
             "-DLUMIN_SHADER_MANIFEST=${LUMIN_SHADER_MANIFEST}"
             "-DLUMIN_SHADER_REFLECTION_DIR=${LUMIN_SHADER_OUTPUT_DIR}"
@@ -42,6 +47,7 @@ add_custom_target(lumin_shader_abi
             "-DLUMIN_SHADER_ENABLE_NRD=${LUMIN_NRD_AVAILABLE}"
             "-DLUMIN_SHADER_ENABLE_SHARC=${LUMIN_SHARC_AVAILABLE}"
             -P "${LUMIN_SHADER_ABI_VALIDATOR}"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${LUMIN_SHADER_ABI_STAMP}"
     DEPENDS
         ${LUMIN_SHADER_REFLECTIONS}
         "${LUMIN_SHADER_MANIFEST}"
@@ -50,6 +56,7 @@ add_custom_target(lumin_shader_abi
     COMMENT "Validating shader reflection ABI"
     VERBATIM
 )
+add_custom_target(lumin_shader_abi DEPENDS "${LUMIN_SHADER_ABI_STAMP}")
 
 add_custom_target(lumin_shaders ALL DEPENDS ${LUMIN_SHADER_OUTPUTS} ${LUMIN_SHADER_REFLECTIONS})
 add_dependencies(lumin_shaders lumin_shader_abi)
