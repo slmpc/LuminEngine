@@ -1,5 +1,6 @@
 #include "render/DeferredRenderPipeline.hpp"
 
+#include <initializer_list>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -8,39 +9,14 @@ namespace lumin::render {
 
     namespace {
 
-        class DeferredCallbackFeature final : public core::IRenderFeature {
-        public:
-            DeferredCallbackFeature(core::FeatureDescriptor descriptor, DeferredRenderFeatureCallbacks callbacks)
-                : descriptor_(std::move(descriptor)), callbacks_(std::move(callbacks)) {
-                if (!callbacks_.addPasses) {
-                    throw std::invalid_argument("Deferred render feature requires an addPasses callback.");
-                }
-            }
-
-            [[nodiscard]] const core::FeatureDescriptor& descriptor() const noexcept override {
-                return descriptor_;
-            }
-
-            void addPasses(core::RenderFeatureFrameContext& context) override {
-                callbacks_.addPasses(context);
-            }
-
-            void onFrameSubmitted(const core::RenderFrameIdentity& identity) noexcept override {
-                if (callbacks_.onSubmitted) {
-                    callbacks_.onSubmitted(identity);
-                }
-            }
-
-            void onFrameDiscarded(const core::RenderFrameIdentity& identity) noexcept override {
-                if (callbacks_.onDiscarded) {
-                    callbacks_.onDiscarded(identity);
-                }
-            }
-
-        private:
-            core::FeatureDescriptor descriptor_;
-            DeferredRenderFeatureCallbacks callbacks_;
-        };
+        [[nodiscard]] bool descriptorMatches(const core::FeatureDescriptor& actual,
+                                              const core::FeatureDescriptor& expected) noexcept {
+            return actual.id == expected.id && actual.requiredCapabilities == expected.requiredCapabilities &&
+                   actual.optionalCapabilities == expected.optionalCapabilities &&
+                   actual.dependencies == expected.dependencies &&
+                   actual.missingRequirementPolicy == expected.missingRequirementPolicy &&
+                   actual.historyDomains == expected.historyDomains;
+        }
 
         [[nodiscard]] core::FeatureDescriptor feature(std::string_view id,
                                                       std::initializer_list<std::string_view> dependencies = {},
@@ -57,59 +33,92 @@ namespace lumin::render {
 
     } // namespace
 
-    DeferredRenderPipeline::DeferredRenderPipeline(DeferredRenderPipelineCallbacks callbacks,
+    core::FeatureDescriptor deferredFeatureDescriptor(LevelRenderFeatureKind kind, DeferredRenderPath path) {
+        switch (kind) {
+        case LevelRenderFeatureKind::Shadow:
+            return feature("shadow");
+        case LevelRenderFeatureKind::GBuffer:
+            return feature("gbuffer", {"shadow"});
+        case LevelRenderFeatureKind::HybridSurface: {
+            core::FeatureDescriptor descriptor = feature("hybrid-surface", {"atmosphere-luts"});
+            descriptor.requiredCapabilities.add(core::RenderCapability::AccelerationStructure)
+                .add(core::RenderCapability::RayTracingPipeline);
+            descriptor.missingRequirementPolicy = core::MissingRequirementPolicy::RejectPlan;
+            return descriptor;
+        }
+        case LevelRenderFeatureKind::AtmosphereLuts:
+            return feature("atmosphere-luts",
+                           path == DeferredRenderPath::Raster
+                               ? std::initializer_list<std::string_view>{"gbuffer"}
+                               : std::initializer_list<std::string_view>{},
+                           {core::HistoryDomain::AtmosphereLut});
+        case LevelRenderFeatureKind::GlobalIllumination:
+            return feature("global-illumination",
+                           path == DeferredRenderPath::Raster
+                               ? std::initializer_list<std::string_view>{"atmosphere-luts"}
+                               : std::initializer_list<std::string_view>{"hybrid-surface"},
+                           {core::HistoryDomain::Sharc});
+        case LevelRenderFeatureKind::GiDenoiser:
+            return feature("gi-denoiser", {"global-illumination"},
+                           {core::HistoryDomain::NrdDiffuse, core::HistoryDomain::NrdSpecular});
+        case LevelRenderFeatureKind::SkyComposite:
+            return feature("sky-composite", {"gi-denoiser", "atmosphere-luts"});
+        case LevelRenderFeatureKind::DirectLighting: {
+            core::FeatureDescriptor descriptor =
+                feature("direct-lighting", {"global-illumination", "gi-denoiser", "sky-composite"});
+            if (path == DeferredRenderPath::Raster) {
+                descriptor.dependencies.emplace_back("shadow");
+                descriptor.dependencies.emplace_back("gbuffer");
+            }
+            return descriptor;
+        }
+        case LevelRenderFeatureKind::TemporalAa:
+            return feature("temporal-aa", {"direct-lighting"}, {core::HistoryDomain::Taa});
+        case LevelRenderFeatureKind::ToneMapping:
+            return feature("tone-mapping", {"temporal-aa"});
+        case LevelRenderFeatureKind::UiPresent:
+            return feature("ui-present", {"tone-mapping"});
+        }
+        throw std::invalid_argument("Unknown deferred render feature kind.");
+    }
+
+    DeferredRenderPipeline::DeferredRenderPipeline(DeferredRenderFeatureSet features,
                                                    const core::RenderDeviceCapabilities& capabilities,
                                                    DeferredRenderPath path)
         : path_(path) {
-        if (path_ == DeferredRenderPath::Raster) {
-            pipeline_.addFeature(
-                std::make_unique<DeferredCallbackFeature>(feature("shadow"), std::move(callbacks.shadow)));
-            pipeline_.addFeature(std::make_unique<DeferredCallbackFeature>(
-                feature("gbuffer", {"shadow"}), std::move(callbacks.gbuffer)));
-        }
-
-        core::FeatureDescriptor atmosphere = feature("atmosphere-luts", {}, {core::HistoryDomain::AtmosphereLut});
-        if (path_ == DeferredRenderPath::Raster) {
-            atmosphere.dependencies.emplace_back("gbuffer");
-        }
-        pipeline_.addFeature(std::make_unique<DeferredCallbackFeature>(std::move(atmosphere),
-                                                                        std::move(callbacks.atmosphereLuts)));
-
-        if (path_ == DeferredRenderPath::Hybrid) {
-            if (!callbacks.hybridSurface.addPasses) {
-                throw std::invalid_argument("Hybrid render path requires a primary surface callback.");
+        const auto addFeature = [this](std::unique_ptr<core::IRenderFeature> featureObject,
+                                       LevelRenderFeatureKind kind) {
+            if (!featureObject) {
+                throw std::invalid_argument("Deferred render pipeline received a missing Feature.");
             }
-            core::FeatureDescriptor surface = feature("hybrid-surface", {"atmosphere-luts"});
-            surface.requiredCapabilities.add(core::RenderCapability::AccelerationStructure)
-                .add(core::RenderCapability::RayTracingPipeline);
-            surface.missingRequirementPolicy = core::MissingRequirementPolicy::RejectPlan;
-            pipeline_.addFeature(std::make_unique<DeferredCallbackFeature>(std::move(surface),
-                                                                            std::move(callbacks.hybridSurface)));
-        }
-        pipeline_.addFeature(std::make_unique<DeferredCallbackFeature>(
-            feature("global-illumination", {path_ == DeferredRenderPath::Raster ? "atmosphere-luts" : "hybrid-surface"},
-                    {core::HistoryDomain::Sharc}),
-            std::move(callbacks.globalIllumination)));
-        pipeline_.addFeature(std::make_unique<DeferredCallbackFeature>(
-            feature("gi-denoiser", {"global-illumination"},
-                    {core::HistoryDomain::NrdDiffuse, core::HistoryDomain::NrdSpecular}),
-            std::move(callbacks.giDenoiser)));
-        pipeline_.addFeature(std::make_unique<DeferredCallbackFeature>(
-            feature("sky-composite", {"gi-denoiser", "atmosphere-luts"}), std::move(callbacks.skyComposite)));
-        core::FeatureDescriptor directLighting =
-            feature("direct-lighting", {"global-illumination", "gi-denoiser", "sky-composite"});
+            const core::FeatureDescriptor expected = deferredFeatureDescriptor(kind, path_);
+            if (!descriptorMatches(featureObject->descriptor(), expected)) {
+                throw std::invalid_argument(
+                    "Deferred render pipeline received a Feature with an incompatible descriptor contract.");
+            }
+            pipeline_.addFeature(std::move(featureObject));
+        };
+
         if (path_ == DeferredRenderPath::Raster) {
-            directLighting.dependencies.emplace_back("shadow");
-            directLighting.dependencies.emplace_back("gbuffer");
+            addFeature(std::move(features.shadow), LevelRenderFeatureKind::Shadow);
+            addFeature(std::move(features.gbuffer), LevelRenderFeatureKind::GBuffer);
+        } else if (features.shadow || features.gbuffer) {
+            throw std::invalid_argument("Hybrid deferred render pipeline cannot register raster-only Features.");
         }
-        pipeline_.addFeature(std::make_unique<DeferredCallbackFeature>(std::move(directLighting),
-                                                                        std::move(callbacks.directLighting)));
-        pipeline_.addFeature(std::make_unique<DeferredCallbackFeature>(
-            feature("temporal-aa", {"direct-lighting"}, {core::HistoryDomain::Taa}), std::move(callbacks.temporalAa)));
-        pipeline_.addFeature(std::make_unique<DeferredCallbackFeature>(feature("tone-mapping", {"temporal-aa"}),
-                                                                       std::move(callbacks.toneMapping)));
-        pipeline_.addFeature(std::make_unique<DeferredCallbackFeature>(feature("ui-present", {"tone-mapping"}),
-                                                                       std::move(callbacks.uiPresent)));
+
+        addFeature(std::move(features.atmosphereLuts), LevelRenderFeatureKind::AtmosphereLuts);
+        if (path_ == DeferredRenderPath::Hybrid) {
+            addFeature(std::move(features.hybridSurface), LevelRenderFeatureKind::HybridSurface);
+        } else if (features.hybridSurface) {
+            throw std::invalid_argument("Raster deferred render pipeline cannot register the Hybrid surface Feature.");
+        }
+        addFeature(std::move(features.globalIllumination), LevelRenderFeatureKind::GlobalIllumination);
+        addFeature(std::move(features.giDenoiser), LevelRenderFeatureKind::GiDenoiser);
+        addFeature(std::move(features.skyComposite), LevelRenderFeatureKind::SkyComposite);
+        addFeature(std::move(features.directLighting), LevelRenderFeatureKind::DirectLighting);
+        addFeature(std::move(features.temporalAa), LevelRenderFeatureKind::TemporalAa);
+        addFeature(std::move(features.toneMapping), LevelRenderFeatureKind::ToneMapping);
+        addFeature(std::move(features.uiPresent), LevelRenderFeatureKind::UiPresent);
         pipeline_.resolve(capabilities);
     }
 

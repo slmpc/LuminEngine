@@ -50,6 +50,37 @@ Viewport 图像被悬停并按住鼠标右键时，应用启用 SDL relative mou
 所有图形通道均使用 Vulkan 1.3 动态渲染。`PipelineFactory` 支持 MRT 流水线和仅含顶点阶段的深度流水线；
 项目不会创建 `VkRenderPass` 或 framebuffer 对象。
 
+## LevelRenderer 模块边界
+
+`LevelRenderer` 现在是一个稳定的公共门面。`render/LevelRenderer.hpp` 只保留窗口、上下文、场景引用和逐帧
+入口所需的 API；具体资源成员通过 `std::unique_ptr<LevelRenderer::Impl>` 隐藏在实现文件中。这样公共头不再暴露
+`TextureManager`、`PipelineManager`、Hybrid GI 后端或 NvRHI framebuffer，资源成员变化也不会迫使 Application 和
+编辑器重新编译。`LevelRenderer.cpp` 只负责门面转发、帧入口、提交顺序和异常清理。
+
+实现按职责分成以下文件：
+
+- `render/level/LevelRendererImpl.hpp` 保存私有所有权、Feature host 接口和跨帧状态声明。
+- `render/level/LevelRendererResources.cpp` 创建、销毁和重建交换链、Viewport、材质、Atmosphere 与 Hybrid GI 资源。
+- `render/level/LevelRendererFrame.cpp` 生成相机/阴影数据，导入逐帧资源，创建 framebuffer，并执行 `FrameGraph`。
+- `render/level/LevelRendererFeatures.cpp` 只实现各 Feature 的 pass setup/record，以及提交成功和丢弃时的资源通知。
+- `render/level/LevelRenderFrameData.hpp` 定义当前录制调用使用的黑板数据。它保存 immutable `RenderWorldSnapshot`、
+  当前帧资源、FrameGraph handle 和派生矩阵；其中的指针、span 和 handle 只在当前 `recordCommandList` 调用期间有效，
+  不得由 Feature 跨帧保存。
+- `render/features/LevelRenderFeature.*` 是窄化适配层。独立 Feature 只保存 descriptor、Feature kind 和 host 接口，
+  具体 pass 通过 `LevelRenderFeatureHost` 转交给实现，不依赖 `LevelRenderer` 的具体类型，也不跨帧保存当前帧上下文。
+
+`DeferredRenderPipeline` 拥有 `DeferredRenderFeatureSet` 中的独立 `IRenderFeature` 对象，并在构造时验证 descriptor ID
+ 与当前路径一致，再解析能力和依赖图。Raster 路径必须注册 `shadow` 与 `gbuffer`，不得注册 `hybrid-surface`；
+ Hybrid 路径必须注册 `hybrid-surface`，不得注册 Raster-only Feature。`hybrid-surface` 的 descriptor 要求
+ `AccelerationStructure` 和 `RayTracingPipeline`，缺少时拒绝整个 Hybrid 计划。每个时序历史域在一个解析计划中只有
+ 一个 Feature 负责（Atmosphere LUT、SHARC、NRD diffuse/specular、TAA），因此历史失效策略不会散落在渲染器门面中。
+
+一帧的 Feature 事务顺序固定为：`prepareFrame` 按解析后的依赖顺序调用 `addPasses`；录制异常或提交异常调用
+`discardFrame`，已进入的 Feature 按逆序收到 `onFrameDiscarded`；队列提交成功后调用 `commitFrame`，按正序发送
+`onFrameSubmitted` 并推进各历史域。`presentFrame` 位于 commit 之后，present 失败不会回滚已经提交的 GPU 历史。
+因此 ModelRenderer、Atmosphere、GI、NRD、TAA 和 ImGui 的跨帧候选状态都只能在对应 Feature 的提交通知中发布，
+丢弃通知必须保持旧版本可重试。
+
 ## 表面材质与 GPU ABI
 
 `scene::Material` 位于 `core/scene/Material.hpp`，通过 `SurfaceModel` 逐材质选择

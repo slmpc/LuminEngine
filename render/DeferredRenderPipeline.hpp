@@ -1,9 +1,10 @@
 #pragma once
 
 #include "render/core/RenderFeaturePipeline.hpp"
+#include "render/features/LevelRenderFeature.hpp"
 
 #include <cstdint>
-#include <functional>
+#include <memory>
 
 namespace lumin::render {
 
@@ -27,18 +28,6 @@ namespace lumin::render {
                                          const AtmosphereInvalidationSignatures&) noexcept = default;
     };
 
-    /** 单个延迟渲染 Feature 的生命周期回调。 */
-    struct DeferredRenderFeatureCallbacks {
-        /// 声明该 Feature 的 FrameGraph pass；必须提供。
-        std::function<void(core::RenderFeatureFrameContext&)> addPasses;
-
-        /// 对应帧成功提交后的通知；回调不得抛出异常。
-        std::function<void(const core::RenderFrameIdentity&)> onSubmitted;
-
-        /// 对应帧被放弃时的通知；回调不得抛出异常。
-        std::function<void(const core::RenderFrameIdentity&)> onDiscarded;
-    };
-
     /** 延迟路径或 primary-ray Hybrid 路径的固定 Feature 拓扑。 */
     enum class DeferredRenderPath : std::uint8_t {
         /// 传统 shadow + G-buffer + deferred lighting 路径。
@@ -47,26 +36,29 @@ namespace lumin::render {
         Hybrid,
     };
 
-    /** 延迟渲染主线 Feature 的回调集合；Hybrid 额外启用 `hybridSurface`。 */
-    struct DeferredRenderPipelineCallbacks {
-        DeferredRenderFeatureCallbacks shadow;
-        DeferredRenderFeatureCallbacks gbuffer;
-        /// Hybrid 路径的 primary-ray surface/RTDI Feature；Raster 路径不调用。
-        DeferredRenderFeatureCallbacks hybridSurface;
-        DeferredRenderFeatureCallbacks atmosphereLuts;
-        DeferredRenderFeatureCallbacks globalIllumination;
-        DeferredRenderFeatureCallbacks giDenoiser;
-        DeferredRenderFeatureCallbacks skyComposite;
-        DeferredRenderFeatureCallbacks directLighting;
-        DeferredRenderFeatureCallbacks temporalAa;
-        DeferredRenderFeatureCallbacks toneMapping;
-        DeferredRenderFeatureCallbacks uiPresent;
+    /** 延迟渲染主线 Feature 的独立对象集合；Hybrid 额外启用 `hybridSurface`。 */
+    struct DeferredRenderFeatureSet {
+        std::unique_ptr<core::IRenderFeature> shadow;
+        std::unique_ptr<core::IRenderFeature> gbuffer;
+        std::unique_ptr<core::IRenderFeature> hybridSurface;
+        std::unique_ptr<core::IRenderFeature> atmosphereLuts;
+        std::unique_ptr<core::IRenderFeature> globalIllumination;
+        std::unique_ptr<core::IRenderFeature> giDenoiser;
+        std::unique_ptr<core::IRenderFeature> skyComposite;
+        std::unique_ptr<core::IRenderFeature> directLighting;
+        std::unique_ptr<core::IRenderFeature> temporalAa;
+        std::unique_ptr<core::IRenderFeature> toneMapping;
+        std::unique_ptr<core::IRenderFeature> uiPresent;
     };
+
+    /** 构造固定 Feature 拓扑使用的 descriptor；具体 pass 由独立对象实现。 */
+    [[nodiscard]] core::FeatureDescriptor deferredFeatureDescriptor(LevelRenderFeatureKind kind,
+                                                                     DeferredRenderPath path);
 
     /**
      * @brief 延迟渲染主线的固定 Feature 规划门面。
      *
-     * 该类型只定义 Feature 身份、依赖和历史域所有权；具体 NvRHI 资源与 pass 仍由宿主回调提供。
+     * 该类型只定义 Feature 身份、依赖和历史域所有权；具体 NvRHI 资源与 pass 由注册的 Feature 对象提供。
      * Raster 执行顺序为 shadow、gbuffer、atmosphere LUT、GI、GI denoiser、sky/composite、direct-lighting、TAA、
      * tonemap、UI/present；Hybrid 会在 GI 前插入 primary RT surface。LUT 必须在 RT miss、SHARC 更新和
      * raster sky 之前就绪。
@@ -75,9 +67,9 @@ namespace lumin::render {
     public:
         /**
          * @brief 注册主线 Feature 并按设备能力解析。
-         * @throws std::invalid_argument 任一 `addPasses` 回调为空时抛出。
+         * @throws std::invalid_argument Feature 缺失、路径不匹配或 descriptor ID 不一致时抛出。
          */
-        DeferredRenderPipeline(DeferredRenderPipelineCallbacks callbacks,
+        DeferredRenderPipeline(DeferredRenderFeatureSet features,
                                const core::RenderDeviceCapabilities& capabilities,
                                DeferredRenderPath path = DeferredRenderPath::Raster);
 

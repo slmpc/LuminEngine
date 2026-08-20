@@ -41,7 +41,7 @@ namespace {
     }
 
     void verifyPassOrder(const std::string& level, const std::string& deferredPipeline) {
-        std::size_t position = level.find("LevelRenderer::recordCommandList");
+        std::size_t position = level.find("LevelRenderer::Impl::recordCommandList");
         require(position != std::string::npos, "NvRHI frame recorder entry point is missing.");
         for (const std::string& pass : std::vector<std::string>{
                  "CSM cascade ", "G-buffer", "globalIllumination_->addPasses", "Procedural sky", "Deferred lighting",
@@ -142,11 +142,11 @@ namespace {
                 present != std::string::npos && submit < pipelineCommit && pipelineCommit < changesConsumed &&
                 changesConsumed < sequenceAdvance && sequenceAdvance < present,
             "Feature history must commit after queue submit and before present, whose failure cannot roll it back.");
-        require(level.find("callbacks.gbuffer.onSubmitted") != std::string::npos &&
+        require(level.find("submitFeature(LevelRenderFeatureKind kind") != std::string::npos &&
                     level.find("modelRenderer_->commitSubmittedFrame") != std::string::npos &&
-                    level.find("callbacks.temporalAa.onSubmitted") != std::string::npos &&
+                    level.find("LevelRenderFeatureKind::TemporalAa") != std::string::npos &&
                     level.find("textures_.markHistoryValid") != std::string::npos,
-                "Model and TAA histories must be committed through Feature submission callbacks.");
+                "Model and TAA histories must be committed through independent Feature submission notifications.");
         require(level.find("modelRenderer_->discardPendingFrame") != std::string::npos,
                 "Discarded Feature frames must abandon pending model transforms.");
         require(level.find("textures_.invalidateHistory") == std::string::npos &&
@@ -200,14 +200,14 @@ namespace {
                     level.find("ensureHybridGiCapacity()") != std::string::npos,
                 "Growing geometry descriptor arrays must be rebuilt from the waited-idle topology path.");
 
-        std::size_t position = level.find("LevelRenderer::addHybridSurfaceFeaturePasses");
+        std::size_t position = level.find("LevelRenderer::Impl::addHybridSurfaceFeaturePasses");
         position = requireAfter(level, "runtime.sceneResources->recordUpdate", position);
         position = requireAfter(level, "runtime.sceneResources->candidateDescriptors", position);
         position = requireAfter(level, "runtime.sceneResources->candidateGeometry", position);
         position = requireAfter(level, "runtime.sharc->record(", position);
         position = requireAfter(level, "runtime.rayTracedGi->record(", position);
         position = requireAfter(level, "recordStatisticsReadback", position);
-        position = requireAfter(level, "LevelRenderer::addGiDenoiserFeaturePasses", position);
+        position = requireAfter(level, "LevelRenderer::Impl::addGiDenoiserFeaturePasses", position);
         position = requireAfter(level, "runtime.nrd->record(", position);
         requireAfter(level, "runtime.composite->record(", position);
         require(level.find("if (runtime.sharcEnabled)") != std::string::npos &&
@@ -233,7 +233,7 @@ namespace {
                 "Disabling physical atmosphere must preserve the shared procedural environment fallback.");
 
         const std::size_t submit = level.find("context_.submitFrameCommands");
-        const std::size_t runtimeCommit = level.find("commitSubmittedRuntimeFrame(identity)", submit);
+        const std::size_t runtimeCommit = level.find("commitHybridSurfaceFeature(identity)", submit);
         const std::size_t plannerCommit = level.find("runtime.scenePlanner->commit", runtimeCommit);
         const std::size_t physicalCommit = level.find("runtime.sceneResources->finishUpdate", plannerCommit);
         const std::size_t nrdCommit = level.find("runtime.nrd->commitSubmittedFrame", physicalCommit);
@@ -365,7 +365,11 @@ namespace {
 
 int main() {
     try {
-        const std::string level = readSource("render/LevelRenderer.cpp");
+        const std::string level = readSource("render/LevelRenderer.cpp") +
+                                  readSource("render/level/LevelRendererFrame.cpp") +
+                                  readSource("render/level/LevelRendererResources.cpp") +
+                                  readSource("render/level/LevelRendererFeatures.cpp") +
+                                  readSource("render/features/LevelRenderFeature.cpp");
         const std::string context = readSource("render/VulkanContext.cpp");
         const std::string deferredPipeline = readSource("render/DeferredRenderPipeline.cpp");
         const std::string deferredHeader = readSource("render/DeferredRenderPipeline.hpp");

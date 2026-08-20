@@ -311,6 +311,11 @@ lumin_configure_test(lumin_render_feature_pipeline_tests)
 target_link_libraries(lumin_render_feature_pipeline_tests PRIVATE Lumin::RenderCore)
 lumin_register_test(lumin_render_feature_pipeline_tests RenderFeaturePipeline LABELS render unit contract)
 
+add_executable(lumin_deferred_render_pipeline_tests DeferredRenderPipelineTests.cpp)
+lumin_configure_test(lumin_deferred_render_pipeline_tests)
+target_link_libraries(lumin_deferred_render_pipeline_tests PRIVATE Lumin::RenderCore)
+lumin_register_test(lumin_deferred_render_pipeline_tests DeferredRenderPipeline LABELS render unit contract)
+
 add_executable(lumin_render_world_tests RenderWorldTests.cpp)
 lumin_configure_test(lumin_render_world_tests)
 target_link_libraries(lumin_render_world_tests PRIVATE Lumin::RenderCore)

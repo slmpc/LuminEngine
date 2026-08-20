@@ -19,6 +19,10 @@ set(_lumin_render_sources
     ${PROJECT_SOURCE_DIR}/render/ShaderLibrary.cpp
     ${PROJECT_SOURCE_DIR}/render/TextureManager.cpp
     ${PROJECT_SOURCE_DIR}/render/LevelRenderer.cpp
+    ${PROJECT_SOURCE_DIR}/render/level/LevelRendererResources.cpp
+    ${PROJECT_SOURCE_DIR}/render/level/LevelRendererFeatures.cpp
+    ${PROJECT_SOURCE_DIR}/render/level/LevelRendererFrame.cpp
+    ${PROJECT_SOURCE_DIR}/render/features/LevelRenderFeature.cpp
     ${PROJECT_SOURCE_DIR}/render/ObjRenderer.cpp
     ${PROJECT_SOURCE_DIR}/render/ImGuiLayer.cpp
     ${PROJECT_SOURCE_DIR}/render/ImGuiManager.cpp
