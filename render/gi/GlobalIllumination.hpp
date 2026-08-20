@@ -7,7 +7,7 @@
 
 #include <nvrhi/nvrhi.h>
 
-#include "render/FrameGraph.hpp"
+#include "render/resources/FrameGraph.hpp"
 
 namespace lumin::render::world {
     class RenderWorldSnapshot;

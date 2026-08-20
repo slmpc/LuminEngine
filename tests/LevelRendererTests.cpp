@@ -370,7 +370,7 @@ int main() {
                                   readSource("render/level/LevelRendererResources.cpp") +
                                   readSource("render/level/LevelRendererFeatures.cpp") +
                                   readSource("render/features/LevelRenderFeature.cpp");
-        const std::string context = readSource("render/VulkanContext.cpp");
+        const std::string context = readSource("render/platform/vulkan/VulkanContext.cpp");
         const std::string deferredPipeline = readSource("render/DeferredRenderPipeline.cpp");
         const std::string deferredHeader = readSource("render/DeferredRenderPipeline.hpp");
         verifyPassOrder(level, deferredPipeline);

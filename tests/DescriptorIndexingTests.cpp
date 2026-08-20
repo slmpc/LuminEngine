@@ -1,7 +1,7 @@
 #include "render/ModelRenderer.hpp"
 #include "render/world/RenderWorld.hpp"
 #include "scene/Level.hpp"
-#include "render/DescriptorIndexingLimits.hpp"
+#include "render/resources/DescriptorIndexingLimits.hpp"
 
 #include <cstdint>
 #include <iostream>

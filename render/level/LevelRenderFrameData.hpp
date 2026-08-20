@@ -1,7 +1,7 @@
 #pragma once
 
-#include "render/FrameGraph.hpp"
-#include "render/TextureManager.hpp"
+#include "render/resources/FrameGraph.hpp"
+#include "render/resources/TextureManager.hpp"
 #include "render/atmosphere/AtmosphereLutGpu.hpp"
 #include "render/gi/GlobalIllumination.hpp"
 #include "render/gpu/GpuScene.hpp"

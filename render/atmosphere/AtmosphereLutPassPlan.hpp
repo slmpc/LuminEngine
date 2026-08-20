@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-#include "render/FrameGraph.hpp"
+#include "render/resources/FrameGraph.hpp"
 #include "render/atmosphere/AtmosphereLutResources.hpp"
 
 namespace lumin::render::atmosphere {

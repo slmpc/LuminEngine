@@ -5,8 +5,8 @@
 
 #include <nvrhi/nvrhi.h>
 
-#include "render/ImGuiContent.hpp"
-#include "render/ImGuiLayer.hpp"
+#include "render/editor/ImGuiContent.hpp"
+#include "render/editor/ImGuiLayer.hpp"
 
 namespace lumin::platform {
     class Window;

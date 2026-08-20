@@ -1,4 +1,4 @@
-#include "render/ImGuiLayer.hpp"
+#include "render/editor/ImGuiLayer.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -168,8 +168,8 @@ namespace {
     }
 
     void testBackendIntegrationContract() {
-        const std::string layer = readText("render/ImGuiLayer.cpp");
-        const std::string manager = readText("render/ImGuiManager.cpp");
+        const std::string layer = readText("render/editor/ImGuiLayer.cpp");
+        const std::string manager = readText("render/editor/ImGuiManager.cpp");
         require(countOccurrences(layer, "createFontResources();") == 1,
                 "Font texture and binding initialization must run exactly once per layer initialization.");
         require(layer.find("device_->createTexture(textureDesc)") != std::string::npos &&

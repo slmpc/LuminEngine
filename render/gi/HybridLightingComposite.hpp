@@ -6,7 +6,7 @@
 
 #include <glm/vec4.hpp>
 
-#include "render/FrameGraph.hpp"
+#include "render/resources/FrameGraph.hpp"
 #include "render/core/FrameIdentity.hpp"
 #include <nvrhi/nvrhi.h>
 

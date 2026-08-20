@@ -7,7 +7,7 @@
 
 #include <nvrhi/nvrhi.h>
 
-#include "render/ImGuiContent.hpp"
+#include "render/editor/ImGuiContent.hpp"
 
 struct ImDrawCmd;
 struct ImDrawData;

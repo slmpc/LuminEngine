@@ -9,7 +9,7 @@
 #include <nvrhi/vulkan.h>
 #include <vulkan/vulkan.h>
 
-#include "render/VulkanRayTracingCapabilities.hpp"
+#include "render/platform/vulkan/VulkanRayTracingCapabilities.hpp"
 
 namespace lumin::platform {
     class Window;

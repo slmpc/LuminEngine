@@ -1,7 +1,7 @@
 #include "render/gi/HybridLightingComposite.hpp"
 
-#include "render/PipelineFactory.hpp"
-#include "render/ShaderLibrary.hpp"
+#include "render/resources/PipelineFactory.hpp"
+#include "render/resources/ShaderLibrary.hpp"
 
 #include <cstring>
 #include <array>

@@ -1,4 +1,4 @@
-#include "render/DescriptorIndexingLimits.hpp"
+#include "render/resources/DescriptorIndexingLimits.hpp"
 #include "render/ModelRenderer.hpp"
 #include "render/world/RenderWorld.hpp"
 

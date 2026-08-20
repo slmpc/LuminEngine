@@ -1,6 +1,6 @@
-#include "render/ImGuiLayer.hpp"
+#include "render/editor/ImGuiLayer.hpp"
 
-#include "render/ShaderLibrary.hpp"
+#include "render/resources/ShaderLibrary.hpp"
 #include "render/platform/Window.hpp"
 
 #include <algorithm>

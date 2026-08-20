@@ -164,8 +164,8 @@ set_tests_properties(
 
 add_executable(lumin_render_pipeline_contract_tests
     RenderPipelineContractsTests.cpp
-    "${PROJECT_SOURCE_DIR}/render/PipelineFactory.cpp"
-    "${PROJECT_SOURCE_DIR}/render/ShaderLibrary.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/PipelineFactory.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/ShaderLibrary.cpp"
 )
 lumin_configure_test(lumin_render_pipeline_contract_tests)
 target_link_libraries(lumin_render_pipeline_contract_tests PRIVATE nvrhi)
@@ -174,8 +174,8 @@ lumin_register_test(lumin_render_pipeline_contract_tests RenderPipelineContracts
 add_executable(lumin_imgui_renderer_tests
     ImGuiRendererTests.cpp
     "${PROJECT_SOURCE_DIR}/render/platform/Window.cpp"
-    "${PROJECT_SOURCE_DIR}/render/ImGuiLayer.cpp"
-    "${PROJECT_SOURCE_DIR}/render/ShaderLibrary.cpp"
+    "${PROJECT_SOURCE_DIR}/render/editor/ImGuiLayer.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/ShaderLibrary.cpp"
 )
 lumin_configure_test(lumin_imgui_renderer_tests)
 target_link_libraries(lumin_imgui_renderer_tests PRIVATE Vulkan::Vulkan SDL3::SDL3 imgui::imgui nvrhi)
@@ -214,10 +214,10 @@ lumin_register_test(lumin_descriptor_indexing_tests DescriptorIndexing LABELS ra
 
 add_executable(lumin_gi_tests
     GlobalIlluminationTests.cpp
-    "${PROJECT_SOURCE_DIR}/render/FrameGraph.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/FrameGraph.cpp"
     "${PROJECT_SOURCE_DIR}/render/gi/SsaoBackend.cpp"
-    "${PROJECT_SOURCE_DIR}/render/PipelineFactory.cpp"
-    "${PROJECT_SOURCE_DIR}/render/ShaderLibrary.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/PipelineFactory.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/ShaderLibrary.cpp"
 )
 lumin_configure_test(lumin_gi_tests)
 target_link_libraries(lumin_gi_tests PRIVATE Lumin::RenderCore nvrhi)
@@ -256,7 +256,7 @@ endif()
 
 add_executable(lumin_model_renderer_nvrhi_tests
     ModelRendererNvrhiTests.cpp
-    "${PROJECT_SOURCE_DIR}/render/DescriptorIndexingLimits.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/DescriptorIndexingLimits.cpp"
 )
 lumin_configure_test(lumin_model_renderer_nvrhi_tests)
 target_link_libraries(lumin_model_renderer_nvrhi_tests PRIVATE glm::glm nvrhi)
@@ -269,8 +269,8 @@ lumin_register_test(lumin_scripting_tests Scripting LABELS unit)
 
 add_executable(lumin_texture_manager_tests
     TextureManagerTests.cpp
-    "${PROJECT_SOURCE_DIR}/render/TextureManager.cpp"
-    "${PROJECT_SOURCE_DIR}/render/VulkanResources.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/TextureManager.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/VulkanResources.cpp"
 )
 lumin_configure_test(lumin_texture_manager_tests)
 target_compile_definitions(lumin_texture_manager_tests

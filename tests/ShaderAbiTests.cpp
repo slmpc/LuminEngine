@@ -1,5 +1,5 @@
 #include "render/ModelRenderer.hpp"
-#include "render/TextureManager.hpp"
+#include "render/resources/TextureManager.hpp"
 #include "render/gi/GiComposite.hpp"
 #include "render/gi/RayTracedGi.hpp"
 #include "render/gi/SharcRadianceCache.hpp"

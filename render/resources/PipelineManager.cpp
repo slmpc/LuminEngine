@@ -1,6 +1,6 @@
-#include "render/PipelineManager.hpp"
+#include "render/resources/PipelineManager.hpp"
 
-#include "render/VulkanContext.hpp"
+#include "render/platform/vulkan/VulkanContext.hpp"
 
 #include <array>
 #include <string>

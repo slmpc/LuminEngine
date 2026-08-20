@@ -1,7 +1,7 @@
-#include "render/TextureManager.hpp"
+#include "render/resources/TextureManager.hpp"
 
 #if !defined(LUMIN_TEXTURE_MANAGER_STANDALONE_TEST)
-#include "render/VulkanContext.hpp"
+#include "render/platform/vulkan/VulkanContext.hpp"
 #endif
 
 #include <array>

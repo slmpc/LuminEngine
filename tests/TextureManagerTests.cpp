@@ -1,4 +1,4 @@
-#include "render/TextureManager.hpp"
+#include "render/resources/TextureManager.hpp"
 
 #include <algorithm>
 #include <array>
@@ -549,7 +549,7 @@ namespace {
 
     void verifyForbiddenTokens() {
         const std::string production =
-            readSource("render/TextureManager.hpp") + readSource("render/TextureManager.cpp");
+            readSource("render/resources/TextureManager.hpp") + readSource("render/resources/TextureManager.cpp");
         constexpr const char* forbidden[] = {"VkDescriptor",    "VkSampler",     "VkImage",   "VkImageView",
                                              "vkCreate",        "vkUpdate",      "vkDestroy", "beginTracking",
                                              "setTextureState", "commitBarriers"};

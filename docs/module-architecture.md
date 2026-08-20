@@ -12,7 +12,7 @@
                            Core API
 
   Core: Game / Scene / Assets / Scripting
-  Render: Window / Vulkan / FrameGraph / GI / Editor UI
+  Render: platform / resources / features / editor
 ```
 
 箭头表示“依赖”。`Application` 是组合层，同时依赖 Core 和 Render；Render 只依赖 Core 的数据接口，Core 不依赖
@@ -27,9 +27,20 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 
 ## Render
 
-`render/` 是独立的 GPU 模块，统一拥有窗口平台适配、Vulkan/NvRHI backend、FrameGraph、GPU Scene、
+`render/` 是独立的 GPU 模块，统一拥有窗口平台适配、Vulkan/NvRHI backend、资源状态跟踪、GPU Scene、
 deferred/Blinn-Phong、RT DI/GI、SHARC、NRD、大气 LUT、ImGui renderer 和 Editor UI。它只通过 `scene`、
-`assets` 等 Core API 消费场景数据，不包含 `Application` 或 `Game` 的生命周期控制。
+`assets` 等 Core API 消费场景数据，不包含 `Application` 或 `Game` 的生命周期控制。物理目录按依赖边界划分，
+命名空间保持为 `lumin::render`，因此迁移不会改变外部 API：
+
+- `render/platform/` 保存窗口和调试适配；`render/platform/vulkan/` 只保存原生 Vulkan 上下文、交换链、
+  能力探测以及与 NvRHI 的 native interop。
+- `render/resources/` 保存 `FrameGraph`、`DescriptorIndexingLimits`、NvRHI buffer/texture 包装、
+  `TextureManager`、pipeline 创建/缓存和 `ShaderLibrary`。这些类型负责资源描述、状态跟踪、绑定计划和资源生命周期，
+  不包含编辑器窗口逻辑。
+- `render/editor/` 保存 `Editor`、`ImGuiContent`、`ImGuiLayer` 和 `ImGuiManager`。该目录负责 UI 帧、
+  ImGui 输入捕获和交换链绘制，渲染资源通过 `resources` 的公共 API 注入。
+- `render/level/`、`render/features/`、`render/gi/`、`render/atmosphere/` 和 `render/gpu/` 保存场景渲染功能，
+  通过 `resources` 声明和使用资源，不直接操作原生 Vulkan 状态。
 
 `Lumin::Render` 是唯一真实的渲染静态库。`Lumin::Rendering`、`Lumin::RenderCore`、`Lumin::Editor`、
 `Lumin::VulkanBackend` 和 `Lumin::RenderFeatures` 仅是迁移期 alias，避免外部测试一次性修改所有链接名。

@@ -1,7 +1,7 @@
 #include "render/level/LevelRendererImpl.hpp"
 #include "render/level/LevelRenderFrameData.hpp"
 
-#include "render/VulkanContext.hpp"
+#include "render/platform/vulkan/VulkanContext.hpp"
 #include "scene/Level.hpp"
 
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI

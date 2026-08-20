@@ -1,5 +1,5 @@
 #include "render/RayTracingBuildConfiguration.hpp"
-#include "render/VulkanRayTracingCapabilities.hpp"
+#include "render/platform/vulkan/VulkanRayTracingCapabilities.hpp"
 
 #include <algorithm>
 #include <array>

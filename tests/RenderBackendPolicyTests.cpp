@@ -123,8 +123,8 @@ namespace {
     void addIdentifierViolations(const fs::path& root, const fs::path& path, const std::string& code,
                                  std::vector<Violation>& violations) {
         const fs::path relative = fs::relative(path, root);
-        const bool contextAllowlist = relative == fs::path("render/VulkanContext.hpp") ||
-                                      relative == fs::path("render/VulkanContext.cpp") ||
+        const bool contextAllowlist = relative == fs::path("render/platform/vulkan/VulkanContext.hpp") ||
+                                      relative == fs::path("render/platform/vulkan/VulkanContext.cpp") ||
                                       relative == fs::path("render/platform/Window.hpp") ||
                                       relative == fs::path("render/platform/Window.cpp");
         static const std::regex identifierPattern(R"(\b[A-Za-z_][A-Za-z0-9_]*\b)");
@@ -153,10 +153,10 @@ namespace {
         const std::string code = stripCommentsAndLiterals(source);
         addIdentifierViolations(root, path, code, violations);
 
-        const bool frameGraphImplementation = relative == fs::path("render/FrameGraph.cpp");
+        const bool frameGraphImplementation = relative == fs::path("render/resources/FrameGraph.cpp");
         if (!frameGraphImplementation) {
             std::string callsOnly = code;
-            if (relative == fs::path("render/FrameGraph.hpp")) {
+            if (relative == fs::path("render/resources/FrameGraph.hpp")) {
                 static const std::regex pureVirtualBarrierDeclaration(
                     R"(virtual\s+void\s+(?:beginTracking[A-Za-z0-9_]*State|set(?:Texture|Buffer|Permanent)[A-Za-z0-9_]*State|commitBarriers)\s*\([^;{}]*\)\s*(?:=\s*0)?\s*;)");
                 callsOnly = std::regex_replace(callsOnly, pureVirtualBarrierDeclaration, "");
@@ -182,8 +182,8 @@ namespace {
         const std::size_t enables = std::distance(
             std::sregex_iterator(code.begin(), code.end(), enableAutomaticBarriersPattern),
             std::sregex_iterator());
-        const bool initializationUpload = relative == fs::path("render/VulkanResources.cpp") ||
-                                          relative == fs::path("render/ImGuiLayer.cpp");
+        const bool initializationUpload = relative == fs::path("render/resources/VulkanResources.cpp") ||
+                                          relative == fs::path("render/editor/ImGuiLayer.cpp");
         if (enables != (initializationUpload ? 1U : 0U)) {
             violations.push_back({relative, "automatic barriers are allowed exactly once on dedicated initialization uploads",
                                   std::to_string(enables) + " enable"});
@@ -209,7 +209,7 @@ namespace {
     }
 
     void verifySubmissionAndLifetime(const fs::path& root) {
-        const std::string context = stripCommentsAndLiterals(readFile(root / "render/VulkanContext.cpp"));
+        const std::string context = stripCommentsAndLiterals(readFile(root / "render/platform/vulkan/VulkanContext.cpp"));
         std::size_t position = context.find("void VulkanContext::submitFrameCommands");
         position = requireAfter(context, "queueWaitForSemaphore", position, "same-submit ordering");
         position = requireAfter(context, "queueSignalSemaphore", position, "same-submit ordering");
@@ -264,7 +264,7 @@ namespace {
         }
         const std::vector<std::pair<fs::path, std::string>> maliciousCases = {
             {root / "render/AdversarialProbe.cpp", "void vkCreateMaliciousHelper();"},
-            {root / "render/FrameGraph.hpp", "inline void probe(){ commitBarriers(); }"},
+            {root / "render/resources/FrameGraph.hpp", "inline void probe(){ commitBarriers(); }"},
             {root / "render/AdversarialProbe.cpp", "void probe(){ setEnableAutomaticBarriers(true); }"},
         };
         for (const auto& [path, malicious] : maliciousCases) {

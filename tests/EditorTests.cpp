@@ -3,9 +3,9 @@
 #include "render/editor/EditorStyle.hpp"
 
 #include "assets/ObjLoader.hpp"
-#include "render/ImGuiContent.hpp"
-#include "render/ImGuiLayer.hpp"
-#include "render/ImGuiManager.hpp"
+#include "render/editor/ImGuiContent.hpp"
+#include "render/editor/ImGuiLayer.hpp"
+#include "render/editor/ImGuiManager.hpp"
 #include "render/LevelRenderer.hpp"
 
 #include <algorithm>

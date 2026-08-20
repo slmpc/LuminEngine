@@ -1,4 +1,4 @@
-#include "render/PipelineFactory.hpp"
+#include "render/resources/PipelineFactory.hpp"
 #include "render/gi/GlobalIllumination.hpp"
 #include "render/gi/SsaoBackend.hpp"
 #include "render/world/RenderWorld.hpp"

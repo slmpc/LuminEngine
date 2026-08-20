@@ -1,6 +1,6 @@
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 
-#include "render/VulkanContext.hpp"
+#include "render/platform/vulkan/VulkanContext.hpp"
 
 #include "render/platform/Window.hpp"
 #include "render/BackendLifetime.hpp"

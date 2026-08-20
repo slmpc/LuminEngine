@@ -10,7 +10,7 @@
 #include <glm/vec4.hpp>
 #include <nvrhi/nvrhi.h>
 
-#include "render/FrameGraph.hpp"
+#include "render/resources/FrameGraph.hpp"
 #include "render/gpu/GpuScene.hpp"
 
 namespace lumin::render::gpu {

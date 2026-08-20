@@ -69,6 +69,16 @@ Viewport 图像被悬停并按住鼠标右键时，应用启用 SDL relative mou
 - `render/features/LevelRenderFeature.*` 是窄化适配层。独立 Feature 只保存 descriptor、Feature kind 和 host 接口，
   具体 pass 通过 `LevelRenderFeatureHost` 转交给实现，不依赖 `LevelRenderer` 的具体类型，也不跨帧保存当前帧上下文。
 
+渲染基础设施按物理目录隔离：
+
+- `render/resources/` 包含 `FrameGraph`、`DescriptorIndexingLimits`、`TextureManager`、`PipelineFactory`、
+  `PipelineManager`、`ShaderLibrary` 和 NvRHI 资源包装。`FrameGraph` 只负责外部分配资源的依赖排序与状态转换，
+  `DescriptorIndexingLimits` 负责材质纹理 descriptor 的容量预检和绑定计划；两者都不依赖 Editor。
+- `render/platform/vulkan/` 包含 `VulkanContext` 和 `VulkanRayTracingCapabilities`，是唯一允许直接调用原生 Vulkan
+  设备、交换链和能力查询的目录。
+- `render/editor/` 包含 `Editor`、`ImGuiContent`、`ImGuiLayer` 和 `ImGuiManager`。ImGui 层只消费注入的 NvRHI
+  device/framebuffer 和资源 binding，不在 UI 代码中维护场景资源所有权。
+
 `DeferredRenderPipeline` 拥有 `DeferredRenderFeatureSet` 中的独立 `IRenderFeature` 对象，并在构造时验证 descriptor ID
  与当前路径一致，再解析能力和依赖图。Raster 路径必须注册 `shadow` 与 `gbuffer`，不得注册 `hybrid-surface`；
  Hybrid 路径必须注册 `hybrid-surface`，不得注册 Raster-only Feature。`hybrid-surface` 的 descriptor 要求
@@ -235,7 +245,7 @@ NvRHI native interop。交换链图像对应的 NvRHI texture 是非拥有型包
 
 所有逐帧 command list 均调用 `setEnableAutomaticBarriers(false)`。材质纹理与 ImGui 字体使用专用初始化上传列表，
 这是仅有的 automatic barrier 例外；上传列表在关闭时把纹理恢复到 `ShaderResource`。只有
-`render/FrameGraph.cpp` 可以在运行时代码中调用 `beginTracking*State`、`set*State` 和 `commitBarriers`；首次使用的
+`render/resources/FrameGraph.cpp` 可以在运行时代码中调用 `beginTracking*State`、`set*State` 和 `commitBarriers`；首次使用的
 纹理以 NvRHI 支持的 `Common`（Vulkan `Undefined` 源布局）导入，离屏附件清理由显式声明 `CopyDest` 的 transfer pass
 完成。交换链只保证颜色附件用途：Tonemap 写 Viewport 输出，最终 ImGui pass 将 Viewport 声明为 `ShaderResource`，并将
 交换链声明为 `RenderTarget`。后续由 `FrameGraph` 转换到 `RenderTarget` 或 `DepthWrite`；同状态写依赖

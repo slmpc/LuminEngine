@@ -1,7 +1,7 @@
 #include "render/ObjRenderer.hpp"
 
 #include "render/LevelRenderer.hpp"
-#include "render/VulkanContext.hpp"
+#include "render/platform/vulkan/VulkanContext.hpp"
 #include "scene/Camera.hpp"
 #include "scene/Level.hpp"
 

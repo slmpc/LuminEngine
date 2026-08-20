@@ -1,7 +1,7 @@
 #include "render/level/LevelRendererImpl.hpp"
 #include "render/level/LevelRenderFrameData.hpp"
 
-#include "render/VulkanContext.hpp"
+#include "render/platform/vulkan/VulkanContext.hpp"
 #include "render/gi/SsaoBackend.hpp"
 #include "render/gpu/GpuScene.hpp"
 #include "render/platform/Window.hpp"

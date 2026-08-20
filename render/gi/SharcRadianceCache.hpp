@@ -11,7 +11,7 @@
 #include <glm/vec4.hpp>
 #include <nvrhi/nvrhi.h>
 
-#include "render/FrameGraph.hpp"
+#include "render/resources/FrameGraph.hpp"
 #include "render/atmosphere/AtmosphereLutPassPlan.hpp"
 #include "render/gpu/GpuSceneResources.hpp"
 

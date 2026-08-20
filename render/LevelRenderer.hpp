@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include "render/ImGuiContent.hpp"
+#include "render/editor/ImGuiContent.hpp"
 #include "render/RenderSettings.hpp"
 #include "render/gi/GlobalIllumination.hpp"
 

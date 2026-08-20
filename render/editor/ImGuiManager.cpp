@@ -1,6 +1,6 @@
-#include "render/ImGuiManager.hpp"
+#include "render/editor/ImGuiManager.hpp"
 
-#include "render/VulkanContext.hpp"
+#include "render/platform/vulkan/VulkanContext.hpp"
 #include "render/platform/Window.hpp"
 
 #include <stdexcept>

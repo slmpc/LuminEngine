@@ -1,6 +1,6 @@
 #pragma once
 
-#include "render/FrameGraph.hpp"
+#include "render/resources/FrameGraph.hpp"
 #include "render/core/FrameIdentity.hpp"
 #include "render/core/History.hpp"
 

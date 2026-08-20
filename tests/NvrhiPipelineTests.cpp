@@ -1,6 +1,6 @@
-#include "render/PipelineFactory.hpp"
-#include "render/PipelineManager.hpp"
-#include "render/ShaderLibrary.hpp"
+#include "render/resources/PipelineFactory.hpp"
+#include "render/resources/PipelineManager.hpp"
+#include "render/resources/ShaderLibrary.hpp"
 
 #include <nvrhi/nvrhi.h>
 

@@ -1,4 +1,4 @@
-#include "render/VulkanContext.hpp"
+#include "render/platform/vulkan/VulkanContext.hpp"
 
 #include <concepts>
 #include <filesystem>
@@ -25,7 +25,7 @@ namespace {
 
     bool timelineSemaphorePolicyIsDeclared() {
         const std::filesystem::path sourcePath =
-            std::filesystem::path(__FILE__).parent_path().parent_path() / "render/VulkanContext.cpp";
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "render/platform/vulkan/VulkanContext.cpp";
         std::ifstream source(sourcePath);
         const std::string contents{std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>()};
         return contents.find("vulkan12Features.timelineSemaphore = VK_TRUE;") != std::string::npos &&
@@ -34,7 +34,7 @@ namespace {
 
     bool synchronization2PolicyIsDeclared() {
         const std::filesystem::path sourcePath =
-            std::filesystem::path(__FILE__).parent_path().parent_path() / "render/VulkanContext.cpp";
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "render/platform/vulkan/VulkanContext.cpp";
         std::ifstream source(sourcePath);
         const std::string contents{std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>()};
         const bool emitsSynchronization2Rejection =

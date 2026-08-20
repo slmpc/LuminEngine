@@ -1,13 +1,13 @@
 #pragma once
 
 #include "render/DeferredRenderPipeline.hpp"
-#include "render/FrameGraph.hpp"
-#include "render/ImGuiManager.hpp"
+#include "render/resources/FrameGraph.hpp"
+#include "render/editor/ImGuiManager.hpp"
 #include "render/LevelRenderer.hpp"
 #include "render/level/LevelRenderFrameData.hpp"
 #include "render/ModelRenderer.hpp"
-#include "render/PipelineManager.hpp"
-#include "render/TextureManager.hpp"
+#include "render/resources/PipelineManager.hpp"
+#include "render/resources/TextureManager.hpp"
 #include "render/atmosphere/AtmosphereLutGpu.hpp"
 #include "render/atmosphere/AtmosphereLutScheduler.hpp"
 #include "render/gi/GlobalIllumination.hpp"

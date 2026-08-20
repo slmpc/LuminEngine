@@ -8,7 +8,7 @@
 #include <glm/vec4.hpp>
 #include <nvrhi/nvrhi.h>
 
-#include "render/VulkanResources.hpp"
+#include "render/resources/VulkanResources.hpp"
 
 namespace lumin::render {
 

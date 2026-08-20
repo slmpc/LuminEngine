@@ -1,7 +1,7 @@
 #include "application/Application.hpp"
 
 #include "render/LevelRenderer.hpp"
-#include "render/VulkanContext.hpp"
+#include "render/platform/vulkan/VulkanContext.hpp"
 #include "render/editor/Editor.hpp"
 #include "render/platform/RenderDocAttachment.hpp"
 #include "render/platform/Window.hpp"

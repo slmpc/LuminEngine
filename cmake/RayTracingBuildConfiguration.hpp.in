@@ -1,6 +1,6 @@
 #pragma once
 
-#include "render/VulkanRayTracingCapabilities.hpp"
+#include "render/platform/vulkan/VulkanRayTracingCapabilities.hpp"
 
 namespace lumin::render {
 

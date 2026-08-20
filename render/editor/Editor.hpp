@@ -10,7 +10,7 @@
 
 #include <glm/vec3.hpp>
 
-#include "render/ImGuiContent.hpp"
+#include "render/editor/ImGuiContent.hpp"
 #include "render/RenderSettings.hpp"
 #include "render/gi/GlobalIllumination.hpp"
 #include "scene/Camera.hpp"

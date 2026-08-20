@@ -38,7 +38,7 @@ ctest --test-dir out/build/debug --output-on-failure
 
 - 使用 C++20，并遵循仓库根目录的 `.clang-format`。
 - 使用 4 个空格缩进，禁止制表符；每行不超过 120 个字符。
-- 头文件与对应实现统一位于 `src`，使用不带项目名称前缀的 include 路径（例如 `render/FrameGraph.hpp`）。
+- 头文件与对应实现统一位于 `src`，使用不带项目名称前缀的 include 路径（例如 `render/resources/FrameGraph.hpp`）。
 - 优先沿用现有命名、所有权和错误处理方式，避免无关重构。
 - 新增或移动源文件时，同步更新 `CMakeLists.txt`。
 - 不要提交 `out`、`build`、生成的 SPIR-V、可执行文件或其他构建产物。
