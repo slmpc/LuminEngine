@@ -4,10 +4,12 @@ find_package(tinyobjloader CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(Lua REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 add_library(lumin_core STATIC
     ${PROJECT_SOURCE_DIR}/core/assets/ImageLoader.cpp
     ${PROJECT_SOURCE_DIR}/core/assets/ObjLoader.cpp
+    ${PROJECT_SOURCE_DIR}/core/project/ProjectSession.cpp
     ${PROJECT_SOURCE_DIR}/core/scene/Camera.cpp
     ${PROJECT_SOURCE_DIR}/core/scene/CameraController.cpp
     ${PROJECT_SOURCE_DIR}/core/scene/Environment.cpp
@@ -23,6 +25,7 @@ target_include_directories(lumin_core PRIVATE "${Stb_INCLUDE_DIR}" "${LUA_INCLUD
 target_link_libraries(lumin_core
     PUBLIC
         glm::glm
+        nlohmann_json::nlohmann_json
     PRIVATE
         tinyobjloader::tinyobjloader
         sol2::sol2

@@ -2,6 +2,7 @@
 find_package(Vulkan REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
+find_package(imguizmo CONFIG REQUIRED)
 find_package(nvrhi CONFIG REQUIRED)
 
 set(_lumin_render_sources
@@ -42,6 +43,7 @@ set(_lumin_render_sources
     ${PROJECT_SOURCE_DIR}/render/gi/SsaoBackend.cpp
     ${PROJECT_SOURCE_DIR}/render/editor/Editor.cpp
     ${PROJECT_SOURCE_DIR}/render/editor/EditorStyle.cpp
+    ${PROJECT_SOURCE_DIR}/render/editor/ViewportPicking.cpp
 )
 
 if(LUMIN_NRD_AVAILABLE)
@@ -80,6 +82,7 @@ target_link_libraries(lumin_render
         nvrhi_vk
         SDL3::SDL3
         imgui::imgui
+        imguizmo::imguizmo
     PRIVATE
         ${CMAKE_DL_LIBS}
 )

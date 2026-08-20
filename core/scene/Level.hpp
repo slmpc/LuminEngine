@@ -6,6 +6,8 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -20,6 +22,20 @@
 namespace lumin::scene {
 
     class Level;
+    class Actor;
+
+    /** 可附着到 Actor 的通用运行时组件。组件由 Actor 独占，并由 Level 驱动生命周期。 */
+    class ActorComponent {
+    public:
+        virtual ~ActorComponent() = default;
+
+        virtual void onAttach(Actor& actor, Level& level);
+        virtual void onDetach(Actor& actor, Level& level);
+        virtual void tick(Actor& actor, Level& level, float deltaSeconds);
+
+    protected:
+        ActorComponent() = default;
+    };
 
     struct MeshHandle {
         std::uint32_t index = std::numeric_limits<std::uint32_t>::max();
@@ -102,6 +118,11 @@ namespace lumin::scene {
         [[nodiscard]] bool isSpawned() const noexcept;
         [[nodiscard]] bool isPendingDestroy() const noexcept;
 
+        [[nodiscard]] const std::string& name() const noexcept;
+        void setName(std::string name);
+        [[nodiscard]] const std::string& persistentId() const noexcept;
+        void setPersistentId(std::string id);
+
         [[nodiscard]] const Transform& transform() const noexcept;
         void setTransform(Transform transform);
         void translate(const glm::vec3& offset);
@@ -112,6 +133,12 @@ namespace lumin::scene {
         [[nodiscard]] ModelHandle modelHandle() const noexcept;
         ModelHandle attachModel(MeshHandle mesh, Material material = {});
         void detachModel();
+        ActorComponent* addComponent(std::unique_ptr<ActorComponent> component);
+        bool removeComponent(const ActorComponent* component);
+        bool moveComponent(const ActorComponent* component, std::size_t newIndex);
+        [[nodiscard]] std::size_t componentCount() const noexcept;
+        [[nodiscard]] ActorComponent* component(std::size_t index) noexcept;
+        [[nodiscard]] const ActorComponent* component(std::size_t index) const noexcept;
         void destroy();
 
     protected:
@@ -130,6 +157,9 @@ namespace lumin::scene {
         Material material_{};
         ModelHandle modelHandle_ = InvalidModelHandle;
         std::optional<MeshHandle> requestedMesh_;
+        std::string name_ = "Actor";
+        std::string persistentId_;
+        std::vector<std::unique_ptr<ActorComponent>> components_;
     };
 
     class Level {
@@ -160,6 +190,7 @@ namespace lumin::scene {
         [[nodiscard]] std::vector<ModelHandle> modelHandles() const;
 
         ActorHandle spawnActor(std::unique_ptr<Actor> actor);
+        ActorHandle spawnActor();
 
         template <typename T, typename... Args>
             requires std::is_base_of_v<Actor, T>
@@ -181,10 +212,15 @@ namespace lumin::scene {
         [[nodiscard]] std::vector<ActorHandle> actorHandles() const;
         [[nodiscard]] Actor* actor(ActorHandle handle) noexcept;
         [[nodiscard]] const Actor* actor(ActorHandle handle) const noexcept;
+        /** 返回 Active 或 PendingSpawn Actor，供组件在延迟生成期间完成装配。 */
+        [[nodiscard]] Actor* actorForAttachment(ActorHandle handle) noexcept;
         [[nodiscard]] Actor* getActor(ActorHandle handle) noexcept;
         [[nodiscard]] const Actor* getActor(ActorHandle handle) const noexcept;
         [[nodiscard]] std::size_t actorCount() const noexcept;
         [[nodiscard]] std::size_t pendingActorCount() const noexcept;
+        [[nodiscard]] std::optional<ActorHandle> actorForModel(ModelHandle model) const noexcept;
+        /** 销毁全部 Actor、Model 和 Mesh。只能在 Level 回调与 Tick 之外调用。 */
+        void clear();
         void tick(float deltaSeconds);
 
         [[nodiscard]] std::uint64_t revision() const noexcept;

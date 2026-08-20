@@ -2,7 +2,7 @@ add_executable(lumin_sandbox
     main.cpp
     SandboxGame.cpp
 )
-target_compile_features(lumin_sandbox PRIVATE cxx_std_20)
+target_compile_features(lumin_sandbox PRIVATE cxx_std_23)
 target_link_libraries(lumin_sandbox PRIVATE Lumin::Engine)
 
 file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/apps/sandbox/scripts" LUMIN_SANDBOX_SCRIPT_DIR_CMAKE)

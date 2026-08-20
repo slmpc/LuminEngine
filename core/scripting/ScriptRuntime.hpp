@@ -104,6 +104,7 @@ namespace lumin::scripting {
         scene::ActorHandle actor;
         std::filesystem::path source;
         ScriptState state = ScriptState::PendingSpawn;
+        bool enabled = true;
         std::uint64_t revision = 0;
         std::optional<ScriptError> lastError;
     };
@@ -143,9 +144,20 @@ namespace lumin::scripting {
         ScriptRuntime& operator=(ScriptRuntime&&) = delete;
 
         [[nodiscard]] ScriptSpawnResult spawn(scene::Level& level, const std::filesystem::path& source);
+        /** 将脚本作为组件附着到现有 Actor。 */
+        [[nodiscard]] ScriptSpawnResult attach(scene::Level& level, scene::ActorHandle actor,
+                                               const std::filesystem::path& source);
+        bool detach(ScriptHandle handle);
+        bool setEnabled(ScriptHandle handle, bool enabled);
+        bool reorder(ScriptHandle handle, std::size_t newIndex);
+        [[nodiscard]] std::vector<ScriptInfo> scriptsForActor(scene::ActorHandle actor) const;
         [[nodiscard]] ScriptResult reload(ScriptHandle handle);
         [[nodiscard]] std::vector<ScriptReloadResult> reloadChanged();
+        /** 在没有活动脚本时切换允许加载的脚本根目录。 */
+        bool setScriptRoot(const std::filesystem::path& root);
+        [[nodiscard]] const std::filesystem::path& scriptRoot() const noexcept;
         [[nodiscard]] ScriptResult execute(std::string_view source, std::string_view chunkName = "<console>");
+        [[nodiscard]] ScriptResult validate(const std::filesystem::path& source);
 
         [[nodiscard]] std::optional<ScriptInfo> script(ScriptHandle handle) const;
         [[nodiscard]] std::vector<ScriptInfo> scripts() const;

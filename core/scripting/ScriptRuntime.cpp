@@ -129,23 +129,34 @@ namespace lumin::scripting {
 
         struct ActorProxy;
         struct LevelProxy;
-        class ScriptActor;
+        class ScriptComponent;
 
         explicit Impl(ScriptRuntimeOptions optionsValue);
 
         ScriptSpawnResult spawnExternal(scene::Level& level, const std::filesystem::path& source);
         ScriptSpawnResult spawnInternal(scene::Level& level, const std::filesystem::path& source,
                                         const std::filesystem::path& baseDirectory);
+        ScriptSpawnResult attachExternal(scene::Level& level, scene::ActorHandle actor,
+                                         const std::filesystem::path& source);
+        ScriptSpawnResult attachInternal(scene::Level& level, scene::ActorHandle actor,
+                                         const std::filesystem::path& source,
+                                         const std::filesystem::path& baseDirectory);
+        bool detachExternal(ScriptHandle handle);
+        bool setEnabledExternal(ScriptHandle handle, bool enabled);
+        bool reorderExternal(ScriptHandle handle, std::size_t newIndex);
         ScriptResult reloadExternal(ScriptHandle handle);
         ScriptResult reloadOne(ScriptHandle handle);
         std::vector<ScriptReloadResult> reloadChangedExternal();
         ScriptResult executeExternal(std::string_view source, std::string_view chunkName);
+        ScriptResult validateExternal(const std::filesystem::path& source);
         std::optional<ScriptInfo> scriptInfo(ScriptHandle handle) const;
         std::vector<ScriptInfo> scriptInfos() const;
+        std::vector<ScriptInfo> scriptInfosForActor(scene::ActorHandle actor) const;
         std::vector<ScriptDiagnostic> diagnosticSnapshot(std::uint64_t afterSequence) const;
         std::vector<ConsoleHistoryEntry> historySnapshot(std::uint64_t afterSequence) const;
         void clearDiagnosticEntries();
         void clearHistoryEntries();
+        bool setRootExternal(const std::filesystem::path& configuredRoot);
 
         void initializeLua();
         sol::environment makeEnvironment();
@@ -175,8 +186,8 @@ namespace lumin::scripting {
         std::uint64_t allocateSequence(std::uint64_t& next, std::string_view name) const;
         ScriptHandle allocateHandle();
         std::uint64_t allocateInvocation();
-        void registerActor(ScriptHandle handle, ScriptActor* actor);
-        void unregisterActor(ScriptHandle handle, const ScriptActor* actor) noexcept;
+        void registerComponent(ScriptHandle handle, ScriptComponent* component);
+        void unregisterComponent(ScriptHandle handle, const ScriptComponent* component) noexcept;
         [[nodiscard]] bool onOwnerThread() const noexcept;
         void requireOwnerThread() const;
         [[nodiscard]] bool busy() const noexcept;
@@ -188,7 +199,7 @@ namespace lumin::scripting {
         std::filesystem::path root;
         sol::state lua;
         sol::environment consoleEnvironment;
-        std::map<std::uint64_t, ScriptActor*> actors;
+        std::map<std::uint64_t, ScriptComponent*> actors;
         std::deque<ScriptDiagnostic> diagnosticEntries;
         std::deque<ConsoleHistoryEntry> historyEntries;
         std::vector<InvocationContext> contexts;
@@ -235,20 +246,16 @@ namespace lumin::scripting {
         [[nodiscard]] std::size_t actorCount() const;
     };
 
-    class ScriptRuntime::Impl::ScriptActor final : public scene::Actor {
+    class ScriptRuntime::Impl::ScriptComponent final : public scene::ActorComponent {
     public:
-        ScriptActor(std::shared_ptr<Impl> runtime, ScriptHandle scriptHandle, std::filesystem::path source,
-                    LoadedScript script)
-            : runtime_(std::move(runtime)), scriptHandle_(scriptHandle), source_(std::move(source)),
-              script_(std::move(script)) {
+        ScriptComponent(std::shared_ptr<Impl> runtime, ScriptHandle scriptHandle, scene::ActorHandle actorHandle,
+                        std::filesystem::path source, LoadedScript script)
+            : runtime_(std::move(runtime)), scriptHandle_(scriptHandle), actorHandle_(actorHandle),
+              source_(std::move(source)), script_(std::move(script)) {
         }
 
-        ~ScriptActor() override {
-            runtime_->unregisterActor(scriptHandle_, this);
-        }
-
-        void bindActorHandle(scene::ActorHandle actorHandle) noexcept {
-            actorHandle_ = actorHandle;
+        ~ScriptComponent() override {
+            runtime_->unregisterComponent(scriptHandle_, this);
         }
 
         [[nodiscard]] ScriptInfo info() const {
@@ -257,6 +264,7 @@ namespace lumin::scripting {
                 .actor = actorHandle_,
                 .source = source_,
                 .state = state_,
+                .enabled = enabled_,
                 .revision = revision_,
                 .lastError = lastError_,
             };
@@ -283,41 +291,53 @@ namespace lumin::scripting {
             }
         }
 
-        void onSpawn(scene::Level& level) override {
-            actorHandle_ = handle();
+        void setEnabled(bool enabled) noexcept {
+            enabled_ = enabled;
+        }
+
+        [[nodiscard]] scene::Actor* ownerActor() const noexcept {
+            return actor_;
+        }
+
+        void onAttach(scene::Actor& actor, scene::Level& level) override {
+            actor_ = &actor;
+            actorHandle_ = actor.handle();
             state_ = ScriptState::Running;
-            if (const auto error = invoke(script_.onSpawn, ScriptPhase::Spawn, level, 0.0f); error.has_value()) {
+            if (const auto error = invoke(script_.onSpawn, ScriptPhase::Spawn, actor, level, 0.0f); error.has_value()) {
                 state_ = ScriptState::Faulted;
                 lastError_ = *error;
             }
         }
 
-        void tick(scene::Level& level, float deltaSeconds) override {
-            if (state_ != ScriptState::Running) {
+        void tick(scene::Actor& actor, scene::Level& level, float deltaSeconds) override {
+            if (state_ != ScriptState::Running || !enabled_) {
                 return;
             }
-            if (const auto error = invoke(script_.onTick, ScriptPhase::Tick, level, deltaSeconds); error.has_value()) {
+            if (const auto error = invoke(script_.onTick, ScriptPhase::Tick, actor, level, deltaSeconds);
+                error.has_value()) {
                 state_ = ScriptState::Faulted;
                 lastError_ = *error;
             }
         }
 
-        void onDestroy(scene::Level& level) override {
+        void onDetach(scene::Actor& actor, scene::Level& level) override {
             state_ = ScriptState::PendingDestroy;
-            if (const auto error = invoke(script_.onDestroy, ScriptPhase::Destroy, level, 0.0f); error.has_value()) {
+            if (const auto error = invoke(script_.onDestroy, ScriptPhase::Destroy, actor, level, 0.0f);
+                error.has_value()) {
                 lastError_ = *error;
             }
+            actor_ = nullptr;
         }
 
     private:
         std::optional<ScriptError> invoke(const std::optional<sol::protected_function>& callback, ScriptPhase phase,
-                                          scene::Level& level, float deltaSeconds) {
+                                          scene::Actor& actor, scene::Level& level, float deltaSeconds) {
             if (!callback.has_value()) {
                 return std::nullopt;
             }
             const std::uint64_t token = runtime_->allocateInvocation();
             ContextGuard context{*runtime_, InvocationContext{phase, scriptHandle_, source_, token}};
-            ActorProxy actorProxy{runtime_, token, this, &level};
+            ActorProxy actorProxy{runtime_, token, &actor, &level};
             LevelProxy levelProxy{runtime_, token, &level, source_.parent_path()};
             sol::protected_function_result result;
             if (phase == ScriptPhase::Tick) {
@@ -337,12 +357,21 @@ namespace lumin::scripting {
         std::shared_ptr<Impl> runtime_;
         ScriptHandle scriptHandle_;
         scene::ActorHandle actorHandle_;
+        scene::Actor* actor_ = nullptr;
         std::filesystem::path source_;
         LoadedScript script_;
         ScriptState state_ = ScriptState::PendingSpawn;
+        bool enabled_ = true;
         std::uint64_t revision_ = 1;
         std::optional<ScriptError> lastError_;
     };
+
+    namespace {
+        class ScriptHostActor final : public scene::Actor {
+        public:
+            ScriptHostActor() = default;
+        };
+    } // namespace
 
     ScriptRuntime::Impl::Impl(ScriptRuntimeOptions optionsValue)
         : options(std::move(optionsValue)), ownerThread(std::this_thread::get_id()),
@@ -379,8 +408,8 @@ namespace lumin::scripting {
         sol::environment environment{lua, sol::create};
         const sol::table globals = lua.globals();
         constexpr std::array<std::string_view, 14> BaseNames{
-            "_VERSION", "assert", "error", "ipairs", "next", "pairs", "pcall", "rawequal", "rawget", "rawlen",
-            "select",   "tonumber", "tostring", "type",
+            "_VERSION", "assert", "error",  "ipairs", "next",     "pairs",    "pcall",
+            "rawequal", "rawget", "rawlen", "select", "tonumber", "tostring", "type",
         };
         for (const std::string_view name : BaseNames) {
             environment[std::string{name}] = globals[std::string{name}];
@@ -612,31 +641,101 @@ namespace lumin::scripting {
 
     ScriptSpawnResult ScriptRuntime::Impl::spawnInternal(scene::Level& level, const std::filesystem::path& source,
                                                          const std::filesystem::path& baseDirectory) {
+        const scene::ActorHandle actor = level.spawnActor<ScriptHostActor>();
+        ScriptSpawnResult result = attachInternal(level, actor, source, baseDirectory);
+        if (!result) {
+            level.destroyActor(actor);
+        }
+        return result;
+    }
+
+    ScriptSpawnResult ScriptRuntime::Impl::attachExternal(scene::Level& level, scene::ActorHandle actor,
+                                                          const std::filesystem::path& source) {
+        if (!onOwnerThread()) {
+            return ScriptSpawnResult{
+                .result = wrongThreadFailure(ScriptPhase::Load, {}, source), .script = {}, .actor = actor};
+        }
+        if (busy()) {
+            return ScriptSpawnResult{
+                .result = busyFailure(ScriptPhase::Load, {}, source), .script = {}, .actor = actor};
+        }
+        ContextGuard context{*this, InvocationContext{ScriptPhase::Load, {}, source, 0}};
+        return attachInternal(level, actor, source, root);
+    }
+
+    ScriptSpawnResult ScriptRuntime::Impl::attachInternal(scene::Level& level, scene::ActorHandle actorHandle,
+                                                          const std::filesystem::path& source,
+                                                          const std::filesystem::path& baseDirectory) {
+        scene::Actor* target = level.actorForAttachment(actorHandle);
+        if (target == nullptr) {
+            return ScriptSpawnResult{
+                .result = failure(makeError(ScriptErrorCode::InvalidHandle, ScriptPhase::Load, {}, source,
+                                            "Target ActorHandle is stale.")),
+                .script = {},
+                .actor = actorHandle,
+            };
+        }
         ScriptResult resolution;
         const auto resolved = resolveSource(source, baseDirectory, ScriptPhase::Load, {}, resolution);
         if (!resolved.has_value()) {
-            return ScriptSpawnResult{.result = std::move(resolution), .script = {}, .actor = {}};
+            return ScriptSpawnResult{.result = std::move(resolution), .script = {}, .actor = actorHandle};
         }
         LoadOutcome loaded = loadScript(*resolved, ScriptPhase::Load, {});
         if (!loaded.script.has_value()) {
-            return ScriptSpawnResult{.result = std::move(loaded.result), .script = {}, .actor = {}};
+            return ScriptSpawnResult{.result = std::move(loaded.result), .script = {}, .actor = actorHandle};
         }
 
         const ScriptHandle scriptHandle = allocateHandle();
-        auto actor =
-            std::make_unique<ScriptActor>(shared_from_this(), scriptHandle, *resolved, std::move(*loaded.script));
-        ScriptActor* actorPointer = actor.get();
-        registerActor(scriptHandle, actorPointer);
-        const scene::ActorHandle actorHandle = level.spawnActor(std::move(actor));
-        const auto registered = actors.find(scriptHandle.value);
-        if (registered != actors.end() && registered->second == actorPointer) {
-            actorPointer->bindActorHandle(actorHandle);
+        auto component = std::make_unique<ScriptComponent>(shared_from_this(), scriptHandle, actorHandle, *resolved,
+                                                           std::move(*loaded.script));
+        ScriptComponent* componentPointer = component.get();
+        registerComponent(scriptHandle, componentPointer);
+        try {
+            target->addComponent(std::move(component));
+        } catch (...) {
+            unregisterComponent(scriptHandle, componentPointer);
+            throw;
         }
         return ScriptSpawnResult{
             .result = success(),
             .script = scriptHandle,
             .actor = actorHandle,
         };
+    }
+
+    bool ScriptRuntime::Impl::detachExternal(ScriptHandle handle) {
+        requireOwnerThread();
+        if (busy()) {
+            return false;
+        }
+        const auto iterator = actors.find(handle.value);
+        if (!handle.isValid() || iterator == actors.end()) {
+            return false;
+        }
+        ScriptComponent* component = iterator->second;
+        scene::Actor* actor = component->ownerActor();
+        return actor != nullptr && actor->removeComponent(component);
+    }
+
+    bool ScriptRuntime::Impl::setEnabledExternal(ScriptHandle handle, bool enabled) {
+        requireOwnerThread();
+        const auto iterator = actors.find(handle.value);
+        if (!handle.isValid() || iterator == actors.end()) {
+            return false;
+        }
+        iterator->second->setEnabled(enabled);
+        return true;
+    }
+
+    bool ScriptRuntime::Impl::reorderExternal(ScriptHandle handle, std::size_t newIndex) {
+        requireOwnerThread();
+        const auto iterator = actors.find(handle.value);
+        if (!handle.isValid() || iterator == actors.end()) {
+            return false;
+        }
+        ScriptComponent* component = iterator->second;
+        scene::Actor* actor = component->ownerActor();
+        return actor != nullptr && actor->moveComponent(component, newIndex);
     }
 
     ScriptResult ScriptRuntime::Impl::reloadExternal(ScriptHandle handle) {
@@ -656,7 +755,7 @@ namespace lumin::scripting {
             return failure(makeError(ScriptErrorCode::InvalidHandle, ScriptPhase::Reload, handle, {},
                                      "ScriptHandle is stale or pending destruction."));
         }
-        ScriptActor& actor = *actorIterator->second;
+        ScriptComponent& actor = *actorIterator->second;
         const ScriptInfo before = actor.info();
         LoadOutcome loaded = loadScript(before.source, ScriptPhase::Reload, handle);
         if (!loaded.script.has_value()) {
@@ -908,15 +1007,15 @@ namespace lumin::scripting {
         return allocateSequence(nextInvocation, "script invocation");
     }
 
-    void ScriptRuntime::Impl::registerActor(ScriptHandle handle, ScriptActor* actor) {
-        if (!actors.emplace(handle.value, actor).second) {
+    void ScriptRuntime::Impl::registerComponent(ScriptHandle handle, ScriptComponent* component) {
+        if (!actors.emplace(handle.value, component).second) {
             throw std::logic_error("ScriptHandle collision detected.");
         }
     }
 
-    void ScriptRuntime::Impl::unregisterActor(ScriptHandle handle, const ScriptActor* actor) noexcept {
+    void ScriptRuntime::Impl::unregisterComponent(ScriptHandle handle, const ScriptComponent* component) noexcept {
         const auto iterator = actors.find(handle.value);
-        if (iterator != actors.end() && iterator->second == actor) {
+        if (iterator != actors.end() && iterator->second == component) {
             actors.erase(iterator);
         }
     }
@@ -1065,6 +1164,77 @@ namespace lumin::scripting {
         return impl_->spawnExternal(level, source);
     }
 
+    ScriptResult ScriptRuntime::Impl::validateExternal(const std::filesystem::path& source) {
+        if (!onOwnerThread()) {
+            return wrongThreadFailure(ScriptPhase::Load, {}, source);
+        }
+        if (busy()) {
+            return busyFailure(ScriptPhase::Load, {}, source);
+        }
+        ContextGuard context{*this, InvocationContext{ScriptPhase::Load, {}, source, 0}};
+        ScriptResult resolution;
+        const auto resolved = resolveSource(source, root, ScriptPhase::Load, {}, resolution);
+        if (!resolved.has_value()) {
+            return resolution;
+        }
+        LoadOutcome loaded = loadScript(*resolved, ScriptPhase::Load, {});
+        return loaded.script.has_value() ? success() : std::move(loaded.result);
+    }
+
+    bool ScriptRuntime::Impl::setRootExternal(const std::filesystem::path& configuredRoot) {
+        requireOwnerThread();
+        if (busy() || !actors.empty()) {
+            return false;
+        }
+        root = normalizeRoot(configuredRoot);
+        options.scriptRoot = root;
+        return true;
+    }
+
+    ScriptSpawnResult ScriptRuntime::attach(scene::Level& level, scene::ActorHandle actor,
+                                            const std::filesystem::path& source) {
+        return impl_->attachExternal(level, actor, source);
+    }
+
+    bool ScriptRuntime::detach(ScriptHandle handle) {
+        return impl_->detachExternal(handle);
+    }
+
+    bool ScriptRuntime::setEnabled(ScriptHandle handle, bool enabled) {
+        return impl_->setEnabledExternal(handle, enabled);
+    }
+
+    bool ScriptRuntime::reorder(ScriptHandle handle, std::size_t newIndex) {
+        return impl_->reorderExternal(handle, newIndex);
+    }
+
+    std::vector<ScriptInfo> ScriptRuntime::scriptsForActor(scene::ActorHandle actor) const {
+        return impl_->scriptInfosForActor(actor);
+    }
+
+    std::vector<ScriptInfo> ScriptRuntime::Impl::scriptInfosForActor(scene::ActorHandle actorHandle) const {
+        requireOwnerThread();
+        scene::Actor* owner = nullptr;
+        for (const auto& [value, component] : actors) {
+            static_cast<void>(value);
+            if (component->info().actor == actorHandle) {
+                owner = component->ownerActor();
+                break;
+            }
+        }
+        std::vector<ScriptInfo> result;
+        if (owner == nullptr) {
+            return result;
+        }
+        for (std::size_t index = 0; index < owner->componentCount(); ++index) {
+            auto* component = dynamic_cast<ScriptComponent*>(owner->component(index));
+            if (component != nullptr && actors.contains(component->info().handle.value)) {
+                result.push_back(component->info());
+            }
+        }
+        return result;
+    }
+
     ScriptResult ScriptRuntime::reload(ScriptHandle handle) {
         return impl_->reloadExternal(handle);
     }
@@ -1073,8 +1243,20 @@ namespace lumin::scripting {
         return impl_->reloadChangedExternal();
     }
 
+    bool ScriptRuntime::setScriptRoot(const std::filesystem::path& root) {
+        return impl_->setRootExternal(root);
+    }
+
+    const std::filesystem::path& ScriptRuntime::scriptRoot() const noexcept {
+        return impl_->root;
+    }
+
     ScriptResult ScriptRuntime::execute(std::string_view source, std::string_view chunkName) {
         return impl_->executeExternal(source, chunkName);
+    }
+
+    ScriptResult ScriptRuntime::validate(const std::filesystem::path& source) {
+        return impl_->validateExternal(source);
     }
 
     std::optional<ScriptInfo> ScriptRuntime::script(ScriptHandle handle) const {

@@ -20,10 +20,13 @@
 
 ## Core
 
-`core/` 只包含 CPU 侧可复用能力：`scene`、`assets`、`scripting` 和 `game`。它的 public include
+`core/` 只包含 CPU 侧可复用能力：`scene`、`assets`、`project`、`scripting` 和 `game`。它的 public include
 路径保持为 `scene/...`、`assets/...`、`scripting/...` 和 `game/...`，但物理文件已经归入 Core 目录。
 Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因此游戏逻辑和 CPU 测试可以在没有
 图形设备的环境中编译和运行。
+
+`project` 保存版本化项目/场景文件、稳定 `AssetId`、资源注册表和导入事务。它只操作 `Level`、`Camera` 与
+`ScriptRuntime`；SDL 文件对话框和 Dear ImGui 窗口仍属于 Application/Render。
 
 ## Render
 

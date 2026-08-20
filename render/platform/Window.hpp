@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <functional>
+#include <filesystem>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -23,7 +25,14 @@ namespace lumin::platform {
     };
 
     enum class MouseButton {
+        Left,
+        Middle,
         Right,
+    };
+
+    struct FileDialogFilter {
+        std::string name;
+        std::string pattern;
     };
 
     struct MouseDelta {
@@ -40,6 +49,7 @@ namespace lumin::platform {
     class Window {
     public:
         using EventCallback = std::function<void(const SDL_Event&)>;
+        using FileDialogCallback = std::function<void(std::vector<std::filesystem::path>)>;
 
         explicit Window(const WindowDesc& desc);
         ~Window();
@@ -50,8 +60,14 @@ namespace lumin::platform {
         void pollEvents();
         void waitEvents();
         void setEventCallback(EventCallback callback);
+        void showOpenFileDialog(std::vector<FileDialogFilter> filters, bool allowMany,
+                                FileDialogCallback callback);
+        void showOpenFolderDialog(FileDialogCallback callback);
+        /** SDL 对话框回调使用；结果将在下一次 pollEvents 后于主线程分发。 */
+        void queueDialogResult(FileDialogCallback callback, std::vector<std::filesystem::path> paths);
 
         [[nodiscard]] bool shouldClose() const;
+        void cancelCloseRequest() noexcept;
         [[nodiscard]] bool framebufferResized() const noexcept;
         [[nodiscard]] VkExtent2D framebufferExtent() const;
         [[nodiscard]] std::vector<const char*> requiredInstanceExtensions() const;
@@ -68,6 +84,7 @@ namespace lumin::platform {
 
     private:
         void processEvent(const SDL_Event& event);
+        void dispatchDialogResults();
         static void initializeSdl();
         static void terminateSdl();
 
@@ -77,6 +94,12 @@ namespace lumin::platform {
         bool framebufferResized_ = false;
         bool relativeMouseMode_ = false;
         MouseDelta mouseDelta_;
+        struct DialogResult {
+            FileDialogCallback callback;
+            std::vector<std::filesystem::path> paths;
+        };
+        std::mutex dialogMutex_;
+        std::vector<DialogResult> dialogResults_;
         static int windowCount_;
     };
 

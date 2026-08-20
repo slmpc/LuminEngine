@@ -13,7 +13,7 @@ namespace lumin::editor::style {
     inline constexpr float PropertiesRatio = 0.25f;
     inline constexpr float ConsoleRatio = 0.30f;
     inline constexpr float InspectorRatio = 0.60f;
-    inline constexpr int LayoutSchema = 2;
+    inline constexpr int LayoutSchema = 3;
 
     void apply();
 

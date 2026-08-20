@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -10,8 +11,9 @@
 
 #include <glm/vec3.hpp>
 
-#include "render/editor/ImGuiContent.hpp"
+#include "project/ProjectSession.hpp"
 #include "render/RenderSettings.hpp"
+#include "render/editor/ImGuiContent.hpp"
 #include "render/gi/GlobalIllumination.hpp"
 #include "scene/Camera.hpp"
 #include "scene/Level.hpp"
@@ -41,6 +43,19 @@ namespace lumin::editor {
 
     using BackendInfoProvider = std::function<render::gi::BackendInfo()>;
     using ViewportImageProvider = std::function<render::ImGuiViewportImage()>;
+    using DialogResultCallback = std::function<void(std::vector<std::filesystem::path>)>;
+
+    enum class EditorFileDialogKind {
+        Project,
+        Asset,
+    };
+
+    struct EditorDialogServices {
+        std::function<void(EditorFileDialogKind, bool, DialogResultCallback)> openFiles;
+        std::function<void(DialogResultCallback)> openFolder;
+        std::function<std::vector<std::filesystem::path>()> loadRecentProjects;
+        std::function<void(const std::vector<std::filesystem::path>&)> saveRecentProjects;
+    };
 
     struct ViewportInteractionState {
         std::uint32_t width = 0;
@@ -57,7 +72,8 @@ namespace lumin::editor {
     public:
         Editor(scene::Level& level, scene::Camera& camera, render::RenderSettings& settings,
                scripting::ScriptRuntime& scripts, BackendInfoProvider backendInfo,
-               ViewportImageProvider viewportImage = {});
+               ViewportImageProvider viewportImage = {}, project::ProjectSession* project = nullptr,
+               EditorDialogServices dialogs = {});
         ~Editor() override;
 
         Editor(const Editor&) = delete;
@@ -105,6 +121,8 @@ namespace lumin::editor {
         [[nodiscard]] std::string commandHistoryPrevious(std::string_view draft);
         [[nodiscard]] std::string commandHistoryNext();
         [[nodiscard]] std::vector<scripting::ScriptReloadResult> reloadChangedScripts();
+        [[nodiscard]] bool exitRequested() const noexcept;
+        void requestExit();
 
     private:
         struct Impl;

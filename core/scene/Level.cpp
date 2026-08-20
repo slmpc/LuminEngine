@@ -340,6 +340,15 @@ namespace lumin::scene {
         return glm::scale(result, scale);
     }
 
+    void ActorComponent::onAttach(Actor&, Level&) {
+    }
+
+    void ActorComponent::onDetach(Actor&, Level&) {
+    }
+
+    void ActorComponent::tick(Actor&, Level&, float) {
+    }
+
     Actor::~Actor() = default;
 
     void Actor::onSpawn(Level&) {
@@ -386,6 +395,37 @@ namespace lumin::scene {
         const Level::ActorSlot* slot = owner_->findActorSlot(handle_);
         return slot != nullptr && (slot->state == Level::ActorSlotState::PendingDestroy ||
                                    slot->state == Level::ActorSlotState::PendingSpawnDestroy);
+    }
+
+    const std::string& Actor::name() const noexcept {
+        return name_;
+    }
+
+    void Actor::setName(std::string name) {
+        if (name.empty()) {
+            name = "Actor";
+        }
+        if (name_ == name) {
+            return;
+        }
+        name_ = std::move(name);
+        if (owner_ != nullptr) {
+            owner_->touchActorRevision();
+        }
+    }
+
+    const std::string& Actor::persistentId() const noexcept {
+        return persistentId_;
+    }
+
+    void Actor::setPersistentId(std::string id) {
+        if (persistentId_ == id) {
+            return;
+        }
+        persistentId_ = std::move(id);
+        if (owner_ != nullptr) {
+            owner_->touchActorRevision();
+        }
     }
 
     const Transform& Actor::transform() const noexcept {
@@ -460,6 +500,94 @@ namespace lumin::scene {
             owner_->removeModel(modelHandle_);
         }
         modelHandle_ = InvalidModelHandle;
+    }
+
+    ActorComponent* Actor::addComponent(std::unique_ptr<ActorComponent> componentValue) {
+        if (componentValue == nullptr) {
+            throw std::invalid_argument("Actor cannot add a null component.");
+        }
+        ActorComponent* result = componentValue.get();
+        components_.push_back(std::move(componentValue));
+        if (owner_ != nullptr && owner_->isActorAlive(handle_)) {
+            Level* owningLevel = owner_;
+            ++owningLevel->callbackDepth_;
+            try {
+                result->onAttach(*this, *owningLevel);
+            } catch (...) {
+                --owningLevel->callbackDepth_;
+                throw;
+            }
+            --owningLevel->callbackDepth_;
+            owningLevel->touchActorRevision();
+            if (!owningLevel->ticking_ && owningLevel->callbackDepth_ == 0 &&
+                !owningLevel->flushingActorChanges_ && !owningLevel->destroying_) {
+                owningLevel->flushActorChanges();
+            }
+        }
+        return result;
+    }
+
+    bool Actor::removeComponent(const ActorComponent* componentValue) {
+        const auto iterator = std::find_if(components_.begin(), components_.end(),
+                                           [componentValue](const auto& value) { return value.get() == componentValue; });
+        if (iterator == components_.end()) {
+            return false;
+        }
+        Level* owningLevel = owner_;
+        if (owningLevel != nullptr && owningLevel->isActorAlive(handle_)) {
+            ++owningLevel->callbackDepth_;
+            try {
+                (*iterator)->onDetach(*this, *owningLevel);
+            } catch (...) {
+                --owningLevel->callbackDepth_;
+                throw;
+            }
+            --owningLevel->callbackDepth_;
+        }
+        components_.erase(iterator);
+        if (owningLevel != nullptr) {
+            owningLevel->touchActorRevision();
+            if (!owningLevel->ticking_ && owningLevel->callbackDepth_ == 0 &&
+                !owningLevel->flushingActorChanges_ && !owningLevel->destroying_) {
+                owningLevel->flushActorChanges();
+            }
+        }
+        return true;
+    }
+
+    bool Actor::moveComponent(const ActorComponent* componentValue, std::size_t newIndex) {
+        if (components_.empty()) {
+            return false;
+        }
+        const auto iterator = std::find_if(components_.begin(), components_.end(),
+                                           [componentValue](const auto& value) { return value.get() == componentValue; });
+        if (iterator == components_.end()) {
+            return false;
+        }
+        newIndex = std::min(newIndex, components_.size() - 1);
+        const std::size_t oldIndex = static_cast<std::size_t>(std::distance(components_.begin(), iterator));
+        if (oldIndex == newIndex) {
+            return true;
+        }
+        auto value = std::move(components_[oldIndex]);
+        components_.erase(components_.begin() + static_cast<std::ptrdiff_t>(oldIndex));
+        components_.insert(components_.begin() + static_cast<std::ptrdiff_t>(newIndex), std::move(value));
+        if (owner_ != nullptr) {
+            owner_->touchActorRevision();
+        }
+        return true;
+    }
+
+    std::size_t Actor::componentCount() const noexcept {
+        return components_.size();
+    }
+
+    ActorComponent* Actor::component(std::size_t index) noexcept {
+        return index < components_.size() ? components_[index].get() : nullptr;
+    }
+
+    const ActorComponent* Actor::component(std::size_t index) const noexcept {
+        return index < components_.size() ? components_[index].get() : nullptr;
     }
 
     void Actor::destroy() {
@@ -708,6 +836,10 @@ namespace lumin::scene {
         return allocateActorSlot(std::move(actorValue));
     }
 
+    ActorHandle Level::spawnActor() {
+        return spawnActor(std::unique_ptr<Actor>{new Actor{}});
+    }
+
     bool Level::destroyActor(ActorHandle handle) {
         ActorSlot* slot = findActorSlot(handle);
         if (slot == nullptr || slot->actor == nullptr || slot->state == ActorSlotState::PendingDestroy ||
@@ -783,6 +915,15 @@ namespace lumin::scene {
         return slot->actor.get();
     }
 
+    Actor* Level::actorForAttachment(ActorHandle handle) noexcept {
+        ActorSlot* slot = findActorSlot(handle);
+        if (slot == nullptr || slot->actor == nullptr ||
+            (slot->state != ActorSlotState::Active && slot->state != ActorSlotState::PendingSpawn)) {
+            return nullptr;
+        }
+        return slot->actor.get();
+    }
+
     Actor* Level::getActor(ActorHandle handle) noexcept {
         return actor(handle);
     }
@@ -810,6 +951,39 @@ namespace lumin::scene {
         return count;
     }
 
+    std::optional<ActorHandle> Level::actorForModel(ModelHandle modelHandle) const noexcept {
+        if (!modelHandle.isValid()) {
+            return std::nullopt;
+        }
+        for (std::size_t index = 0; index < actors_.size(); ++index) {
+            const ActorSlot& slot = actors_[index];
+            if (slot.actor != nullptr && slot.state == ActorSlotState::Active &&
+                slot.actor->modelHandle_ == modelHandle) {
+                return ActorHandle{static_cast<std::uint32_t>(index), slot.generation};
+            }
+        }
+        return std::nullopt;
+    }
+
+    void Level::clear() {
+        if (ticking_ || callbackDepth_ != 0 || flushingActorChanges_ || destroying_) {
+            throw std::logic_error("Level::clear cannot run during Actor callbacks or tick.");
+        }
+        const std::vector<ActorHandle> actorSnapshot = actorHandles();
+        for (const ActorHandle handle : actorSnapshot) {
+            destroyActor(handle);
+        }
+        const std::vector<ModelHandle> modelSnapshot = modelHandles();
+        for (const ModelHandle handle : modelSnapshot) {
+            removeModel(handle);
+        }
+        for (std::size_t index = 0; index < meshAlive_.size(); ++index) {
+            if (meshAlive_[index]) {
+                removeMesh(MeshHandle{static_cast<std::uint32_t>(index), meshGenerations_[index]});
+            }
+        }
+    }
+
     void Level::tick(float deltaSeconds) {
         if (ticking_ || callbackDepth_ != 0 || flushingActorChanges_ || destroying_) {
             throw std::logic_error("Level::tick cannot be called recursively.");
@@ -827,6 +1001,9 @@ namespace lumin::scene {
                     ++callbackDepth_;
                     try {
                         actorValue->tick(*this, deltaSeconds);
+                        for (const auto& componentValue : actorValue->components_) {
+                            componentValue->tick(*actorValue, *this, deltaSeconds);
+                        }
                     } catch (...) {
                         --callbackDepth_;
                         throw;
@@ -1013,6 +1190,9 @@ namespace lumin::scene {
                 actorValue->modelHandle_ = addModel(meshHandle, actorValue->transform_, actorValue->material_);
             }
             actorValue->onSpawn(*this);
+            for (const auto& componentValue : actorValue->components_) {
+                componentValue->onAttach(*actorValue, *this);
+            }
         } catch (...) {
             --callbackDepth_;
             if (ActorSlot* currentSlot = findActorSlot(handle);
@@ -1093,6 +1273,10 @@ namespace lumin::scene {
         if (spawned) {
             ++callbackDepth_;
             try {
+                for (auto iterator = actorValue->components_.rbegin(); iterator != actorValue->components_.rend();
+                     ++iterator) {
+                    (*iterator)->onDetach(*actorValue, *this);
+                }
                 actorValue->onDestroy(*this);
             } catch (...) {
                 callbackError = std::current_exception();

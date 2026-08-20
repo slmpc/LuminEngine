@@ -19,6 +19,8 @@
     },
     "lua",
     "sol2",
+    "nlohmann-json",
+    "imguizmo",
     "tinyobjloader",
     "nvrhi",
     "vulkan-headers",

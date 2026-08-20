@@ -6,7 +6,7 @@ function(lumin_configure_library target)
             "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>"
             "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/core>"
     )
-    target_compile_features(${target} PUBLIC cxx_std_20)
+    target_compile_features(${target} PUBLIC cxx_std_23)
 
     if(MSVC)
         target_compile_options(${target} PUBLIC /utf-8 PRIVATE /W4 /permissive- /Zc:__cplusplus)

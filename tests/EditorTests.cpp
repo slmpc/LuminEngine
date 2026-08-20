@@ -222,7 +222,9 @@ namespace {
         const std::uint32_t expectedWidth = static_cast<std::uint32_t>(
             std::max(viewportWindow->ContentRegionRect.GetWidth() * io.DisplayFramebufferScale.x, 1.0f));
         const std::uint32_t expectedHeight = static_cast<std::uint32_t>(
-            std::max(viewportWindow->ContentRegionRect.GetHeight() * io.DisplayFramebufferScale.y, 1.0f));
+            std::max((viewportWindow->ContentRegionRect.GetHeight() - ImGui::GetFrameHeightWithSpacing()) *
+                         io.DisplayFramebufferScale.y,
+                     1.0f));
         require(viewportState.width == expectedWidth && viewportState.height == expectedHeight,
                 "Viewport interaction extent must match the dock content region in physical pixels.");
         ImGui::DestroyContext();

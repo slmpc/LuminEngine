@@ -1,21 +1,36 @@
 #include "application/Application.hpp"
 
+#include "project/ProjectSession.hpp"
 #include "render/LevelRenderer.hpp"
-#include "render/platform/vulkan/VulkanContext.hpp"
 #include "render/editor/Editor.hpp"
 #include "render/platform/RenderDocAttachment.hpp"
 #include "render/platform/Window.hpp"
+#include "render/platform/vulkan/VulkanContext.hpp"
 #include "scene/CameraController.hpp"
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <utility>
 
+#include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_stdinc.h>
+
 namespace lumin::core {
     namespace {
+
+        std::filesystem::path recentProjectsPath() {
+            char* preferencePath = SDL_GetPrefPath("Lumin", "LuminEngine");
+            if (preferencePath == nullptr) {
+                return {};
+            }
+            const std::filesystem::path result = std::filesystem::path{preferencePath} / "recent-projects.txt";
+            SDL_free(preferencePath);
+            return result;
+        }
 
         platform::RenderDocAttachment attachRenderDoc(const ApplicationConfig& config) {
             if (!config.enableRenderDoc) {
@@ -65,7 +80,8 @@ namespace lumin::core {
               scripts(scripting::ScriptRuntimeOptions{.scriptRoot = config.scriptRoot,
                                                       .diagnosticCapacity = 256,
                                                       .consoleHistoryCapacity = 128,
-                                                      .diagnosticSink = {}}) {
+                                                      .diagnosticSink = {}}),
+              project(level, camera, scripts) {
             if (!game) {
                 throw std::invalid_argument("Application requires a Game instance");
             }
@@ -90,7 +106,47 @@ namespace lumin::core {
                 },
                 [this] {
                     return renderer->viewportImage();
-                });
+                },
+                &project,
+                editor::EditorDialogServices{
+                    .openFiles =
+                        [this](editor::EditorFileDialogKind kind, bool many, editor::DialogResultCallback callback) {
+                            std::vector<platform::FileDialogFilter> filters;
+                            if (kind == editor::EditorFileDialogKind::Project) {
+                                filters.push_back({"Lumin Project", "luminproject"});
+                            } else {
+                                filters.push_back({"Supported Assets", "obj;png;jpg;jpeg;lua"});
+                            }
+                            window.showOpenFileDialog(std::move(filters), many, std::move(callback));
+                        },
+                    .openFolder =
+                        [this](editor::DialogResultCallback callback) {
+                            window.showOpenFolderDialog(std::move(callback));
+                        },
+                    .loadRecentProjects =
+                        [] {
+                            std::vector<std::filesystem::path> result;
+                            std::ifstream stream(recentProjectsPath());
+                            std::string line;
+                            while (std::getline(stream, line) && result.size() < 10) {
+                                if (!line.empty() && std::filesystem::exists(line)) {
+                                    result.emplace_back(line);
+                                }
+                            }
+                            return result;
+                        },
+                    .saveRecentProjects =
+                        [](const std::vector<std::filesystem::path>& projects) {
+                            const std::filesystem::path path = recentProjectsPath();
+                            if (path.empty()) {
+                                return;
+                            }
+                            std::filesystem::create_directories(path.parent_path());
+                            std::ofstream stream(path, std::ios::trunc);
+                            for (const auto& projectPath : projects) {
+                                stream << projectPath.generic_string() << '\n';
+                            }
+                        }});
 
             std::cout << "Level renderer ready: models=" << renderer->modelCount()
                       << " mdiDraws=" << renderer->mdiDrawCount()
@@ -99,23 +155,40 @@ namespace lumin::core {
             auto previousTime = std::chrono::steady_clock::now();
             while (!window.shouldClose()) {
                 window.pollEvents();
+                if (window.shouldClose()) {
+                    if (project.dirty()) {
+                        window.cancelCloseRequest();
+                        editor->requestExit();
+                    } else {
+                        break;
+                    }
+                }
                 renderer->beginUiFrame(editor.get());
+                if (editor->exitRequested()) {
+                    renderer->cancelUiFrame();
+                    break;
+                }
                 const editor::ViewportInteractionState viewport = editor->viewportInteraction();
                 if (viewport.hasRenderableExtent()) {
                     renderer->requestViewportExtent(viewport.width, viewport.height);
                 }
-                const bool rightMouseDown = window.isMouseButtonDown(platform::MouseButton::Right);
-                if (!viewportLookActive && rightMouseDown && viewport.hovered) {
+                const bool middleMouseDown = window.isMouseButtonDown(platform::MouseButton::Middle);
+                if (!viewportLookActive && middleMouseDown && viewport.hovered) {
                     window.setRelativeMouseMode(true);
                     viewportLookActive = true;
-                } else if (viewportLookActive && !rightMouseDown) {
+                } else if (viewportLookActive && !middleMouseDown) {
                     window.setRelativeMouseMode(false);
                     viewportLookActive = false;
                 }
                 const render::ImGuiCaptureState capture = renderer->imguiCaptureState();
+                const bool escapeDown = window.isKeyDown(platform::Key::Escape);
                 const game::InputRoutingDecision routing = game::routeInput(
-                    !viewportLookActive && capture.uiClaimsInput(), window.isKeyDown(platform::Key::Escape));
-                if (routing.exitOnEscape) {
+                    !viewportLookActive && capture.uiClaimsInput(), escapeDown);
+                if (routing.exitOnEscape && !escapeHeld) {
+                    editor->requestExit();
+                }
+                escapeHeld = escapeDown;
+                if (editor->exitRequested()) {
                     renderer->cancelUiFrame();
                     break;
                 }
@@ -163,10 +236,12 @@ namespace lumin::core {
         scene::Camera camera;
         scripting::ScriptRuntime scripts;
         render::RenderSettings renderSettings;
+        project::ProjectSession project;
         std::unique_ptr<render::LevelRenderer> renderer;
         std::unique_ptr<editor::Editor> editor;
         std::optional<scripting::ScriptHandle> startupScript;
         bool viewportLookActive = false;
+        bool escapeHeld = false;
     };
 
     Application::Application(ApplicationConfig config, std::unique_ptr<game::Game> game)

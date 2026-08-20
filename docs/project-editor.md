@@ -1,0 +1,50 @@
+# 项目与场景编辑系统
+
+## 项目结构
+
+通过 `File > New Project` 创建项目后，目录固定为：
+
+```text
+ProjectName/
+  ProjectName.luminproject
+  Content/
+    Meshes/
+    Textures/
+    Scripts/
+  Scenes/
+    Main.lumin.scene
+  .lumin/
+    AssetRegistry.json
+```
+
+清单、场景和注册表都包含 `formatVersion`。引擎拒绝未知版本、绝对资源路径和逃出项目根目录的相对路径。
+场景与注册表使用临时文件和备份替换保存，写入失败时不会用不完整 JSON 覆盖原文件。
+
+## 资源导入
+
+首版支持 OBJ Mesh、PNG/JPG Texture 和 Lua Script。导入流程先复制到 `.importing` 临时文件，并执行 OBJ 解析、
+图片解码或 Lua 语法/返回契约检查；验证成功后才替换目标并登记稳定 128 位 `AssetId`。冲突可选择跳过、替换或自动
+重命名。场景引用资源 ID，运行时句柄不会写入磁盘。
+
+被当前场景模型、材质或脚本组件引用的资源不能删除。已绑定脚本必须先从 Actor 移除才能重命名，以免热重载源路径
+失效。模型资源可从 `Content Browser` 双击或拖到 Viewport 创建 Actor，纹理可拖到材质的 base color、normal 和
+roughness 槽。
+
+## Actor 与脚本
+
+项目 Actor 拥有持久 ID、名称、Transform、Material、可选 Mesh 和有序组件列表。Lua 脚本作为 `ActorComponent`
+附着：按列表顺序执行 `on_spawn` 和 `on_tick`，销毁时逆序执行 `on_destroy`，随后执行 Actor 自身的 `onDestroy`。
+禁用脚本只跳过 Tick，移除或销毁 Actor 时仍执行销毁回调。旧 `ScriptRuntime::spawn` 保留兼容，它会创建普通脚本宿主
+Actor 并调用同一附着接口。
+
+项目场景只保存带持久 ID 的通用 Actor。Sandbox 中未注册的原生 C++ Actor、程序化网格和其他临时运行时对象不会写入
+项目文件；创建或打开项目会用项目场景替换当前演示场景。
+
+## Viewport 输入
+
+- 左键：CPU 射线拾取最近三角形并选择 Actor/Model。
+- `W`、`E`、`R`：切换平移、旋转和缩放 Gizmo；工具栏可切换 Local/World。
+- 右键：选择命中物体并打开上下文菜单，进入 `Details` 或删除对象。
+- 中键：捕获相对鼠标并旋转相机；捕获期间使用 `WASD`、`Space`、`Left Ctrl` 平移。
+
+新建、打开或退出 dirty 项目时会显示 Save、Discard、Cancel。最近十个有效项目保存在 SDL 应用首选目录，不写入仓库。

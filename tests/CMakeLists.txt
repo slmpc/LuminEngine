@@ -3,7 +3,7 @@ function(lumin_configure_test target)
         "${PROJECT_SOURCE_DIR}"
         "${PROJECT_SOURCE_DIR}/core"
     )
-    target_compile_features(${target} PRIVATE cxx_std_20)
+    target_compile_features(${target} PRIVATE cxx_std_23)
     if(MSVC)
         target_compile_options(${target} PRIVATE /utf-8)
     endif()
@@ -285,6 +285,11 @@ add_executable(lumin_editor_tests EditorTests.cpp)
 lumin_configure_test(lumin_editor_tests)
 target_link_libraries(lumin_editor_tests PRIVATE Lumin::Editor)
 lumin_register_test(lumin_editor_tests Editor LABELS unit)
+
+add_executable(lumin_project_editor_tests ProjectEditorTests.cpp)
+lumin_configure_test(lumin_project_editor_tests)
+target_link_libraries(lumin_project_editor_tests PRIVATE Lumin::Editor)
+lumin_register_test(lumin_project_editor_tests ProjectEditor LABELS scene ui unit)
 
 add_executable(lumin_render_architecture_tests RenderArchitectureTests.cpp)
 lumin_configure_test(lumin_render_architecture_tests)

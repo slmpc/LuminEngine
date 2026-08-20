@@ -4,7 +4,7 @@
 
 ## 项目概览
 
-Lumin Engine 是一个使用 C++20、Vulkan 1.3、SDL3 和 Slang 构建的紧凑型渲染器与场景沙盒。
+Lumin Engine 是一个使用 C++23、Vulkan 1.3、SDL3 和 Slang 构建的紧凑型渲染器与场景沙盒。
 主要代码位于：
 
 - `core`：不依赖图形 API 的场景、资产、脚本和 Game API。
@@ -36,7 +36,7 @@ ctest --test-dir out/build/debug --output-on-failure
 
 ## 代码规范
 
-- 使用 C++20，并遵循仓库根目录的 `.clang-format`。
+- 使用 C++23，并遵循仓库根目录的 `.clang-format`。
 - 使用 4 个空格缩进，禁止制表符；每行不超过 120 个字符。
 - 头文件与对应实现统一位于 `src`，使用不带项目名称前缀的 include 路径（例如 `render/resources/FrameGraph.hpp`）。
 - 优先沿用现有命名、所有权和错误处理方式，避免无关重构。

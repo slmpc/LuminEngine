@@ -1,6 +1,7 @@
 #include "render/platform/Window.hpp"
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_dialog.h>
 #include <SDL3/SDL_vulkan.h>
 
 #include <stdexcept>
@@ -8,6 +9,27 @@
 #include <utility>
 
 namespace lumin::platform {
+    namespace {
+        struct DialogRequest {
+            Window* window = nullptr;
+            Window::FileDialogCallback callback;
+            std::vector<FileDialogFilter> filters;
+            std::vector<SDL_DialogFileFilter> nativeFilters;
+        };
+
+        void SDLCALL dialogCallback(void* userdata, const char* const* files, int) {
+            std::unique_ptr<DialogRequest> request{static_cast<DialogRequest*>(userdata)};
+            std::vector<std::filesystem::path> paths;
+            if (files != nullptr) {
+                for (std::size_t index = 0; files[index] != nullptr; ++index) {
+                    paths.emplace_back(files[index]);
+                }
+            }
+            if (request->window != nullptr) {
+                request->window->queueDialogResult(std::move(request->callback), std::move(paths));
+            }
+        }
+    }
 
     int Window::windowCount_ = 0;
 
@@ -45,6 +67,7 @@ namespace lumin::platform {
         while (SDL_PollEvent(&event)) {
             processEvent(event);
         }
+        dispatchDialogResults();
     }
 
     void Window::waitEvents() {
@@ -57,14 +80,46 @@ namespace lumin::platform {
         while (SDL_PollEvent(&event)) {
             processEvent(event);
         }
+        dispatchDialogResults();
     }
 
     void Window::setEventCallback(EventCallback callback) {
         eventCallback_ = std::move(callback);
     }
 
+    void Window::showOpenFileDialog(std::vector<FileDialogFilter> filters, bool allowMany,
+                                    FileDialogCallback callback) {
+        auto request = std::make_unique<DialogRequest>();
+        request->window = this;
+        request->callback = std::move(callback);
+        request->filters = std::move(filters);
+        request->nativeFilters.reserve(request->filters.size());
+        for (const FileDialogFilter& filter : request->filters) {
+            request->nativeFilters.push_back({filter.name.c_str(), filter.pattern.c_str()});
+        }
+        DialogRequest* raw = request.release();
+        SDL_ShowOpenFileDialog(dialogCallback, raw, window_, raw->nativeFilters.data(),
+                               static_cast<int>(raw->nativeFilters.size()), nullptr, allowMany);
+    }
+
+    void Window::showOpenFolderDialog(FileDialogCallback callback) {
+        auto request = std::make_unique<DialogRequest>();
+        request->window = this;
+        request->callback = std::move(callback);
+        SDL_ShowOpenFolderDialog(dialogCallback, request.release(), window_, nullptr, false);
+    }
+
+    void Window::queueDialogResult(FileDialogCallback callback, std::vector<std::filesystem::path> paths) {
+        std::scoped_lock lock{dialogMutex_};
+        dialogResults_.push_back({std::move(callback), std::move(paths)});
+    }
+
     bool Window::shouldClose() const {
         return shouldClose_;
+    }
+
+    void Window::cancelCloseRequest() noexcept {
+        shouldClose_ = false;
     }
 
     bool Window::framebufferResized() const noexcept {
@@ -139,6 +194,10 @@ namespace lumin::platform {
     bool Window::isMouseButtonDown(MouseButton button) const noexcept {
         const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
         switch (button) {
+        case MouseButton::Left:
+            return (buttons & SDL_BUTTON_LMASK) != 0;
+        case MouseButton::Middle:
+            return (buttons & SDL_BUTTON_MMASK) != 0;
         case MouseButton::Right:
             return (buttons & SDL_BUTTON_RMASK) != 0;
         }
@@ -189,6 +248,19 @@ namespace lumin::platform {
         if (event.type == SDL_EVENT_MOUSE_MOTION && event.motion.windowID == SDL_GetWindowID(window_)) {
             mouseDelta_.x += event.motion.xrel;
             mouseDelta_.y += event.motion.yrel;
+        }
+    }
+
+    void Window::dispatchDialogResults() {
+        std::vector<DialogResult> results;
+        {
+            std::scoped_lock lock{dialogMutex_};
+            results.swap(dialogResults_);
+        }
+        for (DialogResult& result : results) {
+            if (result.callback) {
+                result.callback(std::move(result.paths));
+            }
         }
     }
 

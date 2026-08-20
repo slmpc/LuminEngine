@@ -1,6 +1,6 @@
 # Lumin Engine
 
-Lumin Engine 是一个使用 C++20、SDL3、Slang 和动态渲染构建的紧凑型 Vulkan 1.3 渲染器与场景沙盒。
+Lumin Engine 是一个使用 C++23、SDL3、Slang 和动态渲染构建的紧凑型 Vulkan 1.3 渲染器与场景沙盒。
 
 当前沙盒包含：
 
@@ -104,12 +104,24 @@ cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
 场景画面位于独立的 `Viewport` dock window，渲染分辨率会跟随其内容区物理像素尺寸。鼠标悬停在 Viewport 上时，
-按住右键会隐藏并捕获鼠标，通过相对移动旋转视角；同时使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。松开右键会恢复
-普通鼠标模式。编辑器面板可选择 Actor、模型或脚本，修改变换与材质，并在 Render 面板通过下拉框选择
+按住中键会隐藏并捕获鼠标，通过相对移动旋转视角；同时使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。松开中键会恢复
+普通鼠标模式。左键可拾取场景物体并通过 Move/Rotate/Scale Gizmo 编辑变换，`W`、`E`、`R` 可切换模式；右键打开
+物体上下文菜单和 `Details`。编辑器面板可选择 Actor 或模型、修改变换与材质，并在 Render 面板通过下拉框选择
 `Legacy` 或 `Ray Tracing`。Legacy 提供 SSAO、CSM、级联分割权重与最大阴影距离设置；Ray Tracing 提供 SHARC 与
 NRD 开关；TAA 是两条路径共用的选项。面板还可调整相机、曝光和太阳方向，并在 Lua 控制台执行表达式
 （例如 `return 6 * 7`）。当编辑器正在接收键盘、
 鼠标或文本输入时，应用会抑制 `Escape` 和相机控制，但不会暂停 `Game::tick`、`Level::tick` 或 Lua 生命周期。
+
+## 项目与资源编辑
+
+编辑器的 `File` 菜单提供 `New Project`、`Open Project`、`Recent Projects`、`Save Scene` 和 `Import Assets`。
+项目会创建 `.luminproject` 清单、`Scenes/Main.lumin.scene`、资源注册表，以及 Mesh、Texture、Script 内容目录。
+当前支持导入 OBJ、PNG/JPG 和 Lua；导入窗口会先校验资源，再按 Skip、Replace 或 Auto rename 策略写入项目。
+
+`Content Browser` 支持搜索、拖放创建模型 Actor、纹理拖放到材质槽，以及资源重命名和引用保护删除。每个 Actor
+可以在 `Details` 中绑定多个 Lua 脚本，调整执行顺序、启用状态、热重载或移除。项目场景保存通用 Actor、资源引用、
+材质、脚本组件、环境、编辑器相机和渲染设置。完整目录和生命周期约定见
+[`docs/project-editor.md`](docs/project-editor.md)。
 
 如果未提供 OBJ 路径，沙盒会优先加载 `assets/models/stanford-bunny.obj`；该文件不可用时则使用内置立方体。
 场景还会创建一个程序化地形 Actor 和第二个内置网格。
