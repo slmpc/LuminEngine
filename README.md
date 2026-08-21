@@ -103,7 +103,8 @@ Debug 配置过程还会生成 `out/build/debug/compile_commands.json`。本地 
 cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
-场景画面位于独立的 `Viewport` dock window，渲染分辨率会跟随其内容区物理像素尺寸。鼠标悬停在 Viewport 上时，
+场景画面位于独立的 `Viewport` dock window，渲染分辨率会跟随其内容区物理像素尺寸，工具栏右端显示实时 FPS。
+鼠标悬停在 Viewport 上时，
 按住中键会隐藏并捕获鼠标，通过相对移动旋转视角；同时使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。松开中键会恢复
 普通鼠标模式。左键可拾取场景物体并通过 Move/Rotate/Scale Gizmo 编辑变换，`W`、`E`、`R` 可切换模式；右键打开
 物体上下文菜单和 `Details`。编辑器面板可选择 Actor 或模型、修改变换与材质，并在 Render 面板通过下拉框选择
@@ -111,6 +112,8 @@ cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 NRD 开关；TAA 是两条路径共用的选项。面板还可调整相机、曝光和太阳方向，并在 Lua 控制台执行表达式
 （例如 `return 6 * 7`）。当编辑器正在接收键盘、
 鼠标或文本输入时，应用会抑制 `Escape` 和相机控制，但不会暂停 `Game::tick`、`Level::tick` 或 Lua 生命周期。
+默认布局将 `Content Browser` 与 `Script Console` 合并为中央下方页签组；`Scene Hierarchy` 位于右上角，
+`Details` 与 `Render / GI` 合并为右下角页签组，Viewport 左侧不放置工具面板。
 
 ## 项目与资源编辑
 

@@ -9,11 +9,10 @@ namespace lumin::editor::style {
     inline constexpr float Space4 = 16.0f;
     inline constexpr float RowHeight = 24.0f;
     inline constexpr float PropertyLabelWidth = 120.0f;
-    inline constexpr float HierarchyRatio = 0.1875f;
-    inline constexpr float PropertiesRatio = 0.25f;
-    inline constexpr float ConsoleRatio = 0.30f;
-    inline constexpr float InspectorRatio = 0.60f;
-    inline constexpr int LayoutSchema = 3;
+    inline constexpr float RightPanelRatio = 0.25f;
+    inline constexpr float BottomPanelRatio = 0.30f;
+    inline constexpr float SceneHierarchyRatio = 0.45f;
+    inline constexpr int LayoutSchema = 4;
 
     void apply();
 

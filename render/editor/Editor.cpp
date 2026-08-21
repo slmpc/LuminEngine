@@ -311,32 +311,19 @@ namespace lumin::editor {
             ImGui::DockBuilderSetNodeSize(dockspace, viewport.WorkSize);
 
             ImGuiID center = dockspace;
-            ImGuiID left = 0;
             ImGuiID right = 0;
             ImGuiID bottom = 0;
-            if (mode == EditorLayoutMode::Compact) {
-                ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, style::HierarchyRatio, &left, &center);
-                ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, style::ConsoleRatio, &bottom, &center);
-                ImGui::DockBuilderDockWindow("Scene Hierarchy", left);
-                ImGui::DockBuilderDockWindow("Content Browser", left);
-                ImGui::DockBuilderDockWindow("Details", left);
-                ImGui::DockBuilderDockWindow("Render / GI", bottom);
-                ImGui::DockBuilderDockWindow("Script Console", bottom);
-                ImGui::DockBuilderDockWindow("Viewport", center);
-            } else {
-                ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, style::HierarchyRatio, &left, &center);
-                ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, style::PropertiesRatio, &right, &center);
-                ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, style::ConsoleRatio, &bottom, &center);
-                ImGuiID inspector = 0;
-                ImGuiID renderGi = 0;
-                ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, style::InspectorRatio, &inspector, &renderGi);
-                ImGui::DockBuilderDockWindow("Scene Hierarchy", left);
-                ImGui::DockBuilderDockWindow("Content Browser", left);
-                ImGui::DockBuilderDockWindow("Details", inspector);
-                ImGui::DockBuilderDockWindow("Render / GI", renderGi);
-                ImGui::DockBuilderDockWindow("Script Console", bottom);
-                ImGui::DockBuilderDockWindow("Viewport", center);
-            }
+            ImGuiID hierarchy = 0;
+            ImGuiID properties = 0;
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, style::RightPanelRatio, &right, &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, style::BottomPanelRatio, &bottom, &center);
+            ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, style::SceneHierarchyRatio, &hierarchy, &properties);
+            ImGui::DockBuilderDockWindow("Scene Hierarchy", hierarchy);
+            ImGui::DockBuilderDockWindow("Details", properties);
+            ImGui::DockBuilderDockWindow("Render / GI", properties);
+            ImGui::DockBuilderDockWindow("Content Browser", bottom);
+            ImGui::DockBuilderDockWindow("Script Console", bottom);
+            ImGui::DockBuilderDockWindow("Viewport", center);
             ImGui::DockBuilderFinish(dockspace);
         }
 
@@ -943,6 +930,16 @@ namespace lumin::editor {
             ImGui::SameLine();
             if (ImGui::Button(gizmoMode == ImGuizmo::WORLD ? "World" : "Local")) {
                 gizmoMode = gizmoMode == ImGuizmo::WORLD ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+            }
+            char fpsLabel[32]{};
+            std::snprintf(fpsLabel, sizeof(fpsLabel), "FPS %.1f", ImGui::GetIO().Framerate);
+            const float fpsWidth = ImGui::CalcTextSize(fpsLabel).x;
+            const float fpsPosition = ImGui::GetWindowContentRegionMax().x - fpsWidth - style::Space2;
+            const float toolbarEnd = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
+            if (fpsPosition > toolbarEnd + style::Space2) {
+                ImGui::SameLine();
+                ImGui::SetCursorPosX(fpsPosition);
+                ImGui::TextDisabled("%s", fpsLabel);
             }
             const ImVec2 available = ImGui::GetContentRegionAvail();
             const ImVec2 framebufferScale = ImGui::GetIO().DisplayFramebufferScale;

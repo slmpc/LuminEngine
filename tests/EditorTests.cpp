@@ -215,9 +215,20 @@ namespace {
         const ImGuiWindow* hierarchy = ImGui::FindWindowByName("Scene Hierarchy");
         require(hierarchy != nullptr && hierarchy->DockId != 0,
                 "A restored positive viewport must build the production docking layout after skipped invalid extents.");
+        const ImGuiWindow* contentBrowser = ImGui::FindWindowByName("Content Browser");
+        const ImGuiWindow* console = ImGui::FindWindowByName("Script Console");
+        const ImGuiWindow* details = ImGui::FindWindowByName("Details");
+        const ImGuiWindow* renderSettings = ImGui::FindWindowByName("Render / GI");
+        require(contentBrowser != nullptr && console != nullptr && contentBrowser->DockId == console->DockId,
+                "Content Browser and Script Console must share the bottom tab group.");
+        require(details != nullptr && renderSettings != nullptr && details->DockId == renderSettings->DockId,
+                "Details and Render / GI must share the lower-right tab group.");
         const ImGuiWindow* viewportWindow = ImGui::FindWindowByName("Viewport");
         require(viewportWindow != nullptr && viewportWindow->DockId != 0 && viewportImageRequested,
                 "Viewport must be an independent dock window backed by the renderer image provider.");
+        require(hierarchy->DockId != details->DockId && hierarchy->Pos.x > viewportWindow->Pos.x &&
+                    details->Pos.x > viewportWindow->Pos.x && contentBrowser->Pos.x == viewportWindow->Pos.x,
+                "Scene Hierarchy must occupy the upper-right area while the bottom tabs align below Viewport.");
         const auto viewportState = editor.viewportInteraction();
         const std::uint32_t expectedWidth = static_cast<std::uint32_t>(
             std::max(viewportWindow->ContentRegionRect.GetWidth() * io.DisplayFramebufferScale.x, 1.0f));

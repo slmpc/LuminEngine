@@ -207,19 +207,17 @@ Figma 的借鉴范围仅限于：围绕彩色创作画布的中性工具 chrome�
 | `Metric_FrameBorder` | `0px` | 控件依靠色调区分 |
 | `Metric_MinWorkbenchWidth` | `1280px` | 完整默认布局最小宽度 |
 | `Metric_MinWorkbenchHeight` | `720px` | 完整默认布局最小高度 |
-| `Metric_DefaultHierarchyWidth` | `240px` | 左侧 Scene Hierarchy |
-| `Metric_MinHierarchyWidth` | `192px` | 左侧面板缩放下限 |
-| `Metric_DefaultPropertiesWidth` | `320px` | 右侧 Inspector/设置列 |
+| `Metric_DefaultPropertiesWidth` | `320px` | 右侧 Scene/Details/Render 列 |
 | `Metric_MinPropertiesWidth` | `280px` | 右侧面板缩放下限 |
-| `Metric_DefaultConsoleHeight` | `200px` | 中央下方 Script Console |
-| `Metric_MinAuxPanelHeight` | `144px` | Console、Inspector、设置下限 |
+| `Metric_DefaultConsoleHeight` | `200px` | 中央下方 Content Browser/Console 页签组 |
+| `Metric_MinAuxPanelHeight` | `144px` | Scene、Details、Render、底部页签组下限 |
 | `Metric_MinViewportWidth` | `480px` | 完整布局 Viewport 下限 |
 | `Metric_MinViewportHeight` | `320px` | 完整布局 Viewport 下限 |
 | `Metric_CompactViewportWidth` | `320px` | 窄窗口保留 Viewport 的下限 |
 | `Metric_CompactViewportHeight` | `200px` | 窄窗口保留 Viewport 的下限 |
 | `Metric_CompactBottomHeight` | `176px` | 紧凑模式底部标签组默认高度 |
-| `Ratio_DefaultInspectorHeight` | `0.60` | 右列 Inspector 默认高度比例 |
-| `Ratio_DefaultSettingsHeight` | `0.40` | 右列 Render/GI Settings 默认高度比例 |
+| `Ratio_DefaultSceneHierarchyHeight` | `0.45` | 右列 Scene Hierarchy 默认高度比例 |
+| `Ratio_DefaultPropertiesHeight` | `0.55` | 右列 Details/Render 页签组默认高度比例 |
 | `Ratio_MaxSidePanel` | `0.40` | 单侧工具列最大客户区宽度比例 |
 | `Ratio_MaxBottomPanel` | `0.45` | 底部工具区最大客户区高度比例 |
 
@@ -229,27 +227,26 @@ Figma 的借鉴范围仅限于：围绕彩色创作画布的中性工具 chrome�
 DockSpace 的完整默认布局如下：
 
 ```text
-┌ Scene Hierarchy ┬──────────── Viewport ────────────┬──── Inspector ────┐
-│                 │                                  ├ Render/GI Settings ┤
-│                 ├────────── Script Console ────────┤                    │
-└─────────────────┴──────────────────────────────────┴────────────────────┘
+┌──────────────────────────── Viewport ──────────────┬── Scene Hierarchy ─┐
+│                                                   ├────────────────────┤
+├──────── Content Browser / Script Console ─────────┤ Details / Render GI│
+└───────────────────────────────────────────────────┴────────────────────┘
 ```
 
-- 左列使用 `Metric_DefaultHierarchyWidth`；右列使用 `Metric_DefaultPropertiesWidth`。
-- `Inspector` 与 `Render/GI Settings` 在右列纵向分割，默认分别使用 `Ratio_DefaultInspectorHeight` 与
-  `Ratio_DefaultSettingsHeight`，二者都受 `Metric_MinAuxPanelHeight` 约束。
-- `Script Console` 位于中央区下方并使用 `Metric_DefaultConsoleHeight`；`Viewport` 获得中央剩余空间。
+- 左侧不创建工具列，`Viewport` 使用中央上方全部可用宽度；右列使用 `Metric_DefaultPropertiesWidth`。
+- `Scene Hierarchy` 位于右上；`Details` 与 `Render / GI` 共享右下页签组，各辅助区域都受
+  `Metric_MinAuxPanelHeight` 约束。
+- `Content Browser` 与 `Script Console` 共享中央下方页签组并使用 `Metric_DefaultConsoleHeight`。
 - `DockBuilder` 仅在首次运行、布局文件缺失或 layout schema 版本变化时创建默认节点，不能每帧重建。
 - 布局状态保存在用户配置目录，不写入仓库。关闭的面板可从 `View` 菜单重新打开，并回到最后合法 dock 节点。
 - Splitter 显示 `Metric_Divider`，命中区使用 `Metric_SplitterHitArea`。拖动时不预留空白，也不改变工具栏尺寸。
-- 两侧面板不能超过 `Ratio_MaxSidePanel`，底部区域不能超过 `Ratio_MaxBottomPanel`；中央 Viewport 优先保留最小尺寸。
+- 右侧面板不能超过 `Ratio_MaxSidePanel`，底部区域不能超过 `Ratio_MaxBottomPanel`；中央 Viewport 优先保留最小尺寸。
 
 ### 4.4 缩放、窄窗口与滚动所有权
 
 - 客户区达到 `Metric_MinWorkbenchWidth` 与 `Metric_MinWorkbenchHeight` 时使用完整布局。
-- 任一维度低于完整布局下限时进入紧凑布局：`Scene Hierarchy` 与 `Inspector` 合并为左侧标签组，
-  左侧组使用 `Metric_MinHierarchyWidth`；`Render/GI Settings` 与 `Script Console` 合并为底部标签组，
-  底部组使用 `Metric_CompactBottomHeight`。
+- 任一维度低于完整布局下限时进入紧凑布局；布局保持右侧上下分区与中央底部页签组，优先压缩右列和底部区域，
+  不在 Viewport 左侧新增工具面板。
 - 如果紧凑布局仍会让 Viewport 小于 `Metric_CompactViewportWidth` 或 `Metric_CompactViewportHeight`，
   两个辅助标签组默认折叠；它们仍可由 `View` 菜单作为 docked 标签打开，不能以遮住 Viewport 的浮动卡片替代。
 - 工具栏保持单行；放不下的低优先级命令进入末端的 `More` 菜单。状态栏依次省略性能统计、后端详情和次级消息，
