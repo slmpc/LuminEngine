@@ -425,6 +425,7 @@ namespace lumin::editor {
         }
 
         void drawMainMenu() {
+            std::optional<std::filesystem::path> recentProjectToOpen;
             if (!ImGui::BeginMainMenuBar()) {
                 return;
             }
@@ -442,9 +443,8 @@ namespace lumin::editor {
                 if (ImGui::BeginMenu("Recent Projects", !recentProjects.empty())) {
                     for (const auto& recent : recentProjects) {
                         if (ImGui::MenuItem(recent.filename().string().c_str())) {
-                            runDestructive([this, recent] {
-                                openProjectPath(recent);
-                            });
+                            recentProjectToOpen = recent;
+                            break;
                         }
                     }
                     ImGui::EndMenu();
@@ -475,6 +475,12 @@ namespace lumin::editor {
                 }
             }
             ImGui::EndMainMenuBar();
+
+            if (recentProjectToOpen.has_value()) {
+                runDestructive([this, recent = std::move(*recentProjectToOpen)] {
+                    openProjectPath(recent);
+                });
+            }
         }
 
         void drawProjectModals() {
