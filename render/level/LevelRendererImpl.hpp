@@ -1,12 +1,13 @@
 #pragma once
 
-#include "render/DeferredRenderPipeline.hpp"
 #include "render/LevelRenderer.hpp"
 #include "render/ModelRenderer.hpp"
 #include "render/atmosphere/AtmosphereLutGpu.hpp"
 #include "render/atmosphere/AtmosphereLutScheduler.hpp"
+#include "render/core/RenderPipelineInstance.hpp"
 #include "render/gi/GlobalIllumination.hpp"
 #include "render/level/LevelRenderFrameData.hpp"
+#include "render/pipelines/DefaultRenderPipelines.hpp"
 #include "render/presentation/PresentationRenderer.hpp"
 #include "render/resources/FrameGraph.hpp"
 #include "render/resources/PipelineManager.hpp"
@@ -30,7 +31,7 @@
 
 namespace lumin::render {
 
-    struct LevelRenderer::Impl final : LevelRenderFeatureHost {
+    struct LevelRenderer::Impl final {
     public:
         Impl(VulkanContext& context, const scene::Level& level, std::filesystem::path shaderDirectory,
              core::UiFontAtlas uiFontAtlas, std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination);
@@ -97,13 +98,10 @@ namespace lumin::render {
         void requestViewportExtent(std::uint32_t width, std::uint32_t height) noexcept;
         [[nodiscard]] ImGuiViewportImage viewportImage() const noexcept;
 
-        void addFeaturePasses(LevelRenderFeatureKind kind, core::RenderFeatureFrameContext& context) override;
-        void submitFeature(LevelRenderFeatureKind kind, const core::RenderFrameIdentity& identity) noexcept override;
-        void discardFeature(LevelRenderFeatureKind kind, const core::RenderFrameIdentity& identity) noexcept override;
-
     private:
         void createRenderResources();
-        void createRenderFeaturePipeline(DeferredRenderPath requestedPath = DeferredRenderPath::Hybrid);
+        void createRenderFeaturePipeline(
+            pipelines::DefaultRenderPipelineKind requestedPath = pipelines::DefaultRenderPipelineKind::Hybrid);
         void synchronizeRenderConfiguration(const RenderSettings& settings);
         void createModelRenderer();
         void createDirectLightingBindingLayout();
@@ -195,7 +193,8 @@ namespace lumin::render {
         std::array<bool, TextureManager::maxFramesInFlight> frameResourcesInitialized_{};
         bool atmosphereForceRebuild_ = true;
         bool requestedSharcEnabled_ = true;
-        std::unique_ptr<DeferredRenderPipeline> renderPipeline_;
+        pipelines::DefaultRenderPipelineKind activePipelineKind_ = pipelines::DefaultRenderPipelineKind::Raster;
+        std::unique_ptr<core::RenderPipelineInstance> renderPipeline_;
     };
 
 } // namespace lumin::render

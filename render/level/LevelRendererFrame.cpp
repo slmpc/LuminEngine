@@ -194,7 +194,8 @@ namespace lumin::render {
         data.previousViewProjection = previousViewProjection_;
         data.jitter = jitter;
         data.cascades = cascades;
-        data.hybridPathActive = renderPipeline_ != nullptr && renderPipeline_->path() == DeferredRenderPath::Hybrid;
+        data.hybridPathActive =
+            renderPipeline_ != nullptr && activePipelineKind_ == pipelines::DefaultRenderPipelineKind::Hybrid;
         data.uniforms.inverseViewProjection = glm::inverse(unjitteredViewProjection);
         data.uniforms.viewProjection = viewProjection;
         data.uniforms.cascadeViewProjections = cascades.viewProjections;
@@ -337,11 +338,6 @@ namespace lumin::render {
 
         core::RenderBlackboard blackboard;
         blackboard.set(std::move(data));
-        blackboard.set(AtmosphereInvalidationSignatures{
-            .optical = renderWorld->sourceAtmosphereRevision(),
-            .lighting = renderWorld->sourceLightingRevision(),
-            .view = camera.revision(),
-        });
         renderPipeline_->prepareFrame(identity, camera.cutEpoch(), changes, frameGraph_, blackboard);
         frameGraph_.execute(FrameGraphContext{&commandList, nullptr, frameIndex});
         bool usedHybridGlobalIllumination = false;

@@ -17,6 +17,7 @@
 #include <array>
 #include <cmath>
 #include <exception>
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -29,6 +30,56 @@
 #include <glm/trigonometric.hpp>
 
 namespace lumin::render {
+    namespace {
+
+        struct BoundRenderFeatureCallbacks {
+            using AddPasses = std::function<void(core::RenderFeatureFrameContext&)>;
+            using FrameEvent = std::function<void(const core::RenderFrameIdentity&)>;
+
+            BoundRenderFeatureCallbacks(AddPasses addPassesCallback, FrameEvent submittedCallback = {},
+                                        FrameEvent discardedCallback = {})
+                : addPasses(std::move(addPassesCallback)), submitted(std::move(submittedCallback)),
+                  discarded(std::move(discardedCallback)) {
+            }
+
+            AddPasses addPasses;
+            FrameEvent submitted;
+            FrameEvent discarded;
+        };
+
+        // 迁移期 Feature 对象直接绑定单一职责回调；注册点显式列出模块，不再通过枚举和中央 switch 分派。
+        class BoundRenderFeature final : public core::IRenderFeature {
+        public:
+            BoundRenderFeature(core::FeatureDescriptor descriptor, BoundRenderFeatureCallbacks callbacks)
+                : descriptor_(std::move(descriptor)), callbacks_(std::move(callbacks)) {
+            }
+
+            [[nodiscard]] const core::FeatureDescriptor& descriptor() const noexcept override {
+                return descriptor_;
+            }
+
+            void addPasses(core::RenderFeatureFrameContext& context) override {
+                callbacks_.addPasses(context);
+            }
+
+            void onFrameSubmitted(const core::RenderFrameIdentity& identity) noexcept override {
+                if (callbacks_.submitted) {
+                    callbacks_.submitted(identity);
+                }
+            }
+
+            void onFrameDiscarded(const core::RenderFrameIdentity& identity) noexcept override {
+                if (callbacks_.discarded) {
+                    callbacks_.discarded(identity);
+                }
+            }
+
+        private:
+            core::FeatureDescriptor descriptor_;
+            BoundRenderFeatureCallbacks callbacks_;
+        };
+
+    } // namespace
 
     LevelRenderer::LevelRenderer(VulkanContext& context, const scene::Level& level,
                                  std::filesystem::path shaderDirectory, core::UiFontAtlas uiFontAtlas,
@@ -231,20 +282,20 @@ namespace lumin::render {
         return globalIllumination_->info();
     }
 
-    void LevelRenderer::Impl::createRenderFeaturePipeline(DeferredRenderPath requestedPath) {
+    void LevelRenderer::Impl::createRenderFeaturePipeline(pipelines::DefaultRenderPipelineKind requestedPath) {
         core::RenderDeviceCapabilities capabilities;
         capabilities.supported = {core::RenderCapability::Graphics, core::RenderCapability::Compute,
                                   core::RenderCapability::DynamicRendering};
         capabilities.maxFramesInFlight = TextureManager::maxFramesInFlight;
-        DeferredRenderPath path = DeferredRenderPath::Raster;
+        pipelines::DefaultRenderPipelineKind path = pipelines::DefaultRenderPipelineKind::Raster;
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         const world::RenderWorldSnapshotPtr snapshot = renderWorld_.snapshot();
-        const bool hybridPath = requestedPath == DeferredRenderPath::Hybrid && hybridGi_ != nullptr &&
+        const bool hybridPath = requestedPath == pipelines::DefaultRenderPipelineKind::Hybrid && hybridGi_ != nullptr &&
                                 context_.rayTracingDecision().enabled() &&
                                 context_.rayTracingSupport().supportsSharcShaderStorage() && snapshot != nullptr &&
                                 !snapshot->instances().empty() && !snapshot->meshes().empty();
         if (hybridPath) {
-            path = DeferredRenderPath::Hybrid;
+            path = pipelines::DefaultRenderPipelineKind::Hybrid;
             capabilities.supported.add(core::RenderCapability::DescriptorIndexing)
                 .add(core::RenderCapability::BufferDeviceAddress)
                 .add(core::RenderCapability::AccelerationStructure)
@@ -255,120 +306,109 @@ namespace lumin::render {
 #else
         static_cast<void>(requestedPath);
 #endif
-        DeferredRenderFeatureSet features;
-        const auto makeFeature = [this, path](LevelRenderFeatureKind kind) {
-            return makeLevelRenderFeature(kind, deferredFeatureDescriptor(kind, path), *this);
+        const pipelines::DefaultRenderPipelineDefinition definition = pipelines::makeDefaultRenderPipeline(path);
+        core::RenderFeatureRegistry registry;
+        const auto registerFeature = [&registry, &definition](const core::FeatureId& id,
+                                                              BoundRenderFeatureCallbacks callbacks) {
+            core::FeatureDescriptor descriptor = definition.descriptor(id);
+            registry.registerFeature(descriptor, [descriptor = std::move(descriptor), callbacks = std::move(callbacks)](
+                                                     const core::FeatureCreateContext&) mutable {
+                return std::make_unique<BoundRenderFeature>(descriptor, callbacks);
+            });
         };
-        if (path == DeferredRenderPath::Raster) {
-            features.shadow = makeFeature(LevelRenderFeatureKind::Shadow);
-            features.gbuffer = makeFeature(LevelRenderFeatureKind::GBuffer);
+
+        using namespace pipelines::feature_ids;
+        registerFeature(pipelines::feature_ids::atmosphere(), {[this](core::RenderFeatureFrameContext& context) {
+                                                                   addAtmosphereLutFeaturePasses(context);
+                                                               },
+                                                               [this](const core::RenderFrameIdentity& identity) {
+                                                                   commitAtmosphereFeature(identity);
+                                                               },
+                                                               [this](const core::RenderFrameIdentity&) {
+                                                                   discardAtmosphereFeature();
+                                                               }});
+        if (path == pipelines::DefaultRenderPipelineKind::Raster) {
+            registerFeature(shadow(), {[this](core::RenderFeatureFrameContext& context) {
+                                addShadowFeaturePasses(context);
+                            }});
+            registerFeature(rasterSurface(), {[this](core::RenderFeatureFrameContext& context) {
+                                                  addGBufferFeaturePasses(context);
+                                              },
+                                              [this](const core::RenderFrameIdentity&) {
+                                                  if (modelRenderer_ != nullptr) {
+                                                      modelRenderer_->commitSubmittedFrame();
+                                                  }
+                                              },
+                                              [this](const core::RenderFrameIdentity&) {
+                                                  if (modelRenderer_ != nullptr) {
+                                                      modelRenderer_->discardPendingFrame();
+                                                  }
+                                              }});
         } else {
-            features.hybridSurface = makeFeature(LevelRenderFeatureKind::HybridSurface);
+            registerFeature(hybridSurface(), {[this](core::RenderFeatureFrameContext& context) {
+                                                  addHybridSurfaceFeaturePasses(context);
+                                              },
+                                              [this](const core::RenderFrameIdentity& identity) {
+                                                  commitHybridSurfaceFeature(identity);
+                                                  if (modelRenderer_ != nullptr) {
+                                                      modelRenderer_->commitSubmittedFrame();
+                                                  }
+                                              },
+                                              [this](const core::RenderFrameIdentity&) {
+                                                  discardHybridSurfaceFeature();
+                                                  if (modelRenderer_ != nullptr) {
+                                                      modelRenderer_->discardPendingFrame();
+                                                  }
+                                              }});
         }
-        features.atmosphereLuts = makeFeature(LevelRenderFeatureKind::AtmosphereLuts);
-        features.globalIllumination = makeFeature(LevelRenderFeatureKind::GlobalIllumination);
-        features.giDenoiser = makeFeature(LevelRenderFeatureKind::GiDenoiser);
-        features.skyComposite = makeFeature(LevelRenderFeatureKind::SkyComposite);
-        features.directLighting = makeFeature(LevelRenderFeatureKind::DirectLighting);
-        features.temporalAa = makeFeature(LevelRenderFeatureKind::TemporalAa);
-        features.toneMapping = makeFeature(LevelRenderFeatureKind::ToneMapping);
-        features.uiPresent = makeFeature(LevelRenderFeatureKind::UiPresent);
-        renderPipeline_ = std::make_unique<DeferredRenderPipeline>(std::move(features), capabilities, path);
-    }
+        registerFeature(globalIllumination(), {[this](core::RenderFeatureFrameContext& context) {
+                                                   addGlobalIlluminationFeaturePasses(context);
+                                               },
+                                               [this](const core::RenderFrameIdentity& identity) {
+                                                   commitGlobalIlluminationFeature(identity);
+                                               },
+                                               [this](const core::RenderFrameIdentity&) {
+                                                   discardGlobalIlluminationFeature();
+                                               }});
+        registerFeature(denoising(), {[this](core::RenderFeatureFrameContext& context) {
+                                          addGiDenoiserFeaturePasses(context);
+                                      },
+                                      [this](const core::RenderFrameIdentity& identity) {
+                                          commitGiDenoiserFeature(identity);
+                                      },
+                                      [this](const core::RenderFrameIdentity&) {
+                                          discardGiDenoiserFeature();
+                                      }});
+        registerFeature(lightingComposite(), {[this](core::RenderFeatureFrameContext& context) {
+                            addSkyCompositeFeaturePasses(context);
+                            addDirectLightingFeaturePasses(context);
+                        }});
+        registerFeature(temporalAa(), {[this](core::RenderFeatureFrameContext& context) {
+                                           addTemporalAaFeaturePasses(context);
+                                       },
+                                       [this](const core::RenderFrameIdentity& identity) {
+                                           textures_.markHistoryValid(identity.frameSlot.value());
+                                       }});
+        registerFeature(toneMapping(), {[this](core::RenderFeatureFrameContext& context) {
+                            addToneMappingFeaturePasses(context);
+                        }});
+        registerFeature(presentation(), {[this](core::RenderFeatureFrameContext& context) {
+                                             addUiPresentFeaturePasses(context);
+                                         },
+                                         [this](const core::RenderFrameIdentity&) {
+                                             viewportOutputInitialized_ = true;
+                                         }});
 
-    void LevelRenderer::Impl::addFeaturePasses(LevelRenderFeatureKind kind, core::RenderFeatureFrameContext& context) {
-        switch (kind) {
-        case LevelRenderFeatureKind::Shadow:
-            addShadowFeaturePasses(context);
-            return;
-        case LevelRenderFeatureKind::GBuffer:
-            addGBufferFeaturePasses(context);
-            return;
-        case LevelRenderFeatureKind::HybridSurface:
-            addHybridSurfaceFeaturePasses(context);
-            return;
-        case LevelRenderFeatureKind::AtmosphereLuts:
-            addAtmosphereLutFeaturePasses(context);
-            return;
-        case LevelRenderFeatureKind::GlobalIllumination:
-            addGlobalIlluminationFeaturePasses(context);
-            return;
-        case LevelRenderFeatureKind::GiDenoiser:
-            addGiDenoiserFeaturePasses(context);
-            return;
-        case LevelRenderFeatureKind::SkyComposite:
-            addSkyCompositeFeaturePasses(context);
-            return;
-        case LevelRenderFeatureKind::DirectLighting:
-            addDirectLightingFeaturePasses(context);
-            return;
-        case LevelRenderFeatureKind::TemporalAa:
-            addTemporalAaFeaturePasses(context);
-            return;
-        case LevelRenderFeatureKind::ToneMapping:
-            addToneMappingFeaturePasses(context);
-            return;
-        case LevelRenderFeatureKind::UiPresent:
-            addUiPresentFeaturePasses(context);
-            return;
-        }
-    }
-
-    void LevelRenderer::Impl::submitFeature(LevelRenderFeatureKind kind,
-                                            const core::RenderFrameIdentity& identity) noexcept {
-        switch (kind) {
-        case LevelRenderFeatureKind::GBuffer:
-        case LevelRenderFeatureKind::HybridSurface:
-            if (kind == LevelRenderFeatureKind::HybridSurface) {
-                commitHybridSurfaceFeature(identity);
-            }
-            if (modelRenderer_ != nullptr) {
-                modelRenderer_->commitSubmittedFrame();
-            }
-            return;
-        case LevelRenderFeatureKind::AtmosphereLuts:
-            commitAtmosphereFeature(identity);
-            return;
-        case LevelRenderFeatureKind::GlobalIllumination:
-            commitGlobalIlluminationFeature(identity);
-            return;
-        case LevelRenderFeatureKind::GiDenoiser:
-            commitGiDenoiserFeature(identity);
-            return;
-        case LevelRenderFeatureKind::TemporalAa:
-            textures_.markHistoryValid(identity.frameSlot.value());
-            return;
-        case LevelRenderFeatureKind::UiPresent:
-            viewportOutputInitialized_ = true;
-            return;
-        default:
-            return;
-        }
-    }
-
-    void LevelRenderer::Impl::discardFeature(LevelRenderFeatureKind kind, const core::RenderFrameIdentity&) noexcept {
-        switch (kind) {
-        case LevelRenderFeatureKind::GBuffer:
-        case LevelRenderFeatureKind::HybridSurface:
-            if (kind == LevelRenderFeatureKind::HybridSurface) {
-                discardHybridSurfaceFeature();
-            }
-            if (modelRenderer_ != nullptr) {
-                modelRenderer_->discardPendingFrame();
-            }
-            return;
-        case LevelRenderFeatureKind::AtmosphereLuts:
-            discardAtmosphereFeature();
-            return;
-        case LevelRenderFeatureKind::GlobalIllumination:
-            discardGlobalIlluminationFeature();
-            return;
-        case LevelRenderFeatureKind::GiDenoiser:
-            discardGiDenoiserFeature();
-            return;
-        default:
-            return;
-        }
+        const core::ResolvedRenderPipeline resolved =
+            core::RenderPipelineRecipeResolver::resolve(registry, definition.recipe(), capabilities);
+        auto candidate = std::make_unique<core::RenderPipelineInstance>(
+            registry, resolved,
+            core::FeatureCreateContext{.device = context_.rhiDevice(),
+                                       .capabilities = capabilities,
+                                       .frameSlotCount = TextureManager::maxFramesInFlight});
+        candidate->onRenderExtentChanged(renderExtent_);
+        activePipelineKind_ = path;
+        renderPipeline_ = std::move(candidate);
     }
 
     void LevelRenderer::Impl::synchronizeRenderConfiguration(const RenderSettings& settings) {
@@ -389,12 +429,9 @@ namespace lumin::render {
 #else
         static_cast<void>(settings);
 #endif
-        const DeferredRenderPath requestedPath =
-            useRayTracing ? DeferredRenderPath::Hybrid : DeferredRenderPath::Raster;
-        if (renderPipeline_ == nullptr || renderPipeline_->path() != requestedPath) {
-            if (renderPipeline_ != nullptr) {
-                renderPipeline_->discardFrame();
-            }
+        const pipelines::DefaultRenderPipelineKind requestedPath =
+            useRayTracing ? pipelines::DefaultRenderPipelineKind::Hybrid : pipelines::DefaultRenderPipelineKind::Raster;
+        if (renderPipeline_ == nullptr || activePipelineKind_ != requestedPath) {
             createRenderFeaturePipeline(requestedPath);
             pendingFrameChanges_.add(core::HistoryReason::FeatureConfigurationChanged);
         }
@@ -425,7 +462,7 @@ namespace lumin::render {
                                                 const world::RenderWorldSnapshot& renderWorld) const noexcept {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridGi_ == nullptr || renderPipeline_ == nullptr ||
-            renderPipeline_->path() != DeferredRenderPath::Hybrid ||
+            activePipelineKind_ != pipelines::DefaultRenderPipelineKind::Hybrid ||
             settings.globalIllumination.mode != GlobalIlluminationMode::RayTracing || renderWorld.instances().empty() ||
             renderWorld.meshes().empty() || renderWorld.meshes().size() > hybridGi_->geometryDescriptorCapacity) {
             return false;

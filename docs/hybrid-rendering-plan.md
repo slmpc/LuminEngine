@@ -18,7 +18,8 @@
 
 ## 当前实现状态（2026-08）
 
-- [x] `DeferredRenderPipeline` 支持 Raster/Hybrid 两套固定拓扑；Hybrid 不注册 CSM、G-buffer 和旧 deferred direct Feature。
+- [x] `DefaultRenderPipelines` 提供 Raster/Hybrid 两套 typed recipe；Hybrid 不注册 CSM、G-buffer 和旧 deferred direct
+  Feature。
 - [x] RTDI primary surface、RT shadow、miss atmosphere、surface signal ABI 和 UAV 资源契约已接入。
 - [x] GPU Scene 的 candidate upload/BLAS/TLAS 更新已移动到 `hybrid-surface` Feature，并遵守 submit commit/discard 事务。
 - [x] SHARC update/query、RT GI 和 NRD 已改为消费 primary RT surface signals。
@@ -84,7 +85,7 @@ flowchart TD
 - `NrdDenoiser` 不知道 SHARC；它只消费标准 denoiser signal contract。
 - atmosphere/cloud 不依赖 RT pipeline；它们只消费相机、深度、太阳、LUT 和天气参数。
 - Composite 不创建上游资源，也不推进任何上游 history。
-- Hybrid pipeline 不复用 `DeferredRenderPipeline` 内部的 G-buffer 或 shadow 资源。
+- Hybrid recipe 不生产或消费 Raster G-buffer 与 shadow 数据契约。
 
 建议的最终目录如下：
 

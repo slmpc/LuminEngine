@@ -32,11 +32,11 @@ resize 和 shutdown 在安全边界按逆序通知，使消费者先释放对上
 物理 NvRHI handle、本帧唯一 FrameGraph handle、format、extent 和 ready pass。同一物理资源必须经
 `FrameGraphResourceImporter` 导入；兼容重复导入复用首个 handle，状态或范围冲突立即失败。
 
-当前运行时仍由 `LevelRenderer` 和窄 `LevelRenderFeatureHost` 适配这些基础设施，仍直接读取活动场景；ImGui 状态已经从
-renderer 断开。
-在 Feature typed-contract 迁移、资源所有权拆分、`RenderFramePacket` 与渲染线程接入完成前，这些旧类型属于明确的迁移
-边界，不得继续扩展业务逻辑。后续阶段会删除 `DeferredRenderFeatureSet`、`LevelRenderFeatureKind`、
-`LevelRenderFrameData`、`TextureManager`、`PipelineManager` 和旧 `LevelRenderer::Impl`。
+当前运行时使用 `DefaultRenderPipelines` 提供的 Raster/Hybrid recipe，并经
+`RenderPipelineRecipeResolver + RenderPipelineInstance` 事务式创建候选管线。Feature 通过显式 factory 注册；旧
+`DeferredRenderFeatureSet`、`LevelRenderFeatureKind`、`LevelRenderFeatureHost` 和中央分派 `switch` 已删除。运行时仍直接
+读取活动场景，且部分 pass 尚通过 `LevelRenderFrameData`、`TextureManager` 与 `PipelineManager` 共享资源；这些剩余边界会
+在 `RenderFramePacket`、Feature 资源所有权和渲染线程接入阶段删除。
 
 ## 场景更新
 
@@ -92,8 +92,8 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 - `render/level/LevelRenderFrameData.hpp` 定义当前录制调用使用的黑板数据。它保存 immutable `RenderWorldSnapshot`、
   当前帧资源、FrameGraph handle 和派生矩阵；其中的指针、span 和 handle 只在当前 `recordCommandList` 调用期间有效，
   不得由 Feature 跨帧保存。
-- `render/features/LevelRenderFeature.*` 是窄化适配层。独立 Feature 只保存 descriptor、Feature kind 和 host 接口，
-  具体 pass 通过 `LevelRenderFeatureHost` 转交给实现，不依赖 `LevelRenderer` 的具体类型，也不跨帧保存当前帧上下文。
+- `render/pipelines/DefaultRenderPipelines.*` 定义 Raster/Hybrid recipe。数据 producer/consumer 决定 DAG 主顺序；只有
+  Presentation 等外部副作用边界使用少量 `after` 约束。Runtime 显式注册各模块 factory，不再按枚举转发生命周期。
 
 渲染基础设施按物理目录隔离：
 
@@ -107,11 +107,11 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 - `render/presentation/` 包含渲染侧 `UiRenderer` 与 `PresentationRenderer`。它们不依赖 ImGui、SDL 或 Editor，只将
   packet 中的稳定 `UiTextureId` 解析为当前 NvRHI 资源并合成到交换链。
 
-`DeferredRenderPipeline` 拥有 `DeferredRenderFeatureSet` 中的独立 `IRenderFeature` 对象，并在构造时验证 descriptor ID
- 与当前路径一致，再解析能力和依赖图。Raster 路径必须注册 `shadow` 与 `gbuffer`，不得注册 `hybrid-surface`；
- Hybrid 路径必须注册 `hybrid-surface`，不得注册 Raster-only Feature。`hybrid-surface` 的 descriptor 要求
- `AccelerationStructure` 和 `RayTracingPipeline`，缺少时拒绝整个 Hybrid 计划。每个时序历史域在一个解析计划中只有
- 一个 Feature 负责（Atmosphere LUT、SHARC、NRD diffuse/specular、TAA），因此历史失效策略不会散落在渲染器门面中。
+`DefaultRenderPipelines` 用 typed inputs/outputs 解析执行顺序。Raster recipe 注册 shadow 与 raster surface；Hybrid
+recipe 注册 RT surface/GPU Scene producer，不包含 Raster-only 模块。RT surface descriptor 要求
+`AccelerationStructure` 和 `RayTracingPipeline`，缺少时拒绝 Hybrid 候选并由 Runtime 保留旧实例或选择 Raster。
+每个时序历史域在一个解析计划中只有一个 Feature 负责（Atmosphere LUT、SHARC、NRD diffuse/specular、TAA），因此历史
+失效策略不会散落在渲染器门面中。
 
 一帧的 Feature 事务顺序固定为：`prepareFrame` 按解析后的依赖顺序调用 `addPasses`；录制异常或提交异常调用
 `discardFrame`，已进入的 Feature 按逆序收到 `onFrameDiscarded`；队列提交成功后调用 `commitFrame`，按正序发送

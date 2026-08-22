@@ -115,8 +115,7 @@ endif()
 lumin_render_target_uses_shaders(lumin_render_gi)
 
 add_library(lumin_render_pipelines STATIC
-    DeferredRenderPipeline.cpp
-    features/LevelRenderFeature.cpp
+    pipelines/DefaultRenderPipelines.cpp
 )
 add_library(Lumin::RenderPipelines ALIAS lumin_render_pipelines)
 lumin_configure_render_library(lumin_render_pipelines)

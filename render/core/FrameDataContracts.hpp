@@ -2,6 +2,7 @@
 
 #include "render/core/FrameIdentity.hpp"
 #include "render/core/RenderSettingsStore.hpp"
+#include "render/core/UiDrawPacket.hpp"
 #include "render/resources/FrameGraph.hpp"
 #include "render/world/RenderWorld.hpp"
 
@@ -211,8 +212,25 @@ namespace lumin::render::core {
         TextureFrameData historyWrite;
     };
 
-    /// Presentation Feature 使用的 UI 数据契约；具体定义位于 Presentation 模块。
-    struct UiFrameData;
+    /** Runtime 在获取交换链图像后发布给 Presentation Feature 的输入。 */
+    struct PresentationInputData {
+        /// 主线程深拷贝并随帧提交的 UI 绘制数据。
+        UiDrawPacket ui;
+        /// 当前交换链图像及其唯一 FrameGraph 身份。
+        TextureFrameData swapchain;
+        /// Presentation 字体图集及其唯一 FrameGraph 身份。
+        TextureFrameData fontAtlas;
+        /// 当前交换链图像索引。
+        std::uint32_t imageIndex = 0;
+        /// 当前帧槽索引。
+        std::uint32_t frameSlot = 0;
+    };
+
+    /// Tone Mapping Feature 发布、Presentation Feature 消费的 Editor Viewport 输出。
+    struct ViewportOutputData {
+        /// 已完成 tone mapping 的 Viewport 纹理。
+        TextureFrameData color;
+    };
 
     /// Presentation Feature 发布的最终 Viewport 与交换链输出。
     struct PresentData {
@@ -270,6 +288,14 @@ namespace lumin::render::core {
         /// 返回 `TemporalOutputData` 契约。
         [[nodiscard]] inline const FrameDataContract& temporalOutput() {
             return contract<TemporalOutputData>("temporal-output");
+        }
+        /// 返回 `PresentationInputData` 契约。
+        [[nodiscard]] inline const FrameDataContract& presentationInput() {
+            return contract<PresentationInputData>("presentation-input");
+        }
+        /// 返回 `ViewportOutputData` 契约。
+        [[nodiscard]] inline const FrameDataContract& viewportOutput() {
+            return contract<ViewportOutputData>("viewport-output");
         }
         /// 返回 `PresentData` 契约。
         [[nodiscard]] inline const FrameDataContract& present() {

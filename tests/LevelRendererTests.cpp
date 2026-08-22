@@ -40,7 +40,7 @@ namespace {
         return count;
     }
 
-    void verifyPassOrder(const std::string& level, const std::string& deferredPipeline) {
+    void verifyPassOrder(const std::string& level, const std::string& pipelineDefinition) {
         std::size_t position = level.find("LevelRenderer::Impl::recordCommandList");
         require(position != std::string::npos, "NvRHI frame recorder entry point is missing.");
         for (const std::string& pass : std::vector<std::string>{
@@ -56,13 +56,12 @@ namespace {
                     std::string::npos,
                 "ImGui must sample the completed Viewport output before presentation.");
 
-        position = 0;
-        for (const std::string& feature :
-             {"feature(\"shadow\"", "feature(\"gbuffer\"", "feature(\"atmosphere-luts\"",
-              "feature(\"global-illumination\"", "feature(\"gi-denoiser\"", "feature(\"sky-composite\"",
-              "feature(\"direct-lighting\"", "feature(\"temporal-aa\"", "feature(\"tone-mapping\"",
-              "feature(\"ui-present\""}) {
-            position = requireAfter(deferredPipeline, feature, position);
+        for (const std::string& contract :
+             {"frame_data::atmosphere()", "frame_data::shadows()", "frame_data::rasterSurface()",
+              "frame_data::indirectLighting()", "frame_data::denoisedLighting()", "frame_data::sceneHdr()",
+              "frame_data::temporalOutput()", "frame_data::viewportOutput()", "frame_data::present()"}) {
+            require(pipelineDefinition.find(contract) != std::string::npos,
+                    "Default recipes must declare every typed producer output.");
         }
         std::cout << "PASS_ORDER=CSMx4>G-buffer>GI>sky>deferred>TAA>history-copy>history-ready>tonemap>ImGui>Present\n";
     }
@@ -142,11 +141,14 @@ namespace {
                 present != std::string::npos && submit < pipelineCommit && pipelineCommit < changesConsumed &&
                 changesConsumed < sequenceAdvance && sequenceAdvance < present,
             "Feature history must commit after queue submit and before present, whose failure cannot roll it back.");
-        require(level.find("submitFeature(LevelRenderFeatureKind kind") != std::string::npos &&
+        require(level.find("registerFeature(rasterSurface()") != std::string::npos &&
                     level.find("modelRenderer_->commitSubmittedFrame") != std::string::npos &&
-                    level.find("LevelRenderFeatureKind::TemporalAa") != std::string::npos &&
+                    level.find("registerFeature(temporalAa()") != std::string::npos &&
                     level.find("textures_.markHistoryValid") != std::string::npos,
                 "Model and TAA histories must be committed through independent Feature submission notifications.");
+        require(level.find("LevelRenderFeatureKind") == std::string::npos &&
+                    level.find("switch (kind)") == std::string::npos,
+                "Runtime must not route Feature lifecycle through a central enum switch.");
         require(level.find("modelRenderer_->discardPendingFrame") != std::string::npos,
                 "Discarded Feature frames must abandon pending model transforms.");
         require(level.find("textures_.invalidateHistory") == std::string::npos &&
@@ -246,32 +248,33 @@ namespace {
                     level.find("runtime.rayTracedGi->discardPendingFrame()") != std::string::npos &&
                     level.find("runtime.nrd->discardFrame(*runtime.pendingNrdFrame)") != std::string::npos,
                 "Record and submit failures must discard every hybrid GI candidate.");
-        require(level.find("DeferredRenderPath::Hybrid") != std::string::npos &&
+        require(level.find("DefaultRenderPipelineKind::Hybrid") != std::string::npos &&
                     level.find("rt.surface.world-position") != std::string::npos &&
                     level.find("if (!data.hybridPathActive)") != std::string::npos,
                 "Hybrid must select a dedicated RT surface topology and resource namespace.");
         std::cout << "HYBRID_GI=GPUScene>RTDI>SHARC>RT>NRD>Composite;TRANSACTION=submit-commit/failure-discard\n";
     }
 
-    void verifyFeaturePipelineContract(const std::string& level, const std::string& deferredPipeline,
-                                       const std::string& deferredHeader) {
+    void verifyFeaturePipelineContract(const std::string& level, const std::string& pipelineDefinition,
+                                       const std::string& frameContracts) {
         for (const std::string& history :
              {"HistoryDomain::Taa", "HistoryDomain::NrdDiffuse", "HistoryDomain::NrdSpecular", "HistoryDomain::Sharc",
               "HistoryDomain::AtmosphereLut"}) {
-            require(deferredPipeline.find(history) != std::string::npos,
-                    "Deferred Feature planning must assign every independent history domain.");
+            require(pipelineDefinition.find(history) != std::string::npos,
+                    "Default Feature recipes must assign every independent history domain.");
         }
-        require(deferredPipeline.find("pipeline_.prepareFrame") != std::string::npos &&
-                    deferredPipeline.find("pipeline_.commitFrame") != std::string::npos &&
-                    deferredPipeline.find("pipeline_.discardFrame") != std::string::npos,
-                "Deferred rendering must delegate every frame transaction to RenderFeaturePipeline.");
-        require(level.find("blackboard.set(AtmosphereInvalidationSignatures") != std::string::npos &&
-                    deferredHeader.find("std::uint64_t optical") != std::string::npos &&
-                    deferredHeader.find("std::uint64_t lighting") != std::string::npos &&
-                    deferredHeader.find("std::uint64_t view") != std::string::npos,
-                "Atmosphere Feature must reserve independent optical, lighting and view signatures.");
-        std::cout
-            << "FEATURE_PIPELINE=shadow>gbuffer>atmosphere-LUT>GI>NRD>sky/composite>direct>TAA>tonemap>UI/present\n";
+        require(
+            level.find("RenderPipelineRecipeResolver::resolve") != std::string::npos &&
+                level.find("std::make_unique<core::RenderPipelineInstance>") != std::string::npos &&
+                level.find("candidate->onRenderExtentChanged") != std::string::npos,
+            "Runtime must resolve a recipe and initialize a complete candidate before replacing the active instance.");
+        for (const std::string& contractType :
+             {"FrameSceneData", "GpuSceneData", "RasterSurfaceData", "RtSurfaceData", "AtmosphereData",
+              "IndirectLightingData", "DenoisedLightingData", "SceneHdrData", "TemporalOutputData", "PresentData"}) {
+            require(frameContracts.find(contractType) != std::string::npos,
+                    "RenderCore must expose each typed frame-data contract.");
+        }
+        std::cout << "FEATURE_PIPELINE=typed-DAG>candidate-instance>transactional-swap\n";
     }
 
     void verifySwapchainLifecycle(const std::string& context) {
@@ -365,19 +368,19 @@ namespace {
 
 int main() {
     try {
-        const std::string level =
-            readSource("render/LevelRenderer.cpp") + readSource("render/level/LevelRendererFrame.cpp") +
-            readSource("render/level/LevelRendererResources.cpp") +
-            readSource("render/level/LevelRendererFeatures.cpp") + readSource("render/features/LevelRenderFeature.cpp");
+        const std::string level = readSource("render/LevelRenderer.cpp") +
+                                  readSource("render/level/LevelRendererFrame.cpp") +
+                                  readSource("render/level/LevelRendererResources.cpp") +
+                                  readSource("render/level/LevelRendererFeatures.cpp");
         const std::string context = readSource("render/platform/vulkan/VulkanContext.cpp");
-        const std::string deferredPipeline = readSource("render/DeferredRenderPipeline.cpp");
-        const std::string deferredHeader = readSource("render/DeferredRenderPipeline.hpp");
-        verifyPassOrder(level, deferredPipeline);
+        const std::string pipelineDefinition = readSource("render/pipelines/DefaultRenderPipelines.cpp");
+        const std::string frameContracts = readSource("render/core/FrameDataContracts.hpp");
+        verifyPassOrder(level, pipelineDefinition);
         verifyNvrhiRecording(level);
         verifyHistoryAndErrorPaths(level);
         verifyRenderWorldSnapshotBoundary(level);
         verifyHybridGiIntegration(level);
-        verifyFeaturePipelineContract(level, deferredPipeline, deferredHeader);
+        verifyFeaturePipelineContract(level, pipelineDefinition, frameContracts);
         verifySwapchainLifecycle(context);
         verifyNvrhiYCoordinateConvention(level);
         verifyHybridMotionContract();
