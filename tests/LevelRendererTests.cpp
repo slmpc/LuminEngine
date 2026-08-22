@@ -48,13 +48,14 @@ namespace {
                  "TAA resolve", "TAA history copy", "TAA history ready", "Tonemap", "ImGui overlay", "Present"}) {
             position = requireAfter(level, pass, position);
         }
-        require(level.find("builder.readTexture(data.globalIllumination") != std::string::npos,
+        require(level.find("builder.readTexture(indirect.combined.graphResource") != std::string::npos,
                 "Sky must read the GI output to preserve its FrameGraph dependency.");
-        require(level.find("builder.readTexture(data.historyWrite") != std::string::npos,
+        require(level.find("builder.readTexture(temporal.historyWrite.graphResource") != std::string::npos,
                 "Tonemap must read historyWrite to preserve history-ready ordering.");
-        require(level.find("builder.readTexture(data.viewportOutput, nvrhi::ResourceStates::ShaderResource)") !=
-                    std::string::npos,
-                "ImGui must sample the completed Viewport output before presentation.");
+        require(
+            level.find("builder.readTexture(viewport.color.graphResource, nvrhi::ResourceStates::ShaderResource)") !=
+                std::string::npos,
+            "ImGui must sample the completed Viewport output before presentation.");
 
         for (const std::string& contract :
              {"frame_data::atmosphere()", "frame_data::shadows()", "frame_data::rasterSurface()",
@@ -79,13 +80,14 @@ namespace {
                 "LevelRenderer must hand explicit device-derived ModelRendererCapabilities to ModelRenderer.");
         require(level.find("textureDesc(frame.materialId") != std::string::npos &&
                     level.find("addColorAttachment(frame.materialId.texture)") != std::string::npos &&
-                    level.find("clearTextureUInt(data.frame->materialId.texture") != std::string::npos &&
+                    level.find("clearTextureUInt(surface.materialId.texture") != std::string::npos &&
                     level.find("GpuMaterialIndex::invalidValue") != std::string::npos,
                 "The G-buffer must own, attach, and integer-clear a dedicated stable material-ID texture.");
-        require(level.find("modelRenderer_->materialBufferInitialState(frameIndex)") != std::string::npos &&
-                    level.find("builder.read(data.materials, nvrhi::ResourceStates::ShaderResource)") !=
-                        std::string::npos,
-                "Direct lighting must import and declare the frame-slot material buffer through FrameGraph.");
+        require(
+            level.find("modelRenderer_->materialBufferInitialState(frameIndex)") != std::string::npos &&
+                level.find("builder.read(surface.materials.graphResource, nvrhi::ResourceStates::ShaderResource)") !=
+                    std::string::npos,
+            "Direct lighting must import and declare the frame-slot material buffer through FrameGraph.");
         require(level.find("setRegisterSpaceAndDescriptorSet(1)") != std::string::npos &&
                     level.find("addBindingSet(directLightingBindingSets_[frameIndex])") != std::string::npos,
                 "Deferred direct lighting must bind its material resources in descriptor set 1.");
@@ -100,17 +102,19 @@ namespace {
             require(copyDest != std::string::npos && (addPassEnd == std::string::npos || copyDest < addPassEnd),
                     "Runtime clear passes must declare their textures as CopyDest.");
         }
-        require(level.find("UI background clear") == std::string::npos &&
-                    level.find("builder.writeTexture(data.swap, nvrhi::ResourceStates::CopyDest)") == std::string::npos,
-                "Swapchain images only guarantee color-attachment usage and must not be transfer-cleared.");
+        require(
+            level.find("UI background clear") == std::string::npos &&
+                level.find("builder.writeTexture(input.swapchain.graphResource, nvrhi::ResourceStates::CopyDest)") ==
+                    std::string::npos,
+            "Swapchain images only guarantee color-attachment usage and must not be transfer-cleared.");
         const std::size_t tonemap = level.find("\"Tonemap\", FrameGraphPassType::Graphics");
-        const std::size_t tonemapRenderTarget =
-            level.find("builder.writeTexture(data.viewportOutput, nvrhi::ResourceStates::RenderTarget)", tonemap);
+        const std::size_t tonemapRenderTarget = level.find(
+            "builder.writeTexture(viewport.color.graphResource, nvrhi::ResourceStates::RenderTarget)", tonemap);
         require(tonemap != std::string::npos && tonemapRenderTarget != std::string::npos,
                 "Tonemap must write the renderer-owned Viewport output.");
         const std::size_t imgui = level.find("\"ImGui overlay\", FrameGraphPassType::Graphics", tonemap);
-        const std::size_t imguiSwap =
-            level.find("builder.writeTexture(data.swap, nvrhi::ResourceStates::RenderTarget)", imgui);
+        const std::size_t imguiSwap = level.find(
+            "builder.writeTexture(input.swapchain.graphResource, nvrhi::ResourceStates::RenderTarget)", imgui);
         require(imgui != std::string::npos && imguiSwap != std::string::npos,
                 "Only the ImGui composition pass may write the swapchain render target.");
         for (const std::string& forbidden :
@@ -174,11 +178,11 @@ namespace {
             require(level.find(rebuildChange) != std::string::npos,
                     "Every static ModelRenderer resource change must trigger a rebuild.");
         }
-        require(level.find("modelRenderer_->sync(*data.renderWorld") != std::string::npos,
+        require(level.find("modelRenderer_->sync(*sceneData.world") != std::string::npos,
                 "ModelRenderer must consume the immutable render-world snapshot.");
         require(level.find("gi::FrameInfo{") != std::string::npos &&
-                    level.find("*data.renderWorld") != std::string::npos &&
-                    level.find(".snapshot = data.renderWorldSnapshot") != std::string::npos,
+                    level.find("*sceneData.world") != std::string::npos &&
+                    level.find(".snapshot = sceneData.world") != std::string::npos,
                 "Raster and GPU-scene GI setup must consume the same immutable render-world snapshot.");
         require(level.find("modelRenderer_->sync(level_") == std::string::npos &&
                     level.find("gi::FrameInfo{level_") == std::string::npos,
@@ -213,22 +217,23 @@ namespace {
         position = requireAfter(level, "runtime.nrd->record(", position);
         requireAfter(level, "runtime.composite->record(", position);
         require(level.find("if (runtime.sharcEnabled)") != std::string::npos &&
-                    level.find("if (data.settings->globalIllumination.nrdEnabled)") != std::string::npos &&
+                    level.find("if (settings.nrdEnabled)") != std::string::npos &&
                     level.find("diffuseInput = signals.diffuseRadianceHitDistance") != std::string::npos &&
                     level.find("specularInput = signals.specularRadianceHitDistance") != std::string::npos,
                 "SHARC and NRD must be optional while raw RT GI remains a valid composite input.");
-        require(level.find("if (!data.settings->shadows.enabled)") != std::string::npos &&
-                    level.find("settings.shadows.splitLambda") != std::string::npos &&
-                    level.find("settings.shadows.maxDistance") != std::string::npos &&
-                    level.find("settings.globalIllumination.ssaoEnabled") != std::string::npos,
+        require(level.find("if (!settings.enabled)") != std::string::npos &&
+                    level.find("settings.splitLambda") != std::string::npos &&
+                    level.find("settings.maxDistance") != std::string::npos &&
+                    level.find("settings.ssaoEnabled") != std::string::npos,
                 "Legacy mode controls must drive CSM recording, cascade parameters, and SSAO.");
 
-        require(level.find(".atmosphere = atmosphereConsumerBindingSets_[data.frameIndex]") != std::string::npos &&
-                    level.find(".atmosphere = data.atmosphereLuts->resources") != std::string::npos,
+        require(level.find(".atmosphere = atmosphereConsumerBindingSets_[frameIndex]") != std::string::npos &&
+                    level.find(".atmosphere = atmosphereData.graphRecord->resources") != std::string::npos,
                 "RT GI and SHARC must consume the raster atmosphere binding set and the same LUT graph resources.");
         require(level.find("currentEffectiveJitter - previousEffectiveJitter") != std::string::npos &&
-                    level.find("cameraData.viewToClip = matrixElements(data.projection)") != std::string::npos &&
-                    level.find("cameraData.worldToView = matrixElements(data.view)") != std::string::npos &&
+                    level.find("cameraData.viewToClip = matrixElements(sceneData.camera.projection)") !=
+                        std::string::npos &&
+                    level.find("cameraData.worldToView = matrixElements(sceneData.camera.view)") != std::string::npos &&
                     level.find(".denoisingRange = nrdDenoisingRange") != std::string::npos,
                 "NRD must receive non-jittered matrices, explicit jitter history, and the RT view-Z range.");
         require(level.find("return glm::vec4{sun.color * directScale, 1.0f}") != std::string::npos,
@@ -250,7 +255,7 @@ namespace {
                 "Record and submit failures must discard every hybrid GI candidate.");
         require(level.find("DefaultRenderPipelineKind::Hybrid") != std::string::npos &&
                     level.find("rt.surface.world-position") != std::string::npos &&
-                    level.find("if (!data.hybridPathActive)") != std::string::npos,
+                    level.find("hybridData.active = hybridPathActive") != std::string::npos,
                 "Hybrid must select a dedicated RT surface topology and resource namespace.");
         std::cout << "HYBRID_GI=GPUScene>RTDI>SHARC>RT>NRD>Composite;TRANSACTION=submit-commit/failure-discard\n";
     }

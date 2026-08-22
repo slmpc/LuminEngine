@@ -35,11 +35,13 @@ namespace lumin::render::core {
         return static_cast<SettingsChangeImpact>(static_cast<std::uint8_t>(left) | static_cast<std::uint8_t>(right));
     }
 
+    /// 将 `right` 中的设置影响合并到 `left`。
     constexpr SettingsChangeImpact& operator|=(SettingsChangeImpact& left, SettingsChangeImpact right) noexcept {
         left = left | right;
         return left;
     }
 
+    /// 返回 `value` 是否包含 `mask` 中任意设置影响。
     [[nodiscard]] constexpr bool hasAnyImpact(SettingsChangeImpact value, SettingsChangeImpact mask) noexcept {
         return (static_cast<std::uint8_t>(value) & static_cast<std::uint8_t>(mask)) != 0;
     }
@@ -218,5 +220,3 @@ namespace lumin::render::core {
     };
 
 } // namespace lumin::render::core
-  /// 将 `right` 中的设置影响合并到 `left`。
-  /// 返回 `value` 是否包含 `mask` 中任意设置影响。

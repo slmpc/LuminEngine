@@ -1,4 +1,4 @@
-#include "render/level/LevelRenderFrameData.hpp"
+#include "render/level/FeatureFrameData.hpp"
 #include "render/level/LevelRendererImpl.hpp"
 
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
@@ -191,86 +191,109 @@ namespace lumin::render {
     }
 
     void LevelRenderer::Impl::addShadowFeaturePasses(core::RenderFeatureFrameContext& context) {
-        LevelRenderFrameData& data = context.blackboard().get<LevelRenderFrameData>();
-        if (!data.settings->shadows.enabled) {
+        const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
+        const ShadowSettings& settings = sceneData.settings.get<ShadowSettings>(pipelines::feature_ids::shadow());
+        core::ShadowData& shadows = context.blackboard().get<core::ShadowData>();
+        const RasterPassTargets& targets = context.blackboard().get<RasterPassTargets>();
+        if (!settings.enabled) {
             return;
         }
+        const std::uint32_t frameIndex = context.identity().frameSlot.value();
         FrameGraph& graph = context.frameGraph();
         for (std::uint32_t cascade = 0; cascade < shadowCascadeCount; ++cascade) {
             graph.addPass(
                 "CSM clear " + std::to_string(cascade), FrameGraphPassType::Transfer,
-                [shadow = data.shadows[cascade]](FrameGraphBuilder& builder) {
+                [shadow = shadows.cascades[cascade].graphResource](FrameGraphBuilder& builder) {
                     builder.writeTexture(shadow, nvrhi::ResourceStates::CopyDest);
                 },
-                [texture = data.frame->shadowCascades[cascade].texture](const FrameGraphContext& frameContext) {
+                [texture = shadows.cascades[cascade].texture](const FrameGraphContext& frameContext) {
                     frameContext.commandList->clearDepthStencilTexture(texture, nvrhi::AllSubresources, true, 1.0f,
                                                                        false, 0);
                 });
             graph.addPass(
                 "CSM cascade " + std::to_string(cascade), FrameGraphPassType::Graphics,
-                [shadow = data.shadows[cascade]](FrameGraphBuilder& builder) {
+                [shadow = shadows.cascades[cascade].graphResource](FrameGraphBuilder& builder) {
                     builder.writeTexture(shadow, nvrhi::ResourceStates::DepthWrite);
                 },
-                [this, &data, cascade,
-                 framebuffer = data.shadowFramebuffers[cascade]](const FrameGraphContext& frameContext) {
-                    recordShadowPass(*frameContext.commandList, *framebuffer, data.frameIndex, cascade,
-                                     data.cascades.viewProjections[cascade]);
+                [this, cascade, frameIndex, framebuffer = targets.shadowFramebuffers[cascade],
+                 lightViewProjection = shadows.viewProjections[cascade]](const FrameGraphContext& frameContext) {
+                    recordShadowPass(*frameContext.commandList, *framebuffer, frameIndex, cascade, lightViewProjection);
                 });
         }
     }
 
     void LevelRenderer::Impl::addGBufferFeaturePasses(core::RenderFeatureFrameContext& context) {
-        LevelRenderFrameData& data = context.blackboard().get<LevelRenderFrameData>();
+        const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
+        core::RasterSurfaceData& surface = context.blackboard().get<core::RasterSurfaceData>();
+        const RasterPassTargets& targets = context.blackboard().get<RasterPassTargets>();
+        const std::uint32_t frameIndex = context.identity().frameSlot.value();
         FrameGraph& graph = context.frameGraph();
         const bool resetMotion = context.historyAction(core::HistoryDomain::Taa) == core::HistoryAction::FullReset;
-        data.previousViewProjection = resetMotion ? data.viewProjection : previousViewProjection_;
+        const glm::mat4 previousViewProjection =
+            resetMotion ? sceneData.camera.viewProjection : previousViewProjection_;
         if (modelRenderer_ != nullptr) {
-            modelRenderer_->sync(*data.renderWorld, data.frameIndex, resetMotion);
+            modelRenderer_->sync(*sceneData.world, frameIndex, resetMotion);
         }
         graph.addPass(
             "G-buffer clear", FrameGraphPassType::Transfer,
-            [&data](FrameGraphBuilder& builder) {
-                for (FrameGraphResourceHandle color : {data.position, data.normal, data.albedo, data.motion}) {
+            [&surface](FrameGraphBuilder& builder) {
+                for (FrameGraphResourceHandle color :
+                     {surface.position.graphResource, surface.normalRoughness.graphResource,
+                      surface.albedoMetallic.graphResource, surface.motion.graphResource}) {
                     builder.writeTexture(color, nvrhi::ResourceStates::CopyDest);
                 }
-                builder.writeTexture(data.materialId, nvrhi::ResourceStates::CopyDest);
-                builder.writeTexture(data.depth, nvrhi::ResourceStates::CopyDest);
+                builder.writeTexture(surface.materialId.graphResource, nvrhi::ResourceStates::CopyDest);
+                builder.writeTexture(surface.depth.graphResource, nvrhi::ResourceStates::CopyDest);
             },
-            [&data](const FrameGraphContext& frameContext) {
+            [&surface](const FrameGraphContext& frameContext) {
                 const std::array<nvrhi::Color, 4> colors = {
                     nvrhi::Color{0.0f, 0.0f, 0.0f, 0.0f}, nvrhi::Color{0.0f, 0.0f, 1.0f, 1.0f},
                     nvrhi::Color{0.0f, 0.0f, 0.0f, 1.0f}, nvrhi::Color{0.0f, 0.0f, 0.0f, 0.0f}};
-                const std::array<const GpuTexture*, 4> images = {&data.frame->position, &data.frame->normalRoughness,
-                                                                 &data.frame->albedo, &data.frame->motion};
+                const std::array<nvrhi::ITexture*, 4> images = {surface.position.texture,
+                                                                surface.normalRoughness.texture,
+                                                                surface.albedoMetallic.texture, surface.motion.texture};
                 for (std::uint32_t index = 0; index < images.size(); ++index) {
-                    frameContext.commandList->clearTextureFloat(images[index]->texture, nvrhi::AllSubresources,
-                                                                colors[index]);
+                    frameContext.commandList->clearTextureFloat(images[index], nvrhi::AllSubresources, colors[index]);
                 }
-                frameContext.commandList->clearTextureUInt(data.frame->materialId.texture, nvrhi::AllSubresources,
+                frameContext.commandList->clearTextureUInt(surface.materialId.texture, nvrhi::AllSubresources,
                                                            gpu::GpuMaterialIndex::invalidValue);
-                frameContext.commandList->clearDepthStencilTexture(data.frame->depth.texture, nvrhi::AllSubresources,
-                                                                   true, 1.0f, false, 0);
+                frameContext.commandList->clearDepthStencilTexture(surface.depth.texture, nvrhi::AllSubresources, true,
+                                                                   1.0f, false, 0);
             });
         graph.addPass(
             "G-buffer", FrameGraphPassType::Graphics,
-            [&data](FrameGraphBuilder& builder) {
-                for (FrameGraphResourceHandle color : {data.position, data.normal, data.albedo, data.motion}) {
+            [&surface](FrameGraphBuilder& builder) {
+                for (FrameGraphResourceHandle color :
+                     {surface.position.graphResource, surface.normalRoughness.graphResource,
+                      surface.albedoMetallic.graphResource, surface.motion.graphResource}) {
                     builder.writeTexture(color, nvrhi::ResourceStates::RenderTarget);
                 }
-                builder.writeTexture(data.materialId, nvrhi::ResourceStates::RenderTarget);
-                builder.writeTexture(data.depth, nvrhi::ResourceStates::DepthWrite);
+                builder.writeTexture(surface.materialId.graphResource, nvrhi::ResourceStates::RenderTarget);
+                builder.writeTexture(surface.depth.graphResource, nvrhi::ResourceStates::DepthWrite);
             },
-            [this, &data, framebuffer = data.gbufferFramebuffer](const FrameGraphContext& frameContext) {
-                recordGBufferPass(*frameContext.commandList, *framebuffer, data.frameIndex, data.viewProjection,
-                                  data.previousViewProjection);
+            [this, frameIndex, framebuffer = targets.surfaceFramebuffer,
+             viewProjection = sceneData.camera.viewProjection,
+             previousViewProjection](const FrameGraphContext& frameContext) {
+                recordGBufferPass(*frameContext.commandList, *framebuffer, frameIndex, viewProjection,
+                                  previousViewProjection);
             });
     }
 
     void LevelRenderer::Impl::addHybridSurfaceFeaturePasses(core::RenderFeatureFrameContext& context) {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-        LevelRenderFrameData& data = context.blackboard().get<LevelRenderFrameData>();
-        if (!data.hybridPathActive) {
+        const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
+        core::RtSurfaceData& surfaceData = context.blackboard().get<core::RtSurfaceData>();
+        HybridPassData& data = context.blackboard().get<HybridPassData>();
+        const AtmospherePassData& atmosphereData = context.blackboard().get<AtmospherePassData>();
+        FrameGraphResourceImporter* importer = context.blackboard().get<FrameImportServices>().importer;
+        const DirectLightingFeatureSettings& lightingSettings =
+            sceneData.settings.get<DirectLightingFeatureSettings>(pipelines::feature_ids::lightingComposite());
+        const std::uint32_t frameIndex = context.identity().frameSlot.value();
+        if (!data.active) {
             return;
+        }
+        if (importer == nullptr) {
+            throw std::logic_error("Hybrid surface requires the frame resource importer.");
         }
         if (hybridGi_ == nullptr || hybridGi_->directLighting == nullptr || hybridGi_->scenePlanner == nullptr ||
             hybridGi_->sceneResources == nullptr) {
@@ -282,15 +305,16 @@ namespace lumin::render {
             runtime.nrd->hasPendingFrame() || runtime.directLighting->hasPendingFrame()) {
             throw std::logic_error("Hybrid surface already owns an unfinished render frame.");
         }
-        if (!data.atmosphereLuts || data.frameIndex >= atmosphereConsumerBindingSets_.size() ||
-            !atmosphereConsumerBindingSets_[data.frameIndex]) {
+        if (!atmosphereData.graphRecord || frameIndex >= atmosphereConsumerBindingSets_.size() ||
+            !atmosphereConsumerBindingSets_[frameIndex]) {
             throw std::logic_error("Hybrid surface requires the current atmosphere LUT graph and binding set.");
         }
 
         const bool resetMotion = context.historyAction(core::HistoryDomain::Taa) == core::HistoryAction::FullReset;
-        data.previousViewProjection = resetMotion ? data.viewProjection : previousViewProjection_;
+        const glm::mat4 previousViewProjection =
+            resetMotion ? sceneData.camera.viewProjection : previousViewProjection_;
         if (modelRenderer_ != nullptr) {
-            modelRenderer_->sync(*data.renderWorld, data.frameIndex, resetMotion);
+            modelRenderer_->sync(*sceneData.world, frameIndex, resetMotion);
         }
         if (modelRenderer_ == nullptr || modelRenderer_->baseColorTextures().empty() ||
             modelRenderer_->baseColorTextures().size() != modelRenderer_->normalRoughnessTextures().size() ||
@@ -300,113 +324,144 @@ namespace lumin::render {
 
         runtime.pendingSequence = context.identity().sequence;
         runtime.pendingScenePlan = runtime.scenePlanner->plan(world::SceneDelta{
-            .changes = data.sceneChanges,
-            .snapshot = data.renderWorldSnapshot,
+            .changes = sceneData.changes,
+            .snapshot = sceneData.world,
         });
         runtime.pendingSceneUpdate = runtime.sceneResources->recordUpdate(
             context.frameGraph(), *runtime.pendingScenePlan, context.identity().frameSlot, true);
 
         const gpu::GpuScenePreparedUpdate& update = *runtime.pendingSceneUpdate;
-        data.hybridSceneDescriptors = runtime.sceneResources->candidateDescriptors(update);
-        data.hybridGeometry = runtime.sceneResources->candidateGeometry(update);
+        data.sceneDescriptors = runtime.sceneResources->candidateDescriptors(update);
+        data.geometry = runtime.sceneResources->candidateGeometry(update);
         const std::span<const gpu::GpuGeometryFrameGraphResources> geometryResources = update.geometryResources();
-        if (geometryResources.size() != data.hybridGeometry.size()) {
+        if (geometryResources.size() != data.geometry.size()) {
             throw std::logic_error("GPU Scene native and FrameGraph geometry arrays do not match.");
         }
-        data.hybridVertices.clear();
-        data.hybridIndices.clear();
-        data.hybridVertices.reserve(geometryResources.size());
-        data.hybridIndices.reserve(geometryResources.size());
+        data.vertices.clear();
+        data.indices.clear();
+        data.vertices.reserve(geometryResources.size());
+        data.indices.reserve(geometryResources.size());
         for (const gpu::GpuGeometryFrameGraphResources& geometry : geometryResources) {
-            data.hybridVertices.push_back(geometry.vertices);
-            data.hybridIndices.push_back(geometry.indices);
+            data.vertices.push_back(geometry.vertices);
+            data.indices.push_back(geometry.indices);
         }
-        data.hybridTlas = update.tlasResource();
-        data.hybridInstances = update.instanceRecordsResource();
-        const nvrhi::BufferHandle& materialBuffer = modelRenderer_->materialBuffer(data.frameIndex);
-        data.materials = context.frameGraph().importBuffer(
-            "rt.materials",
-            FrameGraphBufferDesc{.size = materialBuffer->getDesc().byteSize,
-                                 .buffer = materialBuffer,
-                                 .initialState = modelRenderer_->materialBufferInitialState(data.frameIndex),
-                                 .finalState = nvrhi::ResourceStates::ShaderResource});
-        data.hybridSceneDescriptors.materials = materialBuffer;
-        data.hybridMaterials = data.materials;
-        data.hybridBaseColorTextures.clear();
-        data.hybridNormalRoughnessTextures.clear();
+        data.tlas = update.tlasResource();
+        data.instances = update.instanceRecordsResource();
+        const nvrhi::BufferHandle& materialBuffer = modelRenderer_->materialBuffer(frameIndex);
+        data.materials = importer->importBuffer(
+            "rt.materials", FrameGraphBufferDesc{.size = materialBuffer->getDesc().byteSize,
+                                                 .buffer = materialBuffer,
+                                                 .initialState = modelRenderer_->materialBufferInitialState(frameIndex),
+                                                 .finalState = nvrhi::ResourceStates::ShaderResource});
+        data.sceneDescriptors.materials = materialBuffer;
+        data.baseColorTextures.clear();
+        data.normalRoughnessTextures.clear();
         const std::span<const nvrhi::TextureHandle> baseColorTextures = modelRenderer_->baseColorTextures();
         const std::span<const nvrhi::TextureHandle> normalRoughnessTextures = modelRenderer_->normalRoughnessTextures();
-        data.hybridBaseColorTextures.reserve(baseColorTextures.size());
-        data.hybridNormalRoughnessTextures.reserve(normalRoughnessTextures.size());
+        data.baseColorTextures.reserve(baseColorTextures.size());
+        data.normalRoughnessTextures.reserve(normalRoughnessTextures.size());
         for (std::size_t index = 0; index < baseColorTextures.size(); ++index) {
             const auto importMaterialTexture = [&](const char* prefix, const nvrhi::TextureHandle& texture) {
-                return context.frameGraph().importTexture(
+                return importer->importTexture(
                     std::string{prefix} + std::to_string(index),
                     FrameGraphTextureDesc{.texture = texture,
                                           .initialState = nvrhi::ResourceStates::ShaderResource,
                                           .finalState = nvrhi::ResourceStates::ShaderResource});
             };
-            data.hybridBaseColorTextures.push_back(
+            data.baseColorTextures.push_back(
                 importMaterialTexture("rt.material-base-color.", baseColorTextures[index]));
-            data.hybridNormalRoughnessTextures.push_back(
+            data.normalRoughnessTextures.push_back(
                 importMaterialTexture("rt.material-normal-roughness.", normalRoughnessTextures[index]));
         }
-        data.hybridSceneReadyPass = update.accelerationStructurePass();
-        if (!data.hybridSceneReadyPass.isValid()) {
-            data.hybridSceneReadyPass = update.uploadPass();
+        data.sceneReadyPass = update.accelerationStructurePass();
+        if (!data.sceneReadyPass.isValid()) {
+            data.sceneReadyPass = update.uploadPass();
         }
 
-        const scene::DirectionalLight& sun = data.renderWorld->environment().sun;
+        const scene::DirectionalLight& sun = sceneData.world->environment().sun;
         const glm::vec3 toSun = -normalizedLightDirection(sun.direction);
-        const glm::vec4 sunRadiance = rendererSunRadiance(sun, data.settings->directLighting.enabled);
+        const glm::vec4 sunRadiance = rendererSunRadiance(sun, lightingSettings.enabled);
         const gi::RayTracingEnvironmentBindings environment{
-            .atmosphere = atmosphereConsumerBindingSets_[data.frameIndex],
+            .atmosphere = atmosphereConsumerBindingSets_[frameIndex],
         };
         const gi::RayTracingEnvironmentGraphResources environmentResources{
-            .atmosphere = data.atmosphereLuts->resources,
+            .atmosphere = atmosphereData.graphRecord->resources,
         };
         const gi::RayTracedDiConstants directConstants{
-            .inverseViewProjection = glm::inverse(data.viewProjection),
-            .previousViewProjection = data.previousViewProjection,
-            .cameraPosition = glm::vec4{data.camera->position(), 1.0f},
-            .cameraForward = glm::vec4{data.camera->forward(), 0.0f},
+            .inverseViewProjection = glm::inverse(sceneData.camera.viewProjection),
+            .previousViewProjection = previousViewProjection,
+            .cameraPosition = sceneData.camera.position,
+            .cameraForward = sceneData.camera.forward,
             .toSunWorld = glm::vec4{toSun, 0.0f},
             .sunRadiance = sunRadiance,
-            .renderSize = glm::vec4{static_cast<float>(data.width), static_cast<float>(data.height),
-                                    -data.jitter.x / static_cast<float>(data.width),
-                                    data.jitter.y / static_cast<float>(data.height)},
-            .traceParameters =
-                glm::vec4{0.001f, data.camera->farPlane(), data.settings->directLighting.enabled ? 1.0f : 0.0f,
-                          static_cast<float>(context.identity().sequence.value())},
+            .renderSize = glm::vec4{static_cast<float>(context.identity().extent.width),
+                                    static_cast<float>(context.identity().extent.height),
+                                    -sceneData.camera.jitter.x / static_cast<float>(context.identity().extent.width),
+                                    sceneData.camera.jitter.y / static_cast<float>(context.identity().extent.height)},
+            .traceParameters = glm::vec4{0.001f, sceneData.camera.farPlane, lightingSettings.enabled ? 1.0f : 0.0f,
+                                         static_cast<float>(context.identity().sequence.value())},
         };
-        data.hybridSurfacePass = runtime.directLighting->record(
-            context.frameGraph(), data.frameIndex, true, directConstants, data.hybridSurface,
+        data.surfacePass = runtime.directLighting->record(
+            context.frameGraph(), frameIndex, true, directConstants, data.surface,
             gi::RayTracedGiSceneBindings{
-                .descriptors = data.hybridSceneDescriptors,
-                .geometry = data.hybridGeometry,
+                .descriptors = data.sceneDescriptors,
+                .geometry = data.geometry,
                 .baseColorTextures = baseColorTextures,
                 .normalRoughnessTextures = normalRoughnessTextures,
                 .materialSampler = modelRenderer_->materialSampler(),
             },
             gi::RayTracedGiSceneGraphResources{
-                .tlas = data.hybridTlas,
-                .instances = data.hybridInstances,
-                .materials = data.hybridMaterials,
-                .vertices = std::span<const FrameGraphResourceHandle>{data.hybridVertices},
-                .indices = std::span<const FrameGraphResourceHandle>{data.hybridIndices},
-                .baseColorTextures = std::span<const FrameGraphResourceHandle>{data.hybridBaseColorTextures},
-                .normalRoughnessTextures =
-                    std::span<const FrameGraphResourceHandle>{data.hybridNormalRoughnessTextures},
-                .readyPass = data.hybridSceneReadyPass,
+                .tlas = data.tlas,
+                .instances = data.instances,
+                .materials = data.materials,
+                .vertices = std::span<const FrameGraphResourceHandle>{data.vertices},
+                .indices = std::span<const FrameGraphResourceHandle>{data.indices},
+                .baseColorTextures = std::span<const FrameGraphResourceHandle>{data.baseColorTextures},
+                .normalRoughnessTextures = std::span<const FrameGraphResourceHandle>{data.normalRoughnessTextures},
+                .readyPass = data.sceneReadyPass,
             },
             environment, environmentResources);
+
+        core::GpuSceneData gpuScene;
+        gpuScene.topLevelAccelerationStructure = core::AccelerationStructureFrameData{
+            .accelerationStructure = data.sceneDescriptors.tlas,
+            .graphResource = data.tlas,
+            .readyPass = data.sceneReadyPass,
+        };
+        gpuScene.instances = core::BufferFrameData{.buffer = data.sceneDescriptors.instances,
+                                                   .graphResource = data.instances,
+                                                   .readyPass = data.sceneReadyPass};
+        gpuScene.materials = core::BufferFrameData{
+            .buffer = materialBuffer, .graphResource = data.materials, .readyPass = data.sceneReadyPass};
+        gpuScene.vertices.reserve(data.geometry.size());
+        gpuScene.indices.reserve(data.geometry.size());
+        for (std::size_t index = 0; index < data.geometry.size(); ++index) {
+            gpuScene.vertices.push_back(core::BufferFrameData{.buffer = data.geometry[index].vertices,
+                                                              .graphResource = data.vertices[index],
+                                                              .readyPass = data.sceneReadyPass});
+            gpuScene.indices.push_back(core::BufferFrameData{.buffer = data.geometry[index].indices,
+                                                             .graphResource = data.indices[index],
+                                                             .readyPass = data.sceneReadyPass});
+        }
+        surfaceData.worldPositionHitDistance.readyPass = data.surfacePass;
+        surfaceData.normalRoughness.readyPass = data.surfacePass;
+        surfaceData.albedoMetallic.readyPass = data.surfacePass;
+        surfaceData.motion.readyPass = data.surfacePass;
+        surfaceData.materialId.readyPass = data.surfacePass;
+        surfaceData.viewDepth.readyPass = data.surfacePass;
+        surfaceData.visibility.readyPass = data.surfacePass;
+        surfaceData.directRadiance.readyPass = data.surfacePass;
+        context.blackboard().set(std::move(gpuScene));
 #else
         static_cast<void>(context);
 #endif
     }
 
     void LevelRenderer::Impl::addAtmosphereLutFeaturePasses(core::RenderFeatureFrameContext& context) {
-        LevelRenderFrameData& data = context.blackboard().get<LevelRenderFrameData>();
+        const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
+        AtmospherePassData& passData = context.blackboard().get<AtmospherePassData>();
+        const AtmosphereRenderSettings& settings =
+            sceneData.settings.get<AtmosphereRenderSettings>(pipelines::feature_ids::atmosphere());
         if (atmosphereLutGpu_ == nullptr) {
             throw std::logic_error("Atmosphere LUT GPU resources are not initialized.");
         }
@@ -414,45 +469,81 @@ namespace lumin::render {
             throw std::logic_error("LevelRenderer already owns a pending atmosphere LUT frame.");
         }
 
-        scene::SceneEnvironment environment = data.renderWorld->environment();
-        environment.atmosphere.enabled = environment.atmosphere.enabled && data.settings->atmosphere.enabled;
-        const atmosphere::AtmosphereViewInput view =
-            atmosphere::makeAtmosphereViewInput(*data.camera, context.identity().extent);
+        scene::SceneEnvironment environment = sceneData.world->environment();
+        environment.atmosphere.enabled = environment.atmosphere.enabled && settings.enabled;
+        const core::CameraFrameData& camera = sceneData.camera;
+        const atmosphere::AtmosphereViewInput view{
+            .cameraPositionWorld = glm::vec3{camera.position},
+            .view = camera.view,
+            .projection = camera.projection,
+            .nearPlaneWorld = camera.nearPlane,
+            .farPlaneWorld = camera.farPlane,
+            .renderExtent = context.identity().extent,
+        };
         const atmosphere::AtmosphereLutSignatures signatures =
             atmosphere::makeAtmosphereLutSignatures(environment, view);
         const atmosphere::AtmosphereLutPlan lutPlan = atmosphereLutScheduler_.beginFrame(
             atmosphere::AtmosphereLutFrameInput{context.identity().sequence, signatures, atmosphereForceRebuild_});
         pendingAtmosphereSequence_ = context.identity().sequence;
         const atmosphere::AtmosphereGpuConstants constants = atmosphere::buildAtmosphereGpuConstants(environment, view);
-        data.atmosphereLuts = atmosphereLutGpu_->record(context.frameGraph(), data.frameIndex, true, constants,
-                                                        atmosphere::makeAtmosphereLutPassPlan(lutPlan));
+        passData.graphRecord =
+            atmosphereLutGpu_->record(context.frameGraph(), context.identity().frameSlot.value(), true, constants,
+                                      atmosphere::makeAtmosphereLutPassPlan(lutPlan));
+
+        const atmosphere::AtmosphereLutNativeResources& native = atmosphereLutGpu_->nativeResources();
+        const auto publishTexture = [&native, &passData](atmosphere::AtmosphereLut lut) {
+            const nvrhi::TextureHandle& texture = native.texture(lut);
+            const nvrhi::TextureDesc& desc = texture->getDesc();
+            return core::TextureFrameData{
+                .texture = texture,
+                .graphResource = passData.graphRecord->resources.texture(lut),
+                .readyPass = passData.graphRecord->passes.pass(lut),
+                .format = desc.format,
+                .extent = {desc.width, desc.height},
+            };
+        };
+        context.blackboard().set(core::AtmosphereData{
+            .transmittance = publishTexture(atmosphere::AtmosphereLut::Transmittance),
+            .multiScattering = publishTexture(atmosphere::AtmosphereLut::MultiScattering),
+            .skyView = publishTexture(atmosphere::AtmosphereLut::SkyView),
+            .aerialPerspective = publishTexture(atmosphere::AtmosphereLut::AerialPerspective),
+        });
     }
 
     void LevelRenderer::Impl::addGlobalIlluminationFeaturePasses(core::RenderFeatureFrameContext& context) {
-        LevelRenderFrameData& data = context.blackboard().get<LevelRenderFrameData>();
+        const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
+        core::IndirectLightingData& indirect = context.blackboard().get<core::IndirectLightingData>();
+        HybridPassData& data = context.blackboard().get<HybridPassData>();
+        const GlobalIlluminationSettings& settings =
+            sceneData.settings.get<GlobalIlluminationSettings>(pipelines::feature_ids::globalIllumination());
+        const DirectLightingFeatureSettings& lightingSettings =
+            sceneData.settings.get<DirectLightingFeatureSettings>(pipelines::feature_ids::lightingComposite());
+        const std::uint32_t frameIndex = context.identity().frameSlot.value();
         core::HistoryAction fallbackAction = context.historyAction(core::HistoryDomain::NrdDiffuse);
         fallbackAction =
             core::strongerHistoryAction(fallbackAction, context.historyAction(core::HistoryDomain::NrdSpecular));
         fallbackAction = core::strongerHistoryAction(fallbackAction, context.historyAction(core::HistoryDomain::Sharc));
 
-        if (!shouldUseHybridGi(*data.settings, *data.renderWorld)) {
+        if (!shouldUseHybridGi(settings, *sceneData.world)) {
+            const core::RasterSurfaceData& surface = context.blackboard().get<core::RasterSurfaceData>();
             if (fallbackAction != core::HistoryAction::Keep) {
                 globalIllumination_->invalidateHistory();
             }
-            globalIllumination_->addPasses(context.frameGraph(), gi::FrameInfo{
-                                                                     *data.renderWorld,
-                                                                     data.frameIndex,
-                                                                     context.identity().sequence.value(),
-                                                                     data.settings->globalIllumination.ssaoEnabled,
-                                                                     fallbackAction == core::HistoryAction::FullReset,
-                                                                     {data.width, data.height},
-                                                                     data.position,
-                                                                     data.normal,
-                                                                     data.albedo,
-                                                                     data.motion,
-                                                                     data.depth,
-                                                                     data.globalIllumination,
-                                                                 });
+            globalIllumination_->addPasses(context.frameGraph(),
+                                           gi::FrameInfo{
+                                               *sceneData.world,
+                                               frameIndex,
+                                               context.identity().sequence.value(),
+                                               settings.ssaoEnabled,
+                                               fallbackAction == core::HistoryAction::FullReset,
+                                               {context.identity().extent.width, context.identity().extent.height},
+                                               surface.position.graphResource,
+                                               surface.normalRoughness.graphResource,
+                                               surface.albedoMetallic.graphResource,
+                                               surface.motion.graphResource,
+                                               surface.depth.graphResource,
+                                               indirect.combined.graphResource,
+                                           });
             return;
         }
 
@@ -464,22 +555,24 @@ namespace lumin::render {
             runtime.nrd->hasPendingFrame()) {
             throw std::logic_error("Hybrid GI requires the current frame's pending surface transaction.");
         }
-        if (!data.atmosphereLuts || data.frameIndex >= atmosphereConsumerBindingSets_.size() ||
-            !atmosphereConsumerBindingSets_[data.frameIndex]) {
+        const AtmospherePassData& atmosphereData = context.blackboard().get<AtmospherePassData>();
+        const core::RtSurfaceData& surface = context.blackboard().get<core::RtSurfaceData>();
+        if (!atmosphereData.graphRecord || frameIndex >= atmosphereConsumerBindingSets_.size() ||
+            !atmosphereConsumerBindingSets_[frameIndex]) {
             throw std::logic_error("Hybrid GI requires the current atmosphere LUT graph and binding set.");
         }
 
-        const scene::DirectionalLight& sun = data.renderWorld->environment().sun;
+        const scene::DirectionalLight& sun = sceneData.world->environment().sun;
         const glm::vec3 toSun = -normalizedLightDirection(sun.direction);
-        const glm::vec4 sunRadiance = rendererSunRadiance(sun, data.settings->directLighting.enabled);
+        const glm::vec4 sunRadiance = rendererSunRadiance(sun, lightingSettings.enabled);
         gi::SharcInvalidationInputs sharcInvalidation{
             .cameraCut = context.changes().containsAny(core::HistoryReason::CameraCut),
-            .topologyChanged = world::hasAnyChange(data.sceneChanges, world::SceneChangeMask::InstanceTopology),
-            .geometryChanged = world::hasAnyChange(data.sceneChanges, world::SceneChangeMask::Geometry),
-            .materialChanged = world::hasAnyChange(data.sceneChanges, world::SceneChangeMask::TransformOrMaterial |
+            .topologyChanged = world::hasAnyChange(sceneData.changes, world::SceneChangeMask::InstanceTopology),
+            .geometryChanged = world::hasAnyChange(sceneData.changes, world::SceneChangeMask::Geometry),
+            .materialChanged = world::hasAnyChange(sceneData.changes, world::SceneChangeMask::TransformOrMaterial |
                                                                           world::SceneChangeMask::MaterialBinding),
-            .lightingChanged = world::hasAnyChange(data.sceneChanges, world::SceneChangeMask::Lighting),
-            .atmosphereChanged = world::hasAnyChange(data.sceneChanges, world::SceneChangeMask::Atmosphere),
+            .lightingChanged = world::hasAnyChange(sceneData.changes, world::SceneChangeMask::Lighting),
+            .atmosphereChanged = world::hasAnyChange(sceneData.changes, world::SceneChangeMask::Atmosphere),
         };
         const core::HistoryAction sharcAction = context.historyAction(core::HistoryDomain::Sharc);
         if (sharcAction == core::HistoryAction::FullReset) {
@@ -489,101 +582,124 @@ namespace lumin::render {
         }
 
         const gi::RayTracingEnvironmentBindings environment{
-            .atmosphere = atmosphereConsumerBindingSets_[data.frameIndex],
+            .atmosphere = atmosphereConsumerBindingSets_[frameIndex],
         };
         const gi::RayTracingEnvironmentGraphResources environmentResources{
-            .atmosphere = data.atmosphereLuts->resources,
+            .atmosphere = atmosphereData.graphRecord->resources,
         };
         const gi::SharcUpdateSceneBindings sceneBindings{
-            .descriptors = data.hybridSceneDescriptors,
-            .geometry = data.hybridGeometry,
+            .descriptors = data.sceneDescriptors,
+            .geometry = data.geometry,
             .baseColorTextures = modelRenderer_->baseColorTextures(),
             .normalRoughnessTextures = modelRenderer_->normalRoughnessTextures(),
             .materialSampler = modelRenderer_->materialSampler(),
         };
         const gi::SharcUpdateSceneGraphResources sceneGraphResources{
-            .tlas = data.hybridTlas,
-            .instances = data.hybridInstances,
-            .materials = data.hybridMaterials,
-            .vertices = std::span<const FrameGraphResourceHandle>{data.hybridVertices},
-            .indices = std::span<const FrameGraphResourceHandle>{data.hybridIndices},
-            .baseColorTextures = std::span<const FrameGraphResourceHandle>{data.hybridBaseColorTextures},
-            .normalRoughnessTextures = std::span<const FrameGraphResourceHandle>{data.hybridNormalRoughnessTextures},
-            .readyPass = data.hybridSceneReadyPass,
+            .tlas = data.tlas,
+            .instances = data.instances,
+            .materials = data.materials,
+            .vertices = std::span<const FrameGraphResourceHandle>{data.vertices},
+            .indices = std::span<const FrameGraphResourceHandle>{data.indices},
+            .baseColorTextures = std::span<const FrameGraphResourceHandle>{data.baseColorTextures},
+            .normalRoughnessTextures = std::span<const FrameGraphResourceHandle>{data.normalRoughnessTextures},
+            .readyPass = data.sceneReadyPass,
         };
         const gi::SharcFrameParameters sharcFrame{
-            .cameraPosition = glm::vec4{data.camera->position(), 1.0f},
+            .cameraPosition = sceneData.camera.position,
             .toSunWorld = glm::vec4{toSun, 0.0f},
             .sunRadiance = sunRadiance,
-            .renderWidth = data.width,
-            .renderHeight = data.height,
+            .renderWidth = context.identity().extent.width,
+            .renderHeight = context.identity().extent.height,
             .minTraceDistance = 0.001f,
-            .maxTraceDistance = data.camera->farPlane(),
+            .maxTraceDistance = sceneData.camera.farPlane,
         };
         if (runtime.sharcEnabled) {
-            data.sharcRecord = runtime.sharc->record(
-                context.frameGraph(), data.frameIndex, true, sharcFrame, sharcInvalidation, environment,
-                environmentResources,
-                gi::SharcUpdateFrameGraphInputs{data.hybridSurface.worldPositionHitT,
-                                                data.hybridSurface.normalRoughness, data.hybridSurface.albedoMetallic},
-                sceneBindings, sceneGraphResources);
+            data.sharcRecord =
+                runtime.sharc->record(context.frameGraph(), frameIndex, true, sharcFrame, sharcInvalidation,
+                                      environment, environmentResources,
+                                      gi::SharcUpdateFrameGraphInputs{surface.worldPositionHitDistance.graphResource,
+                                                                      surface.normalRoughness.graphResource,
+                                                                      surface.albedoMetallic.graphResource},
+                                      sceneBindings, sceneGraphResources);
         }
 
         const core::HistoryAction diffuseAction = context.historyAction(core::HistoryDomain::NrdDiffuse);
         const core::HistoryAction specularAction = context.historyAction(core::HistoryDomain::NrdSpecular);
         const bool resetNrdMotion = !hasSubmittedFrame_ || diffuseAction == core::HistoryAction::FullReset ||
                                     specularAction == core::HistoryAction::FullReset;
-        const glm::vec2 previousJitter = resetNrdMotion ? data.jitter : previousJitter_;
-        const glm::vec2 currentEffectiveJitter{-data.jitter.x / static_cast<float>(data.width),
-                                               data.jitter.y / static_cast<float>(data.height)};
-        const glm::vec2 previousEffectiveJitter{-previousJitter.x / static_cast<float>(data.width),
-                                                previousJitter.y / static_cast<float>(data.height)};
+        const glm::vec2 previousJitter = resetNrdMotion ? sceneData.camera.jitter : previousJitter_;
+        const glm::vec2 currentEffectiveJitter{
+            -sceneData.camera.jitter.x / static_cast<float>(context.identity().extent.width),
+            sceneData.camera.jitter.y / static_cast<float>(context.identity().extent.height)};
+        const glm::vec2 previousEffectiveJitter{-previousJitter.x / static_cast<float>(context.identity().extent.width),
+                                                previousJitter.y /
+                                                    static_cast<float>(context.identity().extent.height)};
         const glm::vec2 effectiveJitterDelta = currentEffectiveJitter - previousEffectiveJitter;
         const gi::RayTracedGiConstants rayTracingConstants{
-            .cameraPosition = glm::vec4{data.camera->position(), 1.0f},
-            .cameraForward = glm::vec4{data.camera->forward(), 0.0f},
+            .cameraPosition = sceneData.camera.position,
+            .cameraForward = sceneData.camera.forward,
             .toSunWorld = glm::vec4{toSun, 0.0f},
             .sunRadiance = sunRadiance,
-            .renderSize = glm::vec4{static_cast<float>(data.width), static_cast<float>(data.height),
-                                    effectiveJitterDelta.x, effectiveJitterDelta.y},
-            .traceParameters = glm::vec4{0.001f, data.camera->farPlane(),
+            .renderSize = glm::vec4{static_cast<float>(context.identity().extent.width),
+                                    static_cast<float>(context.identity().extent.height), effectiveJitterDelta.x,
+                                    effectiveJitterDelta.y},
+            .traceParameters = glm::vec4{0.001f, sceneData.camera.farPlane,
                                          static_cast<float>(context.identity().sequence.value()), nrdDenoisingRange},
         };
         data.rayTracedSignals = runtime.rayTracedGi->record(
-            context.frameGraph(), data.frameIndex, true, rayTracingConstants,
-            gi::RayTracedGiFrameGraphInputs{data.hybridSurface.worldPositionHitT, data.hybridSurface.normalRoughness,
-                                            data.hybridSurface.albedoMetallic, data.hybridSurface.motion},
+            context.frameGraph(), frameIndex, true, rayTracingConstants,
+            gi::RayTracedGiFrameGraphInputs{surface.worldPositionHitDistance.graphResource,
+                                            surface.normalRoughness.graphResource, surface.albedoMetallic.graphResource,
+                                            surface.motion.graphResource},
             gi::RayTracedGiSceneBindings{
-                .descriptors = data.hybridSceneDescriptors,
-                .geometry = data.hybridGeometry,
+                .descriptors = data.sceneDescriptors,
+                .geometry = data.geometry,
                 .baseColorTextures = modelRenderer_->baseColorTextures(),
                 .normalRoughnessTextures = modelRenderer_->normalRoughnessTextures(),
                 .materialSampler = modelRenderer_->materialSampler(),
             },
             gi::RayTracedGiSceneGraphResources{
-                .tlas = data.hybridTlas,
-                .instances = data.hybridInstances,
-                .materials = data.hybridMaterials,
-                .vertices = std::span<const FrameGraphResourceHandle>{data.hybridVertices},
-                .indices = std::span<const FrameGraphResourceHandle>{data.hybridIndices},
-                .baseColorTextures = std::span<const FrameGraphResourceHandle>{data.hybridBaseColorTextures},
-                .normalRoughnessTextures =
-                    std::span<const FrameGraphResourceHandle>{data.hybridNormalRoughnessTextures},
-                .readyPass = data.hybridSceneReadyPass,
+                .tlas = data.tlas,
+                .instances = data.instances,
+                .materials = data.materials,
+                .vertices = std::span<const FrameGraphResourceHandle>{data.vertices},
+                .indices = std::span<const FrameGraphResourceHandle>{data.indices},
+                .baseColorTextures = std::span<const FrameGraphResourceHandle>{data.baseColorTextures},
+                .normalRoughnessTextures = std::span<const FrameGraphResourceHandle>{data.normalRoughnessTextures},
+                .readyPass = data.sceneReadyPass,
             },
             environment, environmentResources, data.sharcRecord ? &*data.sharcRecord : nullptr);
         if (data.sharcRecord) {
             static_cast<void>(runtime.sharc->recordStatisticsReadback(context.frameGraph(), *data.sharcRecord,
                                                                       data.rayTracedSignals->tracePass));
         }
-        data.hybridGiActive = true;
+        const gi::RayTracedGiSignalResources& signals = runtime.rayTracedGi->signals(frameIndex);
+        indirect.diffuse = core::TextureFrameData{.texture = signals.diffuseRadianceHitDistance,
+                                                  .graphResource = data.rayTracedSignals->diffuseRadianceHitDistance,
+                                                  .readyPass = data.rayTracedSignals->tracePass,
+                                                  .format = signals.diffuseRadianceHitDistance->getDesc().format,
+                                                  .extent = context.identity().extent};
+        indirect.specular = core::TextureFrameData{.texture = signals.specularRadianceHitDistance,
+                                                   .graphResource = data.rayTracedSignals->specularRadianceHitDistance,
+                                                   .readyPass = data.rayTracedSignals->tracePass,
+                                                   .format = signals.specularRadianceHitDistance->getDesc().format,
+                                                   .extent = context.identity().extent};
+        data.globalIlluminationActive = true;
 #endif
     }
 
     void LevelRenderer::Impl::addGiDenoiserFeaturePasses(core::RenderFeatureFrameContext& context) {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-        LevelRenderFrameData& data = context.blackboard().get<LevelRenderFrameData>();
-        if (!data.hybridGiActive) {
+        const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
+        const core::RtSurfaceData& surfaceData = context.blackboard().get<core::RtSurfaceData>();
+        const core::TemporalOutputData& temporal = context.blackboard().get<core::TemporalOutputData>();
+        core::SceneHdrData& sceneHdr = context.blackboard().get<core::SceneHdrData>();
+        core::DenoisedLightingData& denoised = context.blackboard().get<core::DenoisedLightingData>();
+        HybridPassData& data = context.blackboard().get<HybridPassData>();
+        const GlobalIlluminationSettings& settings =
+            sceneData.settings.get<GlobalIlluminationSettings>(pipelines::feature_ids::globalIllumination());
+        const std::uint32_t frameIndex = context.identity().frameSlot.value();
+        if (!data.globalIlluminationActive) {
             return;
         }
         HybridGiState& runtime = *hybridGi_;
@@ -592,7 +708,7 @@ namespace lumin::render {
             throw std::logic_error("NRD requires the current frame's RT GI transaction.");
         }
 
-        const gi::RayTracedGiSignalResources& signals = runtime.rayTracedGi->signals(data.frameIndex);
+        const gi::RayTracedGiSignalResources& signals = runtime.rayTracedGi->signals(frameIndex);
         const gi::RayTracedGiGraphSignals& graphSignals = *data.rayTracedSignals;
         nvrhi::TextureHandle diffuseInput = signals.diffuseRadianceHitDistance;
         nvrhi::TextureHandle specularInput = signals.specularRadianceHitDistance;
@@ -600,21 +716,22 @@ namespace lumin::render {
         FrameGraphResourceHandle specularGraphInput = graphSignals.specularRadianceHitDistance;
         FrameGraphPassHandle signalReadyPass = graphSignals.tracePass;
 
-        if (data.settings->globalIllumination.nrdEnabled) {
+        if (settings.nrdEnabled) {
             const core::HistoryAction diffuseAction = context.historyAction(core::HistoryDomain::NrdDiffuse);
             const core::HistoryAction specularAction = context.historyAction(core::HistoryDomain::NrdSpecular);
             const bool resetCameraHistory = !hasSubmittedFrame_ || diffuseAction == core::HistoryAction::FullReset ||
                                             specularAction == core::HistoryAction::FullReset;
-            const glm::mat4& previousView = resetCameraHistory ? data.view : previousView_;
-            const glm::mat4& previousProjection = resetCameraHistory ? data.projection : previousProjection_;
-            const glm::vec2 previousJitter = resetCameraHistory ? data.jitter : previousJitter_;
+            const glm::mat4& previousView = resetCameraHistory ? sceneData.camera.view : previousView_;
+            const glm::mat4& previousProjection =
+                resetCameraHistory ? sceneData.camera.projection : previousProjection_;
+            const glm::vec2 previousJitter = resetCameraHistory ? sceneData.camera.jitter : previousJitter_;
 
             gi::NrdCameraData cameraData;
-            cameraData.viewToClip = matrixElements(data.projection);
+            cameraData.viewToClip = matrixElements(sceneData.camera.projection);
             cameraData.viewToClipPrevious = matrixElements(previousProjection);
-            cameraData.worldToView = matrixElements(data.view);
+            cameraData.worldToView = matrixElements(sceneData.camera.view);
             cameraData.worldToViewPrevious = matrixElements(previousView);
-            cameraData.jitter = {data.jitter.x, data.jitter.y};
+            cameraData.jitter = {sceneData.camera.jitter.x, sceneData.camera.jitter.y};
             cameraData.jitterPrevious = {previousJitter.x, previousJitter.y};
 
             runtime.pendingNrdFrame = runtime.nrd->record(
@@ -657,86 +774,93 @@ namespace lumin::render {
             specularGraphInput = nrdGraphOutputs.specularRadianceHitDistance;
             signalReadyPass = nrdPasses.back();
         }
-        const TextureFrameResources& frame = *data.frame;
+        denoised.diffuse = core::TextureFrameData{.texture = diffuseInput,
+                                                  .graphResource = diffuseGraphInput,
+                                                  .readyPass = signalReadyPass,
+                                                  .format = diffuseInput->getDesc().format,
+                                                  .extent = context.identity().extent};
+        denoised.specular = core::TextureFrameData{.texture = specularInput,
+                                                   .graphResource = specularGraphInput,
+                                                   .readyPass = signalReadyPass,
+                                                   .format = specularInput->getDesc().format,
+                                                   .extent = context.identity().extent};
         const FrameGraphPassHandle compositePass = runtime.composite->record(
             context.frameGraph(),
             gi::GiCompositeFrameParameters{
                 .frameSlot = context.identity().frameSlot,
                 .extent = context.identity().extent,
-                .cameraPosition = data.camera->position(),
+                .cameraPosition = glm::vec3{sceneData.camera.position},
                 .frameSlotFenceWaited = true,
             },
             gi::GiCompositeResources{
                 .diffuseRadianceHitDistance = diffuseInput,
                 .specularRadianceHitDistance = specularInput,
-                .position = frame.position.texture,
-                .normalRoughness = frame.normalRoughness.texture,
-                .albedoMetallic = frame.albedo.texture,
-                .materialId = frame.materialId.texture,
-                .materials = data.hybridSceneDescriptors.materials,
-                // Hybrid uses TAA's physical target as an indirect-light scratch texture. The final
-                // indirect is staged in TAA's physical target before the Hybrid lighting composite.
-                .globalIllumination =
-                    data.hybridPathActive ? frame.taaResolved.texture : frame.globalIllumination.texture,
+                .position = surfaceData.worldPositionHitDistance.texture,
+                .normalRoughness = surfaceData.normalRoughness.texture,
+                .albedoMetallic = surfaceData.albedoMetallic.texture,
+                .materialId = surfaceData.materialId.texture,
+                .materials = data.sceneDescriptors.materials,
+                // Hybrid 暂时复用 TAA 物理目标暂存间接光，后续 lighting composite 完成后才允许 TAA 覆写。
+                .globalIllumination = temporal.color.texture,
             },
             gi::GiCompositeGraphResources{
                 .diffuseRadianceHitDistance = diffuseGraphInput,
                 .specularRadianceHitDistance = specularGraphInput,
-                .position = data.position,
-                .normalRoughness = data.normal,
-                .albedoMetallic = data.albedo,
-                .materialId = data.materialId,
-                .materials = data.hybridMaterials,
-                .globalIllumination = data.hybridPathActive ? data.taaResolved : data.globalIllumination,
+                .position = surfaceData.worldPositionHitDistance.graphResource,
+                .normalRoughness = surfaceData.normalRoughness.graphResource,
+                .albedoMetallic = surfaceData.albedoMetallic.graphResource,
+                .materialId = surfaceData.materialId.graphResource,
+                .materials = data.materials,
+                .globalIllumination = temporal.color.graphResource,
             },
             signalReadyPass);
-        if (data.hybridPathActive) {
-            const gi::RayTracedDiFrameResources& surface = runtime.directLighting->signals(data.frameIndex);
-            const FrameGraphPassHandle lightingPass =
-                runtime.lightingComposite->record(context.frameGraph(),
-                                                  gi::HybridLightingCompositeFrameParameters{
-                                                      .frameSlot = context.identity().frameSlot,
-                                                      .extent = context.identity().extent,
-                                                      .mode = gi::HybridLightingCompositeMode::DirectAndIndirect,
-                                                      .frameSlotFenceWaited = true,
-                                                  },
-                                                  gi::HybridLightingCompositeResources{
-                                                      .directRadiance = surface.directRadiance,
-                                                      .indirectRadiance = frame.taaResolved.texture,
-                                                      .output = frame.lighting.texture,
-                                                  },
-                                                  gi::HybridLightingCompositeGraphResources{
-                                                      .directRadiance = data.hybridSurface.directRadiance,
-                                                      .indirectRadiance = data.taaResolved,
-                                                      .output = data.lighting,
-                                                  },
-                                                  compositePass);
-            static_cast<void>(lightingPass);
-            data.taaInput = data.lighting;
-        } else {
-            data.taaInput = data.lighting;
-        }
+        denoised.combined = temporal.color;
+        denoised.combined.readyPass = compositePass;
+        const gi::RayTracedDiFrameResources& surface = runtime.directLighting->signals(frameIndex);
+        const FrameGraphPassHandle lightingPass =
+            runtime.lightingComposite->record(context.frameGraph(),
+                                              gi::HybridLightingCompositeFrameParameters{
+                                                  .frameSlot = context.identity().frameSlot,
+                                                  .extent = context.identity().extent,
+                                                  .mode = gi::HybridLightingCompositeMode::DirectAndIndirect,
+                                                  .frameSlotFenceWaited = true,
+                                              },
+                                              gi::HybridLightingCompositeResources{
+                                                  .directRadiance = surface.directRadiance,
+                                                  .indirectRadiance = temporal.color.texture,
+                                                  .output = sceneHdr.color.texture,
+                                              },
+                                              gi::HybridLightingCompositeGraphResources{
+                                                  .directRadiance = data.surface.directRadiance,
+                                                  .indirectRadiance = temporal.color.graphResource,
+                                                  .output = sceneHdr.color.graphResource,
+                                              },
+                                              compositePass);
+        sceneHdr.color.readyPass = lightingPass;
 #else
         static_cast<void>(context);
 #endif
     }
 
     void LevelRenderer::Impl::addSkyCompositeFeaturePasses(core::RenderFeatureFrameContext& context) {
-        LevelRenderFrameData& data = context.blackboard().get<LevelRenderFrameData>();
+        HybridPassData& hybridData = context.blackboard().get<HybridPassData>();
+        core::SceneHdrData& sceneHdr = context.blackboard().get<core::SceneHdrData>();
+        const core::DenoisedLightingData& indirect = context.blackboard().get<core::DenoisedLightingData>();
+        const std::uint32_t frameIndex = context.identity().frameSlot.value();
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         // RT primary miss 已经把 atmosphere environment 写入 directRadiance；Hybrid 的 compute composite
         // 只需等待 GI denoiser，不再声明旧的 raster sky framebuffer/CSM 输入。
-        if (data.hybridPathActive) {
-            if (data.hybridGiActive) {
+        if (hybridData.active) {
+            if (hybridData.globalIlluminationActive) {
                 return;
             }
             if (hybridGi_ == nullptr || hybridGi_->lightingComposite == nullptr ||
-                hybridGi_->directLighting == nullptr || !data.hybridSurface.directRadiance.isValid() ||
-                !data.hybridSurfacePass.isValid()) {
+                hybridGi_->directLighting == nullptr || !hybridData.surface.directRadiance.isValid() ||
+                !hybridData.surfacePass.isValid()) {
                 throw std::logic_error("Hybrid direct-only composite requires the RTDI surface pass.");
             }
 
-            const gi::RayTracedDiFrameResources& surface = hybridGi_->directLighting->signals(data.frameIndex);
+            const gi::RayTracedDiFrameResources& surface = hybridGi_->directLighting->signals(frameIndex);
             static_cast<void>(
                 hybridGi_->lightingComposite->record(context.frameGraph(),
                                                      gi::HybridLightingCompositeFrameParameters{
@@ -747,160 +871,176 @@ namespace lumin::render {
                                                      },
                                                      gi::HybridLightingCompositeResources{
                                                          .directRadiance = surface.directRadiance,
-                                                         .indirectRadiance = data.frame->globalIllumination.texture,
-                                                         .output = data.frame->lighting.texture,
+                                                         .indirectRadiance = indirect.combined.texture,
+                                                         .output = sceneHdr.color.texture,
                                                      },
                                                      gi::HybridLightingCompositeGraphResources{
-                                                         .directRadiance = data.hybridSurface.directRadiance,
-                                                         .indirectRadiance = data.globalIllumination,
-                                                         .output = data.lighting,
+                                                         .directRadiance = hybridData.surface.directRadiance,
+                                                         .indirectRadiance = indirect.combined.graphResource,
+                                                         .output = sceneHdr.color.graphResource,
                                                      },
-                                                     data.hybridSurfacePass));
-            data.taaInput = data.lighting;
+                                                     hybridData.surfacePass));
             return;
         }
 #endif
+        const AtmospherePassData& atmosphereData = context.blackboard().get<AtmospherePassData>();
+        const PostProcessPassData& postProcess = context.blackboard().get<PostProcessPassData>();
         FrameGraph& graph = context.frameGraph();
-        if (!data.atmosphereLuts || data.frameIndex >= atmosphereConsumerBindingSets_.size() ||
-            !atmosphereConsumerBindingSets_[data.frameIndex]) {
+        if (!atmosphereData.graphRecord || frameIndex >= atmosphereConsumerBindingSets_.size() ||
+            !atmosphereConsumerBindingSets_[frameIndex]) {
             throw std::logic_error("Sky composite requires the atmosphere LUT record from the current frame.");
         }
         graph.addPass(
             "Procedural sky clear", FrameGraphPassType::Transfer,
-            [&data](FrameGraphBuilder& builder) {
-                builder.writeTexture(data.lighting, nvrhi::ResourceStates::CopyDest);
+            [&sceneHdr](FrameGraphBuilder& builder) {
+                builder.writeTexture(sceneHdr.color.graphResource, nvrhi::ResourceStates::CopyDest);
             },
-            [texture = data.frame->lighting.texture](const FrameGraphContext& frameContext) {
+            [texture = sceneHdr.color.texture](const FrameGraphContext& frameContext) {
                 frameContext.commandList->clearTextureFloat(texture, nvrhi::AllSubresources,
                                                             nvrhi::Color{0.035f, 0.04f, 0.05f, 1.0f});
             });
         graph.addPass(
             "Procedural sky", FrameGraphPassType::Graphics,
-            [&data](FrameGraphBuilder& builder) {
-                builder.readTexture(data.globalIllumination, nvrhi::ResourceStates::ShaderResource);
-                for (const FrameGraphResourceHandle lut : data.atmosphereLuts->resources.textures) {
+            [&sceneHdr, &indirect, &atmosphereData](FrameGraphBuilder& builder) {
+                builder.readTexture(indirect.combined.graphResource, nvrhi::ResourceStates::ShaderResource);
+                for (const FrameGraphResourceHandle lut : atmosphereData.graphRecord->resources.textures) {
                     builder.readTexture(lut, nvrhi::ResourceStates::ShaderResource);
                 }
-                builder.read(data.atmosphereLuts->resources.constants, nvrhi::ResourceStates::ConstantBuffer);
-                builder.writeTexture(data.lighting, nvrhi::ResourceStates::RenderTarget);
+                builder.read(atmosphereData.graphRecord->resources.constants, nvrhi::ResourceStates::ConstantBuffer);
+                builder.writeTexture(sceneHdr.color.graphResource, nvrhi::ResourceStates::RenderTarget);
             },
-            [this, &data, framebuffer = data.lightingFramebuffer](const FrameGraphContext& frameContext) {
-                recordFullscreenPass(*frameContext.commandList, *framebuffer, pipelines_.sky(), data.frameIndex,
-                                     atmosphereConsumerBindingSets_[data.frameIndex]);
+            [this, frameIndex, framebuffer = postProcess.lightingFramebuffer](const FrameGraphContext& frameContext) {
+                recordFullscreenPass(*frameContext.commandList, *framebuffer, pipelines_.sky(), frameIndex,
+                                     atmosphereConsumerBindingSets_[frameIndex]);
             });
     }
 
     void LevelRenderer::Impl::addDirectLightingFeaturePasses(core::RenderFeatureFrameContext& context) {
-        LevelRenderFrameData& data = context.blackboard().get<LevelRenderFrameData>();
+        const HybridPassData& hybridData = context.blackboard().get<HybridPassData>();
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-        if (data.hybridPathActive) {
+        if (hybridData.active) {
             return;
         }
 #endif
         if (modelRenderer_ == nullptr) {
             return;
         }
+        const core::RasterSurfaceData& surface = context.blackboard().get<core::RasterSurfaceData>();
+        const core::ShadowData& shadows = context.blackboard().get<core::ShadowData>();
+        const core::DenoisedLightingData& indirect = context.blackboard().get<core::DenoisedLightingData>();
+        core::SceneHdrData& sceneHdr = context.blackboard().get<core::SceneHdrData>();
+        const PostProcessPassData& postProcess = context.blackboard().get<PostProcessPassData>();
+        const std::uint32_t frameIndex = context.identity().frameSlot.value();
         FrameGraph& graph = context.frameGraph();
         graph.addPass(
             "Deferred lighting", FrameGraphPassType::Graphics,
-            [&data](FrameGraphBuilder& builder) {
+            [&surface, &shadows, &indirect, &sceneHdr](FrameGraphBuilder& builder) {
                 for (FrameGraphResourceHandle input :
-                     {data.position, data.normal, data.albedo, data.globalIllumination, data.materialId}) {
+                     {surface.position.graphResource, surface.normalRoughness.graphResource,
+                      surface.albedoMetallic.graphResource, indirect.combined.graphResource,
+                      surface.materialId.graphResource}) {
                     builder.readTexture(input, nvrhi::ResourceStates::ShaderResource);
                 }
-                builder.read(data.materials, nvrhi::ResourceStates::ShaderResource);
-                for (FrameGraphResourceHandle shadow : data.shadows) {
-                    builder.readTexture(shadow, nvrhi::ResourceStates::ShaderResource);
+                builder.read(surface.materials.graphResource, nvrhi::ResourceStates::ShaderResource);
+                for (const core::TextureFrameData& shadow : shadows.cascades) {
+                    builder.readTexture(shadow.graphResource, nvrhi::ResourceStates::ShaderResource);
                 }
-                builder.writeTexture(data.lighting, nvrhi::ResourceStates::RenderTarget);
+                builder.writeTexture(sceneHdr.color.graphResource, nvrhi::ResourceStates::RenderTarget);
             },
-            [this, &data, framebuffer = data.lightingFramebuffer](const FrameGraphContext& frameContext) {
-                recordDirectLightingPass(*frameContext.commandList, *framebuffer, data.frameIndex);
+            [this, frameIndex, framebuffer = postProcess.lightingFramebuffer](const FrameGraphContext& frameContext) {
+                recordDirectLightingPass(*frameContext.commandList, *framebuffer, frameIndex);
             });
     }
 
     void LevelRenderer::Impl::addTemporalAaFeaturePasses(core::RenderFeatureFrameContext& context) {
-        LevelRenderFrameData& data = context.blackboard().get<LevelRenderFrameData>();
+        const core::SceneHdrData& sceneHdr = context.blackboard().get<core::SceneHdrData>();
+        core::TemporalOutputData& temporal = context.blackboard().get<core::TemporalOutputData>();
+        PostProcessPassData& postProcess = context.blackboard().get<PostProcessPassData>();
+        const std::uint32_t frameIndex = context.identity().frameSlot.value();
         FrameGraph& graph = context.frameGraph();
         const core::HistoryAction action = context.historyAction(core::HistoryDomain::Taa);
-        data.uniforms.renderOptions.x =
-            action == core::HistoryAction::Keep && textures_.historyValid(data.historyReadIndex) ? 1.0f : 0.0f;
-        textures_.updatePostProcessUniforms(data.frameIndex, data.uniforms);
+        postProcess.uniforms.renderOptions.x =
+            action == core::HistoryAction::Keep && textures_.historyValid(postProcess.historyReadSlot) ? 1.0f : 0.0f;
+        textures_.updatePostProcessUniforms(frameIndex, postProcess.uniforms);
 
         graph.addPass(
             "TAA clear", FrameGraphPassType::Transfer,
-            [&data](FrameGraphBuilder& builder) {
-                builder.writeTexture(data.taaResolved, nvrhi::ResourceStates::CopyDest);
+            [&temporal](FrameGraphBuilder& builder) {
+                builder.writeTexture(temporal.color.graphResource, nvrhi::ResourceStates::CopyDest);
             },
-            [texture = data.frame->taaResolved.texture](const FrameGraphContext& frameContext) {
+            [texture = temporal.color.texture](const FrameGraphContext& frameContext) {
                 frameContext.commandList->clearTextureFloat(texture, nvrhi::AllSubresources,
                                                             nvrhi::Color{0.0f, 0.0f, 0.0f, 0.0f});
             });
         graph.addPass(
             "TAA resolve", FrameGraphPassType::Graphics,
-            [&data](FrameGraphBuilder& builder) {
-                for (FrameGraphResourceHandle input : {data.taaInput, data.motion, data.historyRead}) {
+            [&sceneHdr, &temporal](FrameGraphBuilder& builder) {
+                for (FrameGraphResourceHandle input : {sceneHdr.color.graphResource, sceneHdr.motion.graphResource,
+                                                       temporal.historyRead.graphResource}) {
                     builder.readTexture(input, nvrhi::ResourceStates::ShaderResource);
                 }
-                builder.writeTexture(data.taaResolved, nvrhi::ResourceStates::RenderTarget);
+                builder.writeTexture(temporal.color.graphResource, nvrhi::ResourceStates::RenderTarget);
             },
-            [this, &data, framebuffer = data.taaFramebuffer](const FrameGraphContext& frameContext) {
-                recordFullscreenPass(*frameContext.commandList, *framebuffer, pipelines_.taa(), data.frameIndex);
+            [this, frameIndex, framebuffer = postProcess.temporalFramebuffer](const FrameGraphContext& frameContext) {
+                recordFullscreenPass(*frameContext.commandList, *framebuffer, pipelines_.taa(), frameIndex);
             });
         graph.addPass(
             "TAA history copy", FrameGraphPassType::Transfer,
-            [&data](FrameGraphBuilder& builder) {
-                builder.readTexture(data.taaResolved, nvrhi::ResourceStates::CopySource);
-                builder.writeTexture(data.historyWrite, nvrhi::ResourceStates::CopyDest);
+            [&temporal](FrameGraphBuilder& builder) {
+                builder.readTexture(temporal.color.graphResource, nvrhi::ResourceStates::CopySource);
+                builder.writeTexture(temporal.historyWrite.graphResource, nvrhi::ResourceStates::CopyDest);
             },
-            [this, &data](const FrameGraphContext& frameContext) {
-                recordHistoryCopy(*frameContext.commandList, data.frameIndex);
+            [this, frameIndex](const FrameGraphContext& frameContext) {
+                recordHistoryCopy(*frameContext.commandList, frameIndex);
             });
         graph.addPass(
             "TAA history ready", FrameGraphPassType::Transfer,
-            [&data](FrameGraphBuilder& builder) {
-                builder.readTexture(data.historyWrite, nvrhi::ResourceStates::ShaderResource);
+            [&temporal](FrameGraphBuilder& builder) {
+                builder.readTexture(temporal.historyWrite.graphResource, nvrhi::ResourceStates::ShaderResource);
             },
             nullptr);
     }
 
     void LevelRenderer::Impl::addToneMappingFeaturePasses(core::RenderFeatureFrameContext& context) {
-        LevelRenderFrameData& data = context.blackboard().get<LevelRenderFrameData>();
+        const core::TemporalOutputData& temporal = context.blackboard().get<core::TemporalOutputData>();
+        core::ViewportOutputData& viewport = context.blackboard().get<core::ViewportOutputData>();
+        const PostProcessPassData& postProcess = context.blackboard().get<PostProcessPassData>();
+        const std::uint32_t frameIndex = context.identity().frameSlot.value();
         FrameGraph& graph = context.frameGraph();
         graph.addPass(
             "Tonemap", FrameGraphPassType::Graphics,
-            [&data](FrameGraphBuilder& builder) {
-                builder.readTexture(data.taaResolved, nvrhi::ResourceStates::ShaderResource);
-                builder.readTexture(data.historyWrite, nvrhi::ResourceStates::ShaderResource);
-                builder.writeTexture(data.viewportOutput, nvrhi::ResourceStates::RenderTarget);
+            [&temporal, &viewport](FrameGraphBuilder& builder) {
+                builder.readTexture(temporal.color.graphResource, nvrhi::ResourceStates::ShaderResource);
+                builder.readTexture(temporal.historyWrite.graphResource, nvrhi::ResourceStates::ShaderResource);
+                builder.writeTexture(viewport.color.graphResource, nvrhi::ResourceStates::RenderTarget);
             },
-            [this, &data, framebuffer = data.tonemapFramebuffer](const FrameGraphContext& frameContext) {
-                recordFullscreenPass(*frameContext.commandList, *framebuffer, pipelines_.tonemap(), data.frameIndex);
+            [this, frameIndex,
+             framebuffer = postProcess.toneMappingFramebuffer](const FrameGraphContext& frameContext) {
+                recordFullscreenPass(*frameContext.commandList, *framebuffer, pipelines_.tonemap(), frameIndex);
             });
     }
 
     void LevelRenderer::Impl::addUiPresentFeaturePasses(core::RenderFeatureFrameContext& context) {
-        LevelRenderFrameData& data = context.blackboard().get<LevelRenderFrameData>();
+        const core::ViewportOutputData& viewport = context.blackboard().get<core::ViewportOutputData>();
+        const core::PresentationInputData& input = context.blackboard().get<core::PresentationInputData>();
         FrameGraph& graph = context.frameGraph();
         graph.addPass(
             "ImGui overlay", FrameGraphPassType::Graphics,
-            [&data](FrameGraphBuilder& builder) {
-                builder.readTexture(data.imguiFont, nvrhi::ResourceStates::ShaderResource);
-                builder.readTexture(data.viewportOutput, nvrhi::ResourceStates::ShaderResource);
-                builder.writeTexture(data.swap, nvrhi::ResourceStates::RenderTarget);
+            [&viewport, &input](FrameGraphBuilder& builder) {
+                builder.readTexture(input.fontAtlas.graphResource, nvrhi::ResourceStates::ShaderResource);
+                builder.readTexture(viewport.color.graphResource, nvrhi::ResourceStates::ShaderResource);
+                builder.writeTexture(input.swapchain.graphResource, nvrhi::ResourceStates::RenderTarget);
             },
-            [this, &data](const FrameGraphContext& frameContext) {
-                if (data.uiDrawPacket == nullptr) {
-                    throw std::logic_error("Presentation Feature requires a UiDrawPacket.");
-                }
-                presentation_.record(*frameContext.commandList, data.imageIndex, data.frameIndex, *data.uiDrawPacket);
+            [this, &input](const FrameGraphContext& frameContext) {
+                presentation_.record(*frameContext.commandList, input.imageIndex, input.frameSlot, input.ui);
             });
         graph.addPass(
             "Present", FrameGraphPassType::Present,
-            [&data](FrameGraphBuilder& builder) {
-                builder.readTexture(data.swap, nvrhi::ResourceStates::Present);
+            [&input](FrameGraphBuilder& builder) {
+                builder.readTexture(input.swapchain.graphResource, nvrhi::ResourceStates::Present);
             },
             nullptr);
+        context.blackboard().set(core::PresentData{.viewport = viewport.color, .swapchain = input.swapchain});
     }
 
     void LevelRenderer::Impl::recordShadowPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,

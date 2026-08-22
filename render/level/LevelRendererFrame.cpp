@@ -1,7 +1,8 @@
-#include "render/level/LevelRenderFrameData.hpp"
+#include "render/level/FeatureFrameData.hpp"
 #include "render/level/LevelRendererImpl.hpp"
 
 #include "render/platform/vulkan/VulkanContext.hpp"
+#include "render/resources/FrameGraphResourceImporter.hpp"
 #include "scene/Camera.hpp"
 #include "scene/Level.hpp"
 
@@ -39,9 +40,9 @@ namespace lumin::render {
             return result;
         }
 
-        LevelCascadeShadowData calculateCascadeShadows(const scene::Camera& camera, float aspectRatio,
-                                                       glm::vec3 lightDirection, const ShadowSettings& settings) {
-            LevelCascadeShadowData result;
+        core::ShadowData calculateCascadeShadows(const scene::Camera& camera, float aspectRatio,
+                                                 glm::vec3 lightDirection, const ShadowSettings& settings) {
+            core::ShadowData result;
             std::array<float, shadowCascadeCount> splits{};
             const float splitLambda = std::clamp(settings.splitLambda, 0.0f, 1.0f);
             const float shadowFar = std::clamp(settings.maxDistance, camera.nearPlane() + 0.001f, camera.farPlane());
@@ -126,6 +127,28 @@ namespace lumin::render {
             return desc;
         }
 
+        core::TextureFrameData textureFrameData(const GpuTexture& texture, FrameGraphResourceHandle graphResource) {
+            return core::TextureFrameData{
+                .texture = texture.texture,
+                .graphResource = graphResource,
+                .readyPass = {},
+                .format = texture.format,
+                .extent = {texture.width, texture.height},
+            };
+        }
+
+        core::TextureFrameData textureFrameData(const nvrhi::TextureHandle& texture,
+                                                FrameGraphResourceHandle graphResource) {
+            const nvrhi::TextureDesc& desc = texture->getDesc();
+            return core::TextureFrameData{
+                .texture = texture,
+                .graphResource = graphResource,
+                .readyPass = {},
+                .format = desc.format,
+                .extent = {desc.width, desc.height},
+            };
+        }
+
         nvrhi::FramebufferHandle createFramebuffer(nvrhi::IDevice& device, const nvrhi::FramebufferDesc& desc) {
             nvrhi::FramebufferHandle framebuffer = device.createFramebuffer(desc);
             if (!framebuffer) {
@@ -168,87 +191,108 @@ namespace lumin::render {
         const scene::DirectionalLight& sun = renderWorld->environment().sun;
         const glm::vec3 cameraForward = camera.forward();
         const glm::vec3 lightDirection = normalizedLightDirection(sun.direction);
-        const LevelCascadeShadowData cascades =
-            calculateCascadeShadows(camera, aspectRatio, lightDirection, settings.shadows);
+        core::ShadowData shadows = calculateCascadeShadows(camera, aspectRatio, lightDirection, settings.shadows);
         const std::uint32_t historyReadIndex =
             (frameIndex + TextureManager::maxFramesInFlight - 1) % TextureManager::maxFramesInFlight;
         const TextureFrameResources& frame = textures_.frame(frameIndex);
         const TextureFrameResources& historyReadFrame = textures_.frame(historyReadIndex);
 
-        LevelRenderFrameData data;
-        data.renderWorldSnapshot = renderWorld;
-        data.renderWorld = renderWorld.get();
-        data.camera = &camera;
-        data.settings = &settings;
-        data.uiDrawPacket = &uiDrawPacket;
-        data.frame = &frame;
-        data.frameIndex = frameIndex;
-        data.imageIndex = imageIndex;
-        data.historyReadIndex = historyReadIndex;
-        data.width = width;
-        data.height = height;
-        data.sceneChanges = sceneChanges;
-        data.view = view;
-        data.projection = unjitteredProjection;
-        data.viewProjection = viewProjection;
-        data.previousViewProjection = previousViewProjection_;
-        data.jitter = jitter;
-        data.cascades = cascades;
-        data.hybridPathActive =
-            renderPipeline_ != nullptr && activePipelineKind_ == pipelines::DefaultRenderPipelineKind::Hybrid;
-        data.uniforms.inverseViewProjection = glm::inverse(unjitteredViewProjection);
-        data.uniforms.viewProjection = viewProjection;
-        data.uniforms.cascadeViewProjections = cascades.viewProjections;
-        data.uniforms.cascadeSplits = cascades.splits;
-        data.uniforms.cameraPosition = glm::vec4{camera.position(), 1.0f};
-        data.uniforms.cameraForward = glm::vec4{cameraForward, 0.0f};
-        data.uniforms.lightDirection = glm::vec4{lightDirection, settings.directLighting.enabled ? 1.0f : 0.0f};
-        data.uniforms.renderSize = glm::vec4{static_cast<float>(width), static_cast<float>(height),
-                                             1.0f / static_cast<float>(width), 1.0f / static_cast<float>(height)};
-        data.uniforms.renderOptions = glm::vec4{0.0f, settings.globalIllumination.ssaoEnabled ? 1.0f : 0.0f,
-                                                settings.shadows.enabled && sun.castsShadows ? 1.0f : 0.0f,
-                                                settings.temporalAa.enabled ? 1.0f : 0.0f};
-        data.uniforms.tonemapOptions.x = settings.toneMapping.exposure;
-        data.uniforms.tonemapOptions.y = context_.swapchainIsSrgb() ? 1.0f : 0.0f;
-        data.uniforms.ambientOcclusionOptions =
+        core::FrameSceneData sceneData{
+            .world = renderWorld,
+            .camera =
+                core::CameraFrameData{
+                    .view = view,
+                    .projection = unjitteredProjection,
+                    .viewProjection = viewProjection,
+                    .previousViewProjection = previousViewProjection_,
+                    .position = glm::vec4{camera.position(), 1.0f},
+                    .forward = glm::vec4{cameraForward, 0.0f},
+                    .right = camera.right(),
+                    .up = camera.up(),
+                    .fieldOfViewDegrees = camera.fieldOfViewDegrees(),
+                    .nearPlane = camera.nearPlane(),
+                    .farPlane = camera.farPlane(),
+                    .revision = camera.revision(),
+                    .jitter = jitter,
+                    .cutEpoch = camera.cutEpoch(),
+                },
+            .settings = pipelines::makeDefaultRenderSettingsSnapshot(settings),
+            .changes = sceneChanges,
+        };
+        PostProcessPassData postProcess;
+        postProcess.historyReadSlot = historyReadIndex;
+        postProcess.uniforms.inverseViewProjection = glm::inverse(unjitteredViewProjection);
+        postProcess.uniforms.viewProjection = viewProjection;
+        postProcess.uniforms.cascadeViewProjections = shadows.viewProjections;
+        postProcess.uniforms.cascadeSplits = shadows.splits;
+        postProcess.uniforms.cameraPosition = glm::vec4{camera.position(), 1.0f};
+        postProcess.uniforms.cameraForward = glm::vec4{cameraForward, 0.0f};
+        postProcess.uniforms.lightDirection = glm::vec4{lightDirection, settings.directLighting.enabled ? 1.0f : 0.0f};
+        postProcess.uniforms.renderSize =
+            glm::vec4{static_cast<float>(width), static_cast<float>(height), 1.0f / static_cast<float>(width),
+                      1.0f / static_cast<float>(height)};
+        postProcess.uniforms.renderOptions = glm::vec4{0.0f, settings.globalIllumination.ssaoEnabled ? 1.0f : 0.0f,
+                                                       settings.shadows.enabled && sun.castsShadows ? 1.0f : 0.0f,
+                                                       settings.temporalAa.enabled ? 1.0f : 0.0f};
+        postProcess.uniforms.tonemapOptions.x = settings.toneMapping.exposure;
+        postProcess.uniforms.tonemapOptions.y = context_.swapchainIsSrgb() ? 1.0f : 0.0f;
+        postProcess.uniforms.ambientOcclusionOptions =
             glm::vec4{static_cast<float>(settings.globalIllumination.ambientOcclusionMode),
                       std::max(settings.globalIllumination.ambientOcclusionRadius, 0.05f),
                       std::max(settings.globalIllumination.ambientOcclusionStrength, 0.0f),
                       std::clamp(settings.globalIllumination.ambientOcclusionBias, 0.0f, 0.5f)};
 
         frameGraph_.reset();
+        FrameGraphResourceImporter importer{frameGraph_};
         const nvrhi::ResourceStates frameInitialState = frameResourcesInitialized_[frameIndex]
                                                             ? nvrhi::ResourceStates::ShaderResource
                                                             : nvrhi::ResourceStates::Common;
         const nvrhi::ResourceStates depthInitialState =
             frameResourcesInitialized_[frameIndex] ? nvrhi::ResourceStates::DepthWrite : nvrhi::ResourceStates::Common;
-        if (!data.hybridPathActive) {
+        const bool hybridPathActive =
+            renderPipeline_ != nullptr && activePipelineKind_ == pipelines::DefaultRenderPipelineKind::Hybrid;
+        core::RasterSurfaceData rasterSurface;
+        core::RtSurfaceData rtSurface;
+        RasterPassTargets rasterTargets;
+        HybridPassData hybridData;
+        hybridData.active = hybridPathActive;
+        if (!hybridPathActive) {
             for (std::uint32_t cascade = 0; cascade < shadowCascadeCount; ++cascade) {
-                data.shadows[cascade] =
-                    frameGraph_.importTexture("shadow.cascade" + std::to_string(cascade),
-                                              textureDesc(frame.shadowCascades[cascade], frameInitialState));
+                const FrameGraphResourceHandle graphResource =
+                    importer.importTexture("shadow.cascade" + std::to_string(cascade),
+                                           textureDesc(frame.shadowCascades[cascade], frameInitialState));
+                shadows.cascades[cascade] = textureFrameData(frame.shadowCascades[cascade], graphResource);
             }
-            data.position =
-                frameGraph_.importTexture("gbuffer.position", textureDesc(frame.position, frameInitialState));
-            data.normal =
-                frameGraph_.importTexture("gbuffer.normal", textureDesc(frame.normalRoughness, frameInitialState));
-            data.albedo = frameGraph_.importTexture("gbuffer.albedo", textureDesc(frame.albedo, frameInitialState));
-            data.motion = frameGraph_.importTexture("gbuffer.motion", textureDesc(frame.motion, frameInitialState));
+            rasterSurface.position = textureFrameData(
+                frame.position,
+                importer.importTexture("gbuffer.position", textureDesc(frame.position, frameInitialState)));
+            rasterSurface.normalRoughness = textureFrameData(
+                frame.normalRoughness,
+                importer.importTexture("gbuffer.normal", textureDesc(frame.normalRoughness, frameInitialState)));
+            rasterSurface.albedoMetallic = textureFrameData(
+                frame.albedo, importer.importTexture("gbuffer.albedo", textureDesc(frame.albedo, frameInitialState)));
+            rasterSurface.motion = textureFrameData(
+                frame.motion, importer.importTexture("gbuffer.motion", textureDesc(frame.motion, frameInitialState)));
             FrameGraphTextureDesc materialIdDesc = textureDesc(frame.materialId, frameInitialState);
             materialIdDesc.finalState = nvrhi::ResourceStates::ShaderResource;
-            data.materialId = frameGraph_.importTexture("gbuffer.material-id", materialIdDesc);
+            rasterSurface.materialId =
+                textureFrameData(frame.materialId, importer.importTexture("gbuffer.material-id", materialIdDesc));
             if (modelRenderer_ != nullptr) {
                 const nvrhi::BufferHandle& materialBuffer = modelRenderer_->materialBuffer(frameIndex);
-                data.materials = frameGraph_.importBuffer(
-                    "gpu-scene.materials",
-                    FrameGraphBufferDesc{.size = materialBuffer->getDesc().byteSize,
-                                         .buffer = materialBuffer,
-                                         .initialState = modelRenderer_->materialBufferInitialState(frameIndex),
-                                         .finalState = nvrhi::ResourceStates::ShaderResource});
+                rasterSurface.materials = core::BufferFrameData{
+                    .buffer = materialBuffer,
+                    .graphResource = importer.importBuffer(
+                        "gpu-scene.materials",
+                        FrameGraphBufferDesc{.size = materialBuffer->getDesc().byteSize,
+                                             .buffer = materialBuffer,
+                                             .initialState = modelRenderer_->materialBufferInitialState(frameIndex),
+                                             .finalState = nvrhi::ResourceStates::ShaderResource}),
+                    .readyPass = {},
+                };
             }
             FrameGraphTextureDesc depthDesc = textureDesc(frame.depth, depthInitialState);
             depthDesc.finalState = nvrhi::ResourceStates::DepthWrite;
-            data.depth = frameGraph_.importTexture("gbuffer.depth", depthDesc);
+            rasterSurface.depth = textureFrameData(frame.depth, importer.importTexture("gbuffer.depth", depthDesc));
         }
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         else {
@@ -256,49 +300,69 @@ namespace lumin::render {
                 throw std::logic_error("Hybrid render topology requires the RT surface runtime.");
             }
             const gi::RayTracedDiFrameResources& surface = hybridGi_->directLighting->signals(frameIndex);
-            data.position = frameGraph_.importTexture(
-                "rt.surface.world-position", textureDesc(GpuTexture{surface.worldPositionHitT}, frameInitialState));
-            data.normal = frameGraph_.importTexture(
-                "rt.surface.normal-roughness", textureDesc(GpuTexture{surface.normalRoughness}, frameInitialState));
-            data.albedo = frameGraph_.importTexture("rt.surface.albedo-metallic",
-                                                    textureDesc(GpuTexture{surface.albedoMetallic}, frameInitialState));
-            data.materialId = frameGraph_.importTexture("rt.surface.material-id",
-                                                        textureDesc(GpuTexture{surface.materialId}, frameInitialState));
-            data.motion = frameGraph_.importTexture("rt.surface.motion",
-                                                    textureDesc(GpuTexture{surface.motion}, frameInitialState));
-            data.depth = frameGraph_.importTexture("rt.surface.view-z",
-                                                   textureDesc(GpuTexture{surface.viewZ}, frameInitialState));
-            data.hybridSurface.worldPositionHitT = data.position;
-            data.hybridSurface.normalRoughness = data.normal;
-            data.hybridSurface.albedoMetallic = data.albedo;
-            data.hybridSurface.materialId = data.materialId;
-            data.hybridSurface.viewZ = data.depth;
-            data.hybridSurface.motion = data.motion;
-            data.hybridSurface.visibilityMask = frameGraph_.importTexture(
-                "rt.surface.visibility", textureDesc(GpuTexture{surface.visibilityMask}, frameInitialState));
+            const auto importRtSurface = [&importer, frameInitialState](std::string name,
+                                                                        const nvrhi::TextureHandle& texture) {
+                return textureFrameData(
+                    texture,
+                    importer.importTexture(std::move(name), textureDesc(GpuTexture{texture}, frameInitialState)));
+            };
+            rtSurface.worldPositionHitDistance =
+                importRtSurface("rt.surface.world-position", surface.worldPositionHitT);
+            rtSurface.normalRoughness = importRtSurface("rt.surface.normal-roughness", surface.normalRoughness);
+            rtSurface.albedoMetallic = importRtSurface("rt.surface.albedo-metallic", surface.albedoMetallic);
+            rtSurface.materialId = importRtSurface("rt.surface.material-id", surface.materialId);
+            rtSurface.motion = importRtSurface("rt.surface.motion", surface.motion);
+            rtSurface.viewDepth = importRtSurface("rt.surface.view-z", surface.viewZ);
+            rtSurface.visibility = importRtSurface("rt.surface.visibility", surface.visibilityMask);
+            hybridData.surface.worldPositionHitT = rtSurface.worldPositionHitDistance.graphResource;
+            hybridData.surface.normalRoughness = rtSurface.normalRoughness.graphResource;
+            hybridData.surface.albedoMetallic = rtSurface.albedoMetallic.graphResource;
+            hybridData.surface.materialId = rtSurface.materialId.graphResource;
+            hybridData.surface.viewZ = rtSurface.viewDepth.graphResource;
+            hybridData.surface.motion = rtSurface.motion.graphResource;
+            hybridData.surface.visibilityMask = rtSurface.visibility.graphResource;
         }
 #endif
-        data.globalIllumination = frameGraph_.importTexture("global-illumination.output",
-                                                            textureDesc(frame.globalIllumination, frameInitialState));
-        data.lighting = frameGraph_.importTexture(data.hybridPathActive ? "rt.surface.direct-radiance" : "lighting.hdr",
-                                                  textureDesc(frame.lighting, frameInitialState));
-        data.taaInput = data.lighting;
+        core::IndirectLightingData indirectLighting;
+        indirectLighting.combined = textureFrameData(
+            frame.globalIllumination, importer.importTexture("global-illumination.output",
+                                                             textureDesc(frame.globalIllumination, frameInitialState)));
+        core::DenoisedLightingData denoisedLighting{
+            .diffuse = {},
+            .specular = {},
+            .combined = indirectLighting.combined,
+        };
+        core::SceneHdrData sceneHdr;
+        sceneHdr.color = textureFrameData(
+            frame.lighting, importer.importTexture(hybridPathActive ? "rt.surface.direct-radiance" : "lighting.hdr",
+                                                   textureDesc(frame.lighting, frameInitialState)));
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-        if (data.hybridPathActive) {
-            data.hybridSurface.directRadiance = data.globalIllumination;
+        if (hybridPathActive) {
+            rtSurface.directRadiance = indirectLighting.combined;
+            hybridData.surface.directRadiance = indirectLighting.combined.graphResource;
         }
 #endif
-        data.taaResolved = frameGraph_.importTexture("taa.resolved", textureDesc(frame.taaResolved, frameInitialState));
-        data.historyRead = frameGraph_.importTexture(
-            "taa.history.read", textureDesc(historyReadFrame.history, textures_.historyInitialState(historyReadIndex)));
-        data.historyWrite = frameGraph_.importTexture(
-            "taa.history.write", textureDesc(frame.history, textures_.historyInitialState(frameIndex)));
+        sceneHdr.motion = hybridPathActive ? rtSurface.motion : rasterSurface.motion;
+        sceneHdr.depth = hybridPathActive ? rtSurface.viewDepth : rasterSurface.depth;
+        core::TemporalOutputData temporalOutput;
+        temporalOutput.color =
+            textureFrameData(frame.taaResolved,
+                             importer.importTexture("taa.resolved", textureDesc(frame.taaResolved, frameInitialState)));
+        temporalOutput.historyRead = textureFrameData(
+            historyReadFrame.history,
+            importer.importTexture("taa.history.read", textureDesc(historyReadFrame.history,
+                                                                   textures_.historyInitialState(historyReadIndex))));
+        temporalOutput.historyWrite = textureFrameData(
+            frame.history,
+            importer.importTexture("taa.history.write",
+                                   textureDesc(frame.history, textures_.historyInitialState(frameIndex))));
 
         FrameGraphTextureDesc viewportDesc =
             textureDesc(viewportOutput_, viewportOutputInitialized_ ? nvrhi::ResourceStates::ShaderResource
                                                                     : nvrhi::ResourceStates::Common);
         viewportDesc.finalState = nvrhi::ResourceStates::ShaderResource;
-        data.viewportOutput = frameGraph_.importTexture("viewport.output", viewportDesc);
+        core::ViewportOutputData viewportOutput{
+            .color = textureFrameData(viewportOutput_, importer.importTexture("viewport.output", viewportDesc))};
 
         FrameGraphTextureDesc swapDesc;
         swapDesc.texture = context_.swapchainTextures().at(imageIndex);
@@ -307,17 +371,23 @@ namespace lumin::render {
             swapDesc.initialState = nvrhi::ResourceStates::Common;
         }
         swapDesc.finalState = nvrhi::ResourceStates::Present;
-        data.swap = frameGraph_.importTexture("swapchain.color", swapDesc);
+        core::PresentationInputData presentationInput;
+        presentationInput.ui = uiDrawPacket;
+        presentationInput.imageIndex = imageIndex;
+        presentationInput.frameSlot = frameIndex;
+        presentationInput.swapchain =
+            textureFrameData(swapDesc.texture, importer.importTexture("swapchain.color", swapDesc));
         FrameGraphTextureDesc fontDesc;
         fontDesc.texture = presentation_.fontTexture();
         fontDesc.initialState = presentation_.fontTextureInitialState();
         fontDesc.finalState = nvrhi::ResourceStates::ShaderResource;
-        data.imguiFont = frameGraph_.importTexture("imgui.font", fontDesc);
+        presentationInput.fontAtlas =
+            textureFrameData(fontDesc.texture, importer.importTexture("imgui.font", fontDesc));
 
         nvrhi::IDevice& device = *context_.rhiDevice();
-        if (!data.hybridPathActive) {
+        if (!hybridPathActive) {
             for (std::uint32_t cascade = 0; cascade < shadowCascadeCount; ++cascade) {
-                data.shadowFramebuffers[cascade] = createFramebuffer(
+                rasterTargets.shadowFramebuffers[cascade] = createFramebuffer(
                     device, nvrhi::FramebufferDesc().setDepthAttachment(frame.shadowCascades[cascade].texture));
             }
             nvrhi::FramebufferDesc gbufferDesc;
@@ -327,23 +397,37 @@ namespace lumin::render {
                 .addColorAttachment(frame.motion.texture)
                 .addColorAttachment(frame.materialId.texture)
                 .setDepthAttachment(frame.depth.texture);
-            data.gbufferFramebuffer = createFramebuffer(device, gbufferDesc);
-            data.lightingFramebuffer =
+            rasterTargets.surfaceFramebuffer = createFramebuffer(device, gbufferDesc);
+            postProcess.lightingFramebuffer =
                 createFramebuffer(device, nvrhi::FramebufferDesc().addColorAttachment(frame.lighting.texture));
         }
-        data.taaFramebuffer =
+        postProcess.temporalFramebuffer =
             createFramebuffer(device, nvrhi::FramebufferDesc().addColorAttachment(frame.taaResolved.texture));
-        data.tonemapFramebuffer =
+        postProcess.toneMappingFramebuffer =
             createFramebuffer(device, nvrhi::FramebufferDesc().addColorAttachment(viewportOutput_.texture));
 
         core::RenderBlackboard blackboard;
-        blackboard.set(std::move(data));
+        blackboard.set(std::move(sceneData));
+        blackboard.set(std::move(shadows));
+        if (hybridPathActive) {
+            blackboard.set(std::move(rtSurface));
+        } else {
+            blackboard.set(std::move(rasterSurface));
+        }
+        blackboard.set(std::move(indirectLighting));
+        blackboard.set(std::move(denoisedLighting));
+        blackboard.set(std::move(sceneHdr));
+        blackboard.set(std::move(temporalOutput));
+        blackboard.set(std::move(viewportOutput));
+        blackboard.set(std::move(presentationInput));
+        blackboard.set(std::move(rasterTargets));
+        blackboard.set(std::move(postProcess));
+        blackboard.set(AtmospherePassData{});
+        blackboard.set(std::move(hybridData));
+        blackboard.set(FrameImportServices{.importer = &importer});
         renderPipeline_->prepareFrame(identity, camera.cutEpoch(), changes, frameGraph_, blackboard);
         frameGraph_.execute(FrameGraphContext{&commandList, nullptr, frameIndex});
-        bool usedHybridGlobalIllumination = false;
-#if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-        usedHybridGlobalIllumination = blackboard.get<LevelRenderFrameData>().hybridGiActive;
-#endif
+        const bool usedHybridGlobalIllumination = blackboard.get<HybridPassData>().globalIlluminationActive;
         return RecordedFrameState{viewProjection,
                                   view,
                                   unjitteredProjection,

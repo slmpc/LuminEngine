@@ -111,12 +111,49 @@ namespace {
                 "Hybrid surface Feature must publish GPU Scene and RT surface contracts.");
     }
 
+    void testDefaultSettingsSchemasClassifyChanges() {
+        core::RenderSettingsSchemaRegistry schemas;
+        pipelines::registerDefaultRenderSettings(schemas);
+        core::RenderSettingsStore store{schemas};
+        const core::RenderSettingsSnapshot defaults = store.snapshot();
+        require(schemas.diff(defaults, defaults).impact == core::SettingsChangeImpact::None,
+                "Unchanged default settings must not schedule runtime work.");
+
+        ToneMappingSettings toneMapping = defaults.get<ToneMappingSettings>(pipelines::feature_ids::toneMapping());
+        toneMapping.exposure = 1.5f;
+        store.set(pipelines::feature_ids::toneMapping(), toneMapping);
+        const core::FeatureSettingsChange hotUpdate = schemas.diff(defaults, store.snapshot());
+        require(core::hasAnyImpact(hotUpdate.impact, core::SettingsChangeImpact::HotUpdate) &&
+                    !core::hasAnyImpact(hotUpdate.impact, core::SettingsChangeImpact::PipelineRecompose),
+                "Exposure changes must remain hot updates.");
+
+        core::RenderSettingsStore topologyStore{schemas};
+        GlobalIlluminationSettings gi =
+            defaults.get<GlobalIlluminationSettings>(pipelines::feature_ids::globalIllumination());
+        gi.mode = gi.mode == GlobalIlluminationMode::Legacy ? GlobalIlluminationMode::RayTracing
+                                                            : GlobalIlluminationMode::Legacy;
+        topologyStore.set(pipelines::feature_ids::globalIllumination(), gi);
+        const core::FeatureSettingsChange topologyChange = schemas.diff(defaults, topologyStore.snapshot());
+        require(core::hasAnyImpact(topologyChange.impact, core::SettingsChangeImpact::PipelineRecompose) &&
+                    topologyChange.historyReasons.containsAny(core::HistoryReason::FeatureConfigurationChanged),
+                "GI topology changes must request recipe recomposition and history invalidation.");
+
+        requireThrows<std::invalid_argument>(
+            [&] {
+                ToneMappingSettings invalid;
+                invalid.exposure = -1.0f;
+                topologyStore.set(pipelines::feature_ids::toneMapping(), invalid);
+            },
+            "Default settings validators must reject invalid public values.");
+    }
+
 } // namespace
 
 int main() {
     try {
         testRasterRecipeUsesTypedDataDag();
         testHybridCapabilityGateAndTopology();
+        testDefaultSettingsSchemasClassifyChanges();
         std::cout << "Default render pipeline tests passed.\n";
         return 0;
     } catch (const std::exception& exception) {

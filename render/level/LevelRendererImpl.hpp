@@ -6,7 +6,7 @@
 #include "render/atmosphere/AtmosphereLutScheduler.hpp"
 #include "render/core/RenderPipelineInstance.hpp"
 #include "render/gi/GlobalIllumination.hpp"
-#include "render/level/LevelRenderFrameData.hpp"
+#include "render/level/FeatureFrameData.hpp"
 #include "render/pipelines/DefaultRenderPipelines.hpp"
 #include "render/presentation/PresentationRenderer.hpp"
 #include "render/resources/FrameGraph.hpp"
@@ -141,7 +141,7 @@ namespace lumin::render {
         void addToneMappingFeaturePasses(core::RenderFeatureFrameContext& context);
         void addUiPresentFeaturePasses(core::RenderFeatureFrameContext& context);
         [[nodiscard]] static FeatureConfigurationState featureConfiguration(const RenderSettings& settings) noexcept;
-        [[nodiscard]] bool shouldUseHybridGi(const RenderSettings& settings,
+        [[nodiscard]] bool shouldUseHybridGi(const GlobalIlluminationSettings& settings,
                                              const world::RenderWorldSnapshot& renderWorld) const noexcept;
         void recordShadowPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
                               std::uint32_t frameIndex, std::uint32_t cascadeIndex,

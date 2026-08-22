@@ -1,6 +1,8 @@
 #pragma once
 
+#include "render/RenderSettings.hpp"
 #include "render/core/RenderFeatureRegistry.hpp"
+#include "render/core/RenderSettingsStore.hpp"
 
 #include <cstdint>
 #include <span>
@@ -62,5 +64,14 @@ namespace lumin::render::pipelines {
      * 数据依赖是排序的主要来源；显式 `after` 只用于 Presentation 等具有外部副作用的边界。
      */
     [[nodiscard]] DefaultRenderPipelineDefinition makeDefaultRenderPipeline(DefaultRenderPipelineKind kind);
+
+    /** 向 registry 注册内置 Feature 的类型化设置、默认值、校验器和变化影响。 */
+    void registerDefaultRenderSettings(core::RenderSettingsSchemaRegistry& registry);
+
+    /**
+     * @brief 将兼容层聚合设置转换为不可变 typed snapshot。
+     * @throws std::invalid_argument 任一设置未通过对应 Feature 校验器时抛出。
+     */
+    [[nodiscard]] core::RenderSettingsSnapshot makeDefaultRenderSettingsSnapshot(const RenderSettings& settings);
 
 } // namespace lumin::render::pipelines

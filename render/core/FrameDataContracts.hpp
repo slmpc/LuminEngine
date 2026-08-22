@@ -12,6 +12,7 @@
 
 #include <glm/mat4x4.hpp>
 #include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 #include <nvrhi/nvrhi.h>
 
@@ -80,6 +81,18 @@ namespace lumin::render::core {
         glm::vec4 position{0.0f, 0.0f, 0.0f, 1.0f};
         /// 世界空间前向向量，`w` 固定为 0。
         glm::vec4 forward{0.0f, 0.0f, -1.0f, 0.0f};
+        /// 世界空间相机右方向。
+        glm::vec3 right{1.0f, 0.0f, 0.0f};
+        /// 世界空间相机上方向。
+        glm::vec3 up{0.0f, 1.0f, 0.0f};
+        /// 垂直视场角，单位为度。
+        float fieldOfViewDegrees = 60.0f;
+        /// 近裁剪面距离。
+        float nearPlane = 0.05f;
+        /// 远裁剪面距离。
+        float farPlane = 200.0f;
+        /// 活动相机渲染属性的修订号。
+        std::uint64_t revision = 0;
         /// 当前帧 TAA 像素抖动。
         glm::vec2 jitter{0.0f};
         /// 显式切镜代数；连续相机移动不得修改。

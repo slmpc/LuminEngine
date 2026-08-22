@@ -35,8 +35,9 @@ resize 和 shutdown 在安全边界按逆序通知，使消费者先释放对上
 当前运行时使用 `DefaultRenderPipelines` 提供的 Raster/Hybrid recipe，并经
 `RenderPipelineRecipeResolver + RenderPipelineInstance` 事务式创建候选管线。Feature 通过显式 factory 注册；旧
 `DeferredRenderFeatureSet`、`LevelRenderFeatureKind`、`LevelRenderFeatureHost` 和中央分派 `switch` 已删除。运行时仍直接
-读取活动场景，且部分 pass 尚通过 `LevelRenderFrameData`、`TextureManager` 与 `PipelineManager` 共享资源；这些剩余边界会
-在 `RenderFramePacket`、Feature 资源所有权和渲染线程接入阶段删除。
+读取活动场景，且部分 Feature 尚通过 `TextureManager` 与 `PipelineManager` 共享物理资源和 pipeline；这些剩余边界会在
+`RenderFramePacket`、Feature 资源所有权和渲染线程接入阶段删除。帧内数据已经通过 typed blackboard 隔离，不再存在万能
+帧数据结构。
 
 ## 场景更新
 
@@ -89,9 +90,10 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 - `render/level/LevelRendererResources.cpp` 创建、销毁和重建交换链、Viewport、材质、Atmosphere 与 Hybrid GI 资源。
 - `render/level/LevelRendererFrame.cpp` 生成相机/阴影数据，导入逐帧资源，创建 framebuffer，并执行 `FrameGraph`。
 - `render/level/LevelRendererFeatures.cpp` 只实现各 Feature 的 pass setup/record，以及提交成功和丢弃时的资源通知。
-- `render/level/LevelRenderFrameData.hpp` 定义当前录制调用使用的黑板数据。它保存 immutable `RenderWorldSnapshot`、
-  当前帧资源、FrameGraph handle 和派生矩阵；其中的指针、span 和 handle 只在当前 `recordCommandList` 调用期间有效，
-  不得由 Feature 跨帧保存。
+- `render/core/FrameDataContracts.hpp` 定义跨 Feature 的 typed blackboard 契约；每个 GPU 数据项同时携带物理 NvRHI
+  handle、本帧唯一 FrameGraph handle、格式、范围和 ready pass，消费者必须复用 producer 发布的图身份。
+- `render/level/FeatureFrameData.hpp` 只保存迁移期实现细节，例如资源导入服务、预创建 framebuffer 和 Hybrid 候选状态；
+  其中的非拥有指针、span 和 handle 只在当前 `recordCommandList` 调用期间有效，不得由 Feature 跨帧保存。
 - `render/pipelines/DefaultRenderPipelines.*` 定义 Raster/Hybrid recipe。数据 producer/consumer 决定 DAG 主顺序；只有
   Presentation 等外部副作用边界使用少量 `after` 约束。Runtime 显式注册各模块 factory，不再按枚举转发生命周期。
 

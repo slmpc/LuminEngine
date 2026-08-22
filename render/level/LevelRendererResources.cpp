@@ -1,4 +1,4 @@
-#include "render/level/LevelRenderFrameData.hpp"
+#include "render/level/FeatureFrameData.hpp"
 #include "render/level/LevelRendererImpl.hpp"
 
 #include "render/platform/vulkan/VulkanContext.hpp"

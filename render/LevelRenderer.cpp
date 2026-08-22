@@ -1,4 +1,4 @@
-#include "render/level/LevelRenderFrameData.hpp"
+#include "render/level/FeatureFrameData.hpp"
 #include "render/level/LevelRendererImpl.hpp"
 
 #include "render/gi/legacy/LegacyBackend.hpp"
@@ -458,12 +458,12 @@ namespace lumin::render {
         };
     }
 
-    bool LevelRenderer::Impl::shouldUseHybridGi(const RenderSettings& settings,
+    bool LevelRenderer::Impl::shouldUseHybridGi(const GlobalIlluminationSettings& settings,
                                                 const world::RenderWorldSnapshot& renderWorld) const noexcept {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridGi_ == nullptr || renderPipeline_ == nullptr ||
             activePipelineKind_ != pipelines::DefaultRenderPipelineKind::Hybrid ||
-            settings.globalIllumination.mode != GlobalIlluminationMode::RayTracing || renderWorld.instances().empty() ||
+            settings.mode != GlobalIlluminationMode::RayTracing || renderWorld.instances().empty() ||
             renderWorld.meshes().empty() || renderWorld.meshes().size() > hybridGi_->geometryDescriptorCapacity) {
             return false;
         }

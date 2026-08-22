@@ -3,6 +3,7 @@
 #include "render/core/FrameDataContracts.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -187,6 +188,112 @@ namespace lumin::render::pipelines {
             },
             std::move(descriptors),
         };
+    }
+
+    void registerDefaultRenderSettings(core::RenderSettingsSchemaRegistry& registry) {
+        using core::FeatureSettingsChange;
+        using core::HistoryReason;
+        using core::SettingsChangeImpact;
+
+        registry.registerSchema<ShadowSettings>(
+            feature_ids::shadow(), ShadowSettings{},
+            [](const ShadowSettings& value) {
+                if (!std::isfinite(value.splitLambda) || !std::isfinite(value.maxDistance) ||
+                    value.splitLambda < 0.0f || value.splitLambda > 1.0f || value.maxDistance <= 0.0f) {
+                    throw std::invalid_argument("Shadow settings require a finite split lambda and positive range.");
+                }
+            },
+            [](const ShadowSettings& before, const ShadowSettings& after) {
+                if (before.enabled == after.enabled && before.splitLambda == after.splitLambda &&
+                    before.maxDistance == after.maxDistance) {
+                    return FeatureSettingsChange{};
+                }
+                return FeatureSettingsChange{
+                    .impact = SettingsChangeImpact::HistoryReset,
+                    .historyReasons = core::FrameChangeSet{HistoryReason::FeatureConfigurationChanged},
+                };
+            });
+        registry.registerSchema<GlobalIlluminationSettings>(
+            feature_ids::globalIllumination(), GlobalIlluminationSettings{},
+            [](const GlobalIlluminationSettings& value) {
+                if (!std::isfinite(value.ambientOcclusionRadius) || !std::isfinite(value.ambientOcclusionStrength) ||
+                    !std::isfinite(value.ambientOcclusionBias) || value.ambientOcclusionRadius <= 0.0f ||
+                    value.ambientOcclusionStrength < 0.0f || value.ambientOcclusionBias < 0.0f ||
+                    value.ambientOcclusionBias > 0.5f) {
+                    throw std::invalid_argument("GI settings contain an invalid AO range.");
+                }
+            },
+            [](const GlobalIlluminationSettings& before, const GlobalIlluminationSettings& after) {
+                const bool unchanged = before.mode == after.mode && before.ssaoEnabled == after.ssaoEnabled &&
+                                       before.ambientOcclusionMode == after.ambientOcclusionMode &&
+                                       before.ambientOcclusionRadius == after.ambientOcclusionRadius &&
+                                       before.ambientOcclusionStrength == after.ambientOcclusionStrength &&
+                                       before.ambientOcclusionBias == after.ambientOcclusionBias &&
+                                       before.sharcEnabled == after.sharcEnabled &&
+                                       before.nrdEnabled == after.nrdEnabled;
+                if (unchanged) {
+                    return FeatureSettingsChange{};
+                }
+                const bool topologyChanged = before.mode != after.mode || before.sharcEnabled != after.sharcEnabled ||
+                                             before.nrdEnabled != after.nrdEnabled;
+                return FeatureSettingsChange{
+                    .impact =
+                        topologyChanged ? SettingsChangeImpact::PipelineRecompose : SettingsChangeImpact::HistoryReset,
+                    .historyReasons = core::FrameChangeSet{HistoryReason::FeatureConfigurationChanged},
+                };
+            });
+        registry.registerSchema<DirectLightingFeatureSettings>(
+            feature_ids::lightingComposite(), DirectLightingFeatureSettings{}, {},
+            [](const DirectLightingFeatureSettings& before, const DirectLightingFeatureSettings& after) {
+                return before.enabled == after.enabled
+                           ? FeatureSettingsChange{}
+                           : FeatureSettingsChange{
+                                 .impact = SettingsChangeImpact::HistoryReset,
+                                 .historyReasons = core::FrameChangeSet{HistoryReason::FeatureConfigurationChanged}};
+            });
+        registry.registerSchema<TemporalAaSettings>(
+            feature_ids::temporalAa(), TemporalAaSettings{}, {},
+            [](const TemporalAaSettings& before, const TemporalAaSettings& after) {
+                return before.enabled == after.enabled
+                           ? FeatureSettingsChange{}
+                           : FeatureSettingsChange{
+                                 .impact = SettingsChangeImpact::HistoryReset,
+                                 .historyReasons = core::FrameChangeSet{HistoryReason::FeatureConfigurationChanged}};
+            });
+        registry.registerSchema<ToneMappingSettings>(
+            feature_ids::toneMapping(), ToneMappingSettings{},
+            [](const ToneMappingSettings& value) {
+                if (!std::isfinite(value.exposure) || value.exposure < 0.0f) {
+                    throw std::invalid_argument("Tone mapping exposure must be finite and non-negative.");
+                }
+            },
+            [](const ToneMappingSettings& before, const ToneMappingSettings& after) {
+                return before.exposure == after.exposure
+                           ? FeatureSettingsChange{}
+                           : FeatureSettingsChange{.impact = SettingsChangeImpact::HotUpdate, .historyReasons = {}};
+            });
+        registry.registerSchema<AtmosphereRenderSettings>(
+            feature_ids::atmosphere(), AtmosphereRenderSettings{}, {},
+            [](const AtmosphereRenderSettings& before, const AtmosphereRenderSettings& after) {
+                return before.enabled == after.enabled && before.aerialPerspective == after.aerialPerspective
+                           ? FeatureSettingsChange{}
+                           : FeatureSettingsChange{
+                                 .impact = SettingsChangeImpact::HistoryReset,
+                                 .historyReasons = core::FrameChangeSet{HistoryReason::FeatureConfigurationChanged}};
+            });
+    }
+
+    core::RenderSettingsSnapshot makeDefaultRenderSettingsSnapshot(const RenderSettings& settings) {
+        core::RenderSettingsSchemaRegistry schemas;
+        registerDefaultRenderSettings(schemas);
+        core::RenderSettingsStore store{schemas};
+        store.set(feature_ids::shadow(), settings.shadows);
+        store.set(feature_ids::globalIllumination(), settings.globalIllumination);
+        store.set(feature_ids::lightingComposite(), settings.directLighting);
+        store.set(feature_ids::temporalAa(), settings.temporalAa);
+        store.set(feature_ids::toneMapping(), settings.toneMapping);
+        store.set(feature_ids::atmosphere(), settings.atmosphere);
+        return store.snapshot();
     }
 
 } // namespace lumin::render::pipelines
