@@ -16,7 +16,7 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlays",
         "LUMIN_BUILD_TESTS": "ON",
-        "LUMIN_BUILD_SANDBOX": "ON",
+        "LUMIN_BUILD_EDITOR": "ON",
         "LUMIN_RAY_TRACING": "AUTO"
       }
     },
@@ -30,7 +30,7 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlays",
         "LUMIN_BUILD_TESTS": "ON",
-        "LUMIN_BUILD_SANDBOX": "ON",
+        "LUMIN_BUILD_EDITOR": "ON",
         "LUMIN_RAY_TRACING": "AUTO"
       }
     }

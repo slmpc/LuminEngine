@@ -16,7 +16,7 @@
 ```
 
 箭头表示“依赖”。`Application` 是组合层，同时依赖 Core 和 Render；Render 只依赖 Core 的数据接口，Core 不依赖
-图形 API。Sandbox 位于 Application 之上，是一个可替换的宿主示例。
+图形 API。Editor 应用位于 Application 之上，使用无行为的 `Game` 宿主启动项目工作流。
 
 ## Core
 
@@ -61,7 +61,7 @@ deferred/Blinn-Phong、RT DI/GI、SHARC、NRD、大气 LUT、ImGui renderer 和 
 - `core/CMakeLists.txt`：Core 的全部源文件和依赖；
 - `render/CMakeLists.txt`：Render 的全部源文件、可选 NRD/SHARC 源码和 alias；
 - `shaders/CMakeLists.txt`：调用 Python shader generator 并注册 shader targets；
-- `apps/sandbox/CMakeLists.txt`、`tests/CMakeLists.txt`：应用与验证目标。
+- `apps/editor/CMakeLists.txt`、`tests/CMakeLists.txt`：应用与验证目标。
 
 不再为 atmosphere、GI、GPU Scene 等内部子系统创建独立的 CMake 文件。新增源文件只需要加入所属大模块
 的一个列表；新增 shader 只需要添加 companion JSON，不需要编辑 CMake JSON 解析逻辑。

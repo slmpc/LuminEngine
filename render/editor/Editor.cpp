@@ -263,16 +263,13 @@ namespace lumin::editor {
         Impl(scene::Level& levelValue, scene::Camera& cameraValue, render::RenderSettings& settingsValue,
              scripting::ScriptRuntime& scriptsValue, BackendInfoProvider backendInfoValue,
              ViewportImageProvider viewportImageValue, project::ProjectSession* projectValue,
-             EditorDialogServices dialogsValue)
+             EditorDialogServices dialogsValue, EditorSettingsServices settingsServicesValue)
             : level(levelValue), camera(cameraValue), settings(settingsValue), scripts(scriptsValue),
               backendInfo(std::move(backendInfoValue)), viewportImage(std::move(viewportImageValue)),
-              projectSession(projectValue), dialogs(std::move(dialogsValue)) {
-            if (dialogs.loadRecentProjects) {
-                recentProjects = dialogs.loadRecentProjects();
-                if (recentProjects.size() > 10) {
-                    recentProjects.resize(10);
-                }
-            }
+              projectSession(projectValue), dialogs(std::move(dialogsValue)),
+              engineSettings(std::move(settingsServicesValue.settings)),
+              saveEngineSettings(std::move(settingsServicesValue.save)) {
+            config::normalizeEngineSettings(engineSettings);
         }
 
         scene::Level& level;
@@ -283,6 +280,8 @@ namespace lumin::editor {
         ViewportImageProvider viewportImage;
         project::ProjectSession* projectSession = nullptr;
         EditorDialogServices dialogs;
+        config::EngineSettings engineSettings;
+        SaveEngineSettingsCallback saveEngineSettings;
         ViewportInteractionState viewportInteraction;
         SelectionState selection = SelectionState::Empty;
         std::optional<scene::ActorHandle> actor;
@@ -307,30 +306,35 @@ namespace lumin::editor {
         std::vector<std::filesystem::path> contentHistory;
         std::chrono::steady_clock::time_point lastContentSync{};
         std::filesystem::path newProjectLocation;
-        std::vector<std::filesystem::path> recentProjects;
+        std::optional<std::filesystem::path> selectedRecentProject;
         std::string statusMessage;
         std::function<void()> pendingDestructiveAction;
         bool showNewProject = false;
         bool showConfirm = false;
         bool showRenameAsset = false;
+        bool showConfiguration = false;
         bool exitRequested = false;
         bool focusDetails = false;
         ImGuizmo::OPERATION gizmoOperation = ImGuizmo::TRANSLATE;
         ImGuizmo::MODE gizmoMode = ImGuizmo::WORLD;
 
+        void persistEngineSettings() {
+            if (!saveEngineSettings) {
+                return;
+            }
+            std::string error;
+            if (!saveEngineSettings(engineSettings, error)) {
+                statusMessage = std::move(error);
+            }
+        }
+
         void rememberProject() {
             if (projectSession == nullptr || !projectSession->hasProject()) {
                 return;
             }
-            const auto path = projectSession->projectFile();
-            std::erase(recentProjects, path);
-            recentProjects.insert(recentProjects.begin(), path);
-            if (recentProjects.size() > 10) {
-                recentProjects.resize(10);
-            }
-            if (dialogs.saveRecentProjects) {
-                dialogs.saveRecentProjects(recentProjects);
-            }
+            config::rememberProject(engineSettings, projectSession->projectFile());
+            selectedRecentProject = projectSession->projectFile();
+            persistEngineSettings();
         }
 
         project::ProjectRenderSettings currentProjectRenderSettings() const noexcept {
@@ -549,19 +553,32 @@ namespace lumin::editor {
             });
         }
 
-        void openProjectPath(const std::filesystem::path& path) {
+        bool openProjectPath(const std::filesystem::path& path) {
             if (projectSession == nullptr) {
-                return;
+                return false;
             }
+            const std::filesystem::path previousProject = projectSession->projectFile();
             std::string error;
             if (!projectSession->open(path, error)) {
+                if (projectSession->projectFile() != previousProject) {
+                    projectSession->close();
+                }
+                if (engineSettings.lastProject.has_value() && engineSettings.lastProject->lexically_normal() ==
+                                                                  std::filesystem::absolute(path).lexically_normal()) {
+                    engineSettings.lastProject.reset();
+                    if (!std::filesystem::exists(path)) {
+                        std::erase(engineSettings.recentProjects, std::filesystem::absolute(path).lexically_normal());
+                    }
+                    persistEngineSettings();
+                }
                 statusMessage = std::move(error);
-                return;
+                return false;
             }
             clearSelection();
             applyProjectRenderSettings();
             rememberProject();
             statusMessage = "Opened " + projectSession->manifest().name;
+            return true;
         }
 
         void requestOpenProject() {
@@ -586,6 +603,19 @@ namespace lumin::editor {
             statusMessage = projectSession->save(error) ? "Project saved." : std::move(error);
         }
 
+        void closeProject() {
+            if (projectSession == nullptr) {
+                return;
+            }
+            projectSession->close();
+            clearSelection();
+            contentProjectRoot.clear();
+            contentDirectory.clear();
+            contentHistory.clear();
+            viewportInteraction = {};
+            statusMessage = "Project closed.";
+        }
+
         void drawMainMenu() {
             std::optional<std::filesystem::path> recentProjectToOpen;
             if (!ImGui::BeginMainMenuBar()) {
@@ -602,12 +632,15 @@ namespace lumin::editor {
                         requestOpenProject();
                     });
                 }
-                if (ImGui::BeginMenu("Recent Projects", !recentProjects.empty())) {
-                    for (const auto& recent : recentProjects) {
+                if (ImGui::BeginMenu("Recent Projects", !engineSettings.recentProjects.empty())) {
+                    for (const auto& recent : engineSettings.recentProjects) {
+                        ImGui::PushID(recent.generic_string().c_str());
                         if (ImGui::MenuItem(recent.filename().string().c_str())) {
                             recentProjectToOpen = recent;
+                            ImGui::PopID();
                             break;
                         }
+                        ImGui::PopID();
                     }
                     ImGui::EndMenu();
                 }
@@ -616,12 +649,33 @@ namespace lumin::editor {
                                     projectSession != nullptr && projectSession->hasProject())) {
                     saveProject();
                 }
+                if (ImGui::MenuItem("Close Project", nullptr, false,
+                                    projectSession != nullptr && projectSession->hasProject())) {
+                    runDestructive([this] {
+                        closeProject();
+                    });
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Configuration")) {
+                    showConfiguration = true;
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Exit")) {
                     runDestructive([this] {
                         exitRequested = true;
                     });
                 }
+                ImGui::EndMenu();
+            }
+            const bool editorWorkspaceActive = projectSession == nullptr || projectSession->hasProject();
+            if (ImGui::BeginMenu("View", editorWorkspaceActive)) {
+                auto& windows = engineSettings.windows;
+                ImGui::MenuItem("Viewport", nullptr, &windows.viewport);
+                ImGui::MenuItem("Scene Hierarchy", nullptr, &windows.sceneHierarchy);
+                ImGui::MenuItem("Details", nullptr, &windows.details);
+                ImGui::MenuItem("Content Browser", nullptr, &windows.contentBrowser);
+                ImGui::MenuItem("Script Console", nullptr, &windows.scriptConsole);
+                ImGui::MenuItem("Render / GI", nullptr, &windows.renderSettings);
                 ImGui::EndMenu();
             }
             if (projectSession != nullptr && projectSession->hasProject()) {
@@ -638,6 +692,106 @@ namespace lumin::editor {
                 runDestructive([this, recent = std::move(*recentProjectToOpen)] {
                     openProjectPath(recent);
                 });
+            }
+        }
+
+        void drawProjectNavigator() {
+            const ImGuiViewport* viewport = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(viewport->WorkPos);
+            ImGui::SetNextWindowSize(viewport->WorkSize);
+            constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+            if (!ImGui::Begin("Project Navigator", nullptr, flags)) {
+                ImGui::End();
+                return;
+            }
+
+            ImGui::TextUnformatted("Lumin Engine");
+            ImGui::SeparatorText("Projects");
+            if (ImGui::Button("New Project...")) {
+                requestNewProject();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Open Project...")) {
+                requestOpenProject();
+            }
+            ImGui::SameLine();
+            const bool canOpenSelected = selectedRecentProject.has_value();
+            if (!canOpenSelected) {
+                ImGui::BeginDisabled();
+            }
+            const bool openSelected = ImGui::Button("Open Selected");
+            if (!canOpenSelected) {
+                ImGui::EndDisabled();
+            }
+
+            std::optional<std::filesystem::path> projectToOpen;
+            if (openSelected && selectedRecentProject.has_value()) {
+                projectToOpen = selectedRecentProject;
+            }
+            ImGui::SeparatorText("Recent Projects");
+            if (engineSettings.recentProjects.empty()) {
+                ImGui::TextDisabled("No recent projects");
+            } else if (ImGui::BeginTable("RecentProjectTable", 2,
+                                         ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                             ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Project", ImGuiTableColumnFlags_WidthStretch, 0.35f);
+                ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch, 0.65f);
+                ImGui::TableHeadersRow();
+                for (const auto& recent : engineSettings.recentProjects) {
+                    ImGui::PushID(recent.generic_string().c_str());
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    const bool selected = selectedRecentProject.has_value() && *selectedRecentProject == recent;
+                    const std::string name = recent.stem().string();
+                    if (ImGui::Selectable(name.c_str(), selected,
+                                          ImGuiSelectableFlags_SpanAllColumns |
+                                              ImGuiSelectableFlags_AllowDoubleClick)) {
+                        selectedRecentProject = recent;
+                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                            projectToOpen = recent;
+                        }
+                    }
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextUnformatted(recent.generic_string().c_str());
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+            }
+            if (!statusMessage.empty()) {
+                ImGui::Spacing();
+                ImGui::TextWrapped("%s", statusMessage.c_str());
+            }
+            ImGui::End();
+
+            if (projectToOpen.has_value()) {
+                openProjectPath(*projectToOpen);
+            }
+        }
+
+        void drawConfiguration() {
+            if (!showConfiguration) {
+                return;
+            }
+            if (!ImGui::Begin("Configuration", &showConfiguration, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::End();
+                return;
+            }
+            ImGui::SeparatorText("Startup");
+            bool changed = false;
+            if (ImGui::RadioButton("Project Navigator",
+                                   engineSettings.startupDestination == config::StartupDestination::ProjectNavigator)) {
+                engineSettings.startupDestination = config::StartupDestination::ProjectNavigator;
+                changed = true;
+            }
+            if (ImGui::RadioButton("Last Project",
+                                   engineSettings.startupDestination == config::StartupDestination::LastProject)) {
+                engineSettings.startupDestination = config::StartupDestination::LastProject;
+                changed = true;
+            }
+            ImGui::End();
+            if (changed) {
+                persistEngineSettings();
             }
         }
 
@@ -658,6 +812,7 @@ namespace lumin::editor {
                     std::string error;
                     if (projectSession->create(newProjectLocation, projectName.data(), error)) {
                         clearSelection();
+                        applyProjectRenderSettings();
                         rememberProject();
                         statusMessage = "Project created.";
                         ImGui::CloseCurrentPopup();
@@ -853,7 +1008,7 @@ namespace lumin::editor {
         }
 
         void drawContentBrowser() {
-            if (!ImGui::Begin("Content Browser")) {
+            if (!ImGui::Begin("Content Browser", &engineSettings.windows.contentBrowser)) {
                 ImGui::End();
                 return;
             }
@@ -998,7 +1153,7 @@ namespace lumin::editor {
         }
 
         void drawHierarchy() {
-            ImGui::Begin("Scene Hierarchy");
+            ImGui::Begin("Scene Hierarchy", &engineSettings.windows.sceneHierarchy);
             for (const scene::ActorHandle handle : level.actorHandles()) {
                 scene::Actor* value = level.actor(handle);
                 if (value == nullptr) {
@@ -1151,7 +1306,7 @@ namespace lumin::editor {
                 ImGui::SetNextWindowFocus();
                 focusDetails = false;
             }
-            ImGui::Begin("Details");
+            ImGui::Begin("Details", &engineSettings.windows.details);
             if (selection == SelectionState::Stale) {
                 ImGui::TextUnformatted("Selection became stale and was cleared.");
             } else if (actor.has_value()) {
@@ -1241,7 +1396,13 @@ namespace lumin::editor {
         void drawViewport() {
             constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0.0f, 0.0f});
-            ImGui::Begin("Viewport", nullptr, flags);
+            const bool drawContents = ImGui::Begin("Viewport", &engineSettings.windows.viewport, flags);
+            if (!drawContents || !engineSettings.windows.viewport) {
+                viewportInteraction = {};
+                ImGui::End();
+                ImGui::PopStyleVar();
+                return;
+            }
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4.0f);
             if (ImGui::RadioButton("Move", gizmoOperation == ImGuizmo::TRANSLATE)) {
                 gizmoOperation = ImGuizmo::TRANSLATE;
@@ -1385,7 +1546,7 @@ namespace lumin::editor {
         }
 
         void drawRenderSettings() {
-            ImGui::Begin("Render / GI");
+            ImGui::Begin("Render / GI", &engineSettings.windows.renderSettings);
             section("Camera");
             float speed = camera.moveSpeed();
             propertyLabel("Move speed");
@@ -1463,7 +1624,7 @@ namespace lumin::editor {
 
         void drawConsole() {
             synchronizeDiagnostics();
-            ImGui::Begin("Script Console");
+            ImGui::Begin("Script Console", &engineSettings.windows.scriptConsole);
             ImGui::Checkbox("Info", &showInfo);
             ImGui::SameLine();
             ImGui::Checkbox("Warning", &showWarnings);
@@ -1587,9 +1748,11 @@ namespace lumin::editor {
 
     Editor::Editor(scene::Level& level, scene::Camera& camera, render::RenderSettings& settings,
                    scripting::ScriptRuntime& scripts, BackendInfoProvider backendInfo,
-                   ViewportImageProvider viewportImage, project::ProjectSession* project, EditorDialogServices dialogs)
+                   ViewportImageProvider viewportImage, project::ProjectSession* project, EditorDialogServices dialogs,
+                   EditorSettingsServices settingsServices)
         : impl_(std::make_unique<Impl>(level, camera, settings, scripts, std::move(backendInfo),
-                                       std::move(viewportImage), project, std::move(dialogs))) {
+                                       std::move(viewportImage), project, std::move(dialogs),
+                                       std::move(settingsServices))) {
     }
 
     Editor::~Editor() = default;
@@ -1600,19 +1763,45 @@ namespace lumin::editor {
         style::apply();
         synchronizeSelection();
         ImGuizmo::BeginFrame();
+        const config::EditorWindowVisibility visibilityBefore = impl_->engineSettings.windows;
         impl_->drawMainMenu();
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        const ImGuiID dockspace = ImGui::GetID("LuminEditorDockspace");
-        impl_->buildLayout(dockspace, *viewport);
-        ImGui::DockSpaceOverViewport(dockspace, viewport);
-        impl_->drawHierarchy();
-        impl_->drawContentBrowser();
-        impl_->drawInspector();
-        impl_->drawViewport();
-        impl_->drawRenderSettings();
-        impl_->drawConsole();
+        if (impl_->projectSession != nullptr && !impl_->projectSession->hasProject()) {
+            impl_->viewportInteraction = {};
+            impl_->drawProjectNavigator();
+        } else {
+            const ImGuiViewport* viewport = ImGui::GetMainViewport();
+            const ImGuiID dockspace = ImGui::GetID("LuminEditorDockspace");
+            impl_->buildLayout(dockspace, *viewport);
+            ImGui::DockSpaceOverViewport(dockspace, viewport);
+            auto& windows = impl_->engineSettings.windows;
+            if (windows.sceneHierarchy) {
+                impl_->drawHierarchy();
+            }
+            if (windows.contentBrowser) {
+                impl_->drawContentBrowser();
+            }
+            if (windows.details) {
+                impl_->drawInspector();
+            }
+            if (windows.viewport) {
+                impl_->drawViewport();
+            } else {
+                impl_->viewportInteraction = {};
+            }
+            if (windows.renderSettings) {
+                impl_->drawRenderSettings();
+            }
+            if (windows.scriptConsole) {
+                impl_->drawConsole();
+            }
+        }
+        impl_->drawConfiguration();
         impl_->drawProjectModals();
-        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        if (visibilityBefore != impl_->engineSettings.windows) {
+            impl_->persistEngineSettings();
+        }
+        if (impl_->projectSession != nullptr && impl_->projectSession->hasProject() && ImGui::GetIO().KeyCtrl &&
+            ImGui::IsKeyPressed(ImGuiKey_S, false)) {
             impl_->saveProject();
         }
     }
@@ -1756,6 +1945,10 @@ namespace lumin::editor {
 
     std::vector<scripting::ScriptReloadResult> Editor::reloadChangedScripts() {
         return impl_->reloadChangedScripts();
+    }
+
+    bool Editor::openProject(const std::filesystem::path& path) {
+        return impl_->openProjectPath(path);
     }
 
     bool Editor::exitRequested() const noexcept {

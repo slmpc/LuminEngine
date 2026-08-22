@@ -422,6 +422,10 @@ namespace lumin::project {
             std::filesystem::create_directories(nextRoot / ".lumin");
 
             level_.clear();
+            level_.setEnvironment(scene::SceneEnvironment{});
+            camera_ = scene::Camera{};
+            camera_.markCut();
+            renderSettings_ = {};
             if (!scripts_.setScriptRoot(nextRoot)) {
                 throw std::runtime_error("Could not switch the script root while scripts are active.");
             }

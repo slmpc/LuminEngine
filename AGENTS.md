@@ -10,7 +10,7 @@ Lumin Engine 是一个使用 C++23、Vulkan 1.3、SDL3 和 Slang 构建的紧凑
 - `core`：不依赖图形 API 的场景、资产、脚本和 Game API。
 - `render`：独立渲染模块及其编辑器 UI。
 - `application`：连接 Core 与 Render 的宿主组合层。
-- `apps/sandbox`：可运行的示例程序。
+- `apps/editor`：可运行的项目编辑器。
 - `shaders`：Slang 着色器源码。
 - `tests`：引擎测试。
 - `docs`：架构文档。
@@ -26,7 +26,7 @@ cmake --build --preset debug
 ctest --test-dir out/build/debug --output-on-failure
 ```
 
-可使用以下命令运行沙盒：
+可使用以下命令运行编辑器：
 
 ```powershell
 .\out\build\debug\LuminEngine.exe

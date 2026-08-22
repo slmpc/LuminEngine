@@ -56,16 +56,16 @@ SHARC 与 NRD 测试应先运行 adapter 的纯 CPU 资源/dispatch 翻译测试
 cmake -S . -B out/build/rt-off -G Ninja -DLUMIN_RAY_TRACING=OFF
 cmake -S . -B out/build/sharc-off -G Ninja -DLUMIN_ENABLE_SHARC=OFF
 cmake -S . -B out/build/nrd-off -G Ninja -DLUMIN_ENABLE_NRD=OFF
-cmake --build out/build/rt-off --target lumin_sandbox lumin_shader_abi
-cmake --build out/build/sharc-off --target lumin_sandbox lumin_shader_abi
-cmake --build out/build/nrd-off --target lumin_sandbox lumin_shader_abi
+cmake --build out/build/rt-off --target lumin_editor lumin_shader_abi
+cmake --build out/build/sharc-off --target lumin_editor lumin_shader_abi
+cmake --build out/build/nrd-off --target lumin_editor lumin_shader_abi
 ```
 
-三种配置必须分别排除不满足 `requires` 的 shader entries，并能在不引用已关闭 adapter 符号的情况下链接 sandbox。
+三种配置必须分别排除不满足 `requires` 的 shader entries，并能在不引用已关闭 adapter 符号的情况下链接 editor。
 
 ## 完整验证门槛
 
-发布前至少执行 Debug 与 Release 全量测试。具备 RT 设备时，还必须运行 `hardware` 集合、启动 sandbox，
+发布前至少执行 Debug 与 Release 全量测试。具备 RT 设备时，还必须运行 `hardware` 集合、启动 editor，
 并在 Vulkan validation layer 下分别覆盖 raster、raw RT GI、SHARC 与 NRD 路径。长时间历史稳定性可使用：
 
 ```powershell

@@ -1,5 +1,6 @@
 #include "application/Application.hpp"
 
+#include "config/EngineSettings.hpp"
 #include "project/ProjectSession.hpp"
 #include "render/LevelRenderer.hpp"
 #include "render/editor/Editor.hpp"
@@ -10,10 +11,10 @@
 
 #include <algorithm>
 #include <chrono>
-#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 #include <SDL3/SDL_filesystem.h>
@@ -22,12 +23,12 @@
 namespace lumin::core {
     namespace {
 
-        std::filesystem::path recentProjectsPath() {
+        std::filesystem::path preferenceFilePath(std::string_view filename) {
             char* preferencePath = SDL_GetPrefPath("Lumin", "LuminEngine");
             if (preferencePath == nullptr) {
                 return {};
             }
-            const std::filesystem::path result = std::filesystem::path{preferencePath} / "recent-projects.txt";
+            const std::filesystem::path result = std::filesystem::path{preferencePath} / filename;
             SDL_free(preferencePath);
             return result;
         }
@@ -99,6 +100,22 @@ namespace lumin::core {
 #endif
             renderer = std::make_unique<render::LevelRenderer>(window, vulkan, level, shaderDirectory);
             RendererIdleGuard idleGuard{*renderer};
+            const std::filesystem::path engineSettingsPath = preferenceFilePath("engine-settings.json");
+            const config::EngineSettingsLoadResult loadedSettings =
+                config::loadEngineSettings(engineSettingsPath, preferenceFilePath("recent-projects.txt"));
+            if (!loadedSettings.diagnostic.empty()) {
+                std::cerr << loadedSettings.diagnostic << '\n';
+            }
+            if (loadedSettings.needsSave) {
+                std::string migrationError;
+                if (!config::saveEngineSettings(engineSettingsPath, loadedSettings.settings, migrationError)) {
+                    std::cerr << migrationError << '\n';
+                }
+            }
+            std::optional<std::filesystem::path> startupProject;
+            if (loadedSettings.settings.startupDestination == config::StartupDestination::LastProject) {
+                startupProject = loadedSettings.settings.lastProject;
+            }
             editor = std::make_unique<editor::Editor>(
                 level, camera, renderSettings, scripts,
                 [this] {
@@ -116,31 +133,15 @@ namespace lumin::core {
                                              .openFolder =
                                                  [this](editor::DialogResultCallback callback) {
                                                      window.showOpenFolderDialog(std::move(callback));
-                                                 },
-                                             .loadRecentProjects =
-                                                 [] {
-                                                     std::vector<std::filesystem::path> result;
-                                                     std::ifstream stream(recentProjectsPath());
-                                                     std::string line;
-                                                     while (std::getline(stream, line) && result.size() < 10) {
-                                                         if (!line.empty() && std::filesystem::exists(line)) {
-                                                             result.emplace_back(line);
-                                                         }
-                                                     }
-                                                     return result;
-                                                 },
-                                             .saveRecentProjects =
-                                                 [](const std::vector<std::filesystem::path>& projects) {
-                                                     const std::filesystem::path path = recentProjectsPath();
-                                                     if (path.empty()) {
-                                                         return;
-                                                     }
-                                                     std::filesystem::create_directories(path.parent_path());
-                                                     std::ofstream stream(path, std::ios::trunc);
-                                                     for (const auto& projectPath : projects) {
-                                                         stream << projectPath.generic_string() << '\n';
-                                                     }
-                                                 }});
+                                                 }},
+                editor::EditorSettingsServices{
+                    .settings = loadedSettings.settings,
+                    .save = [engineSettingsPath](const config::EngineSettings& settings, std::string& error) {
+                        return config::saveEngineSettings(engineSettingsPath, settings, error);
+                    }});
+            if (startupProject.has_value()) {
+                static_cast<void>(editor->openProject(*startupProject));
+            }
 
             std::cout << "Level renderer ready: models=" << renderer->modelCount()
                       << " mdiDraws=" << renderer->mdiDrawCount()
@@ -167,6 +168,10 @@ namespace lumin::core {
                     renderer->requestViewportExtent(viewport.width, viewport.height);
                 }
                 const bool middleMouseDown = window.isMouseButtonDown(platform::MouseButton::Middle);
+                if (!project.hasProject() && viewportLookActive) {
+                    window.setRelativeMouseMode(false);
+                    viewportLookActive = false;
+                }
                 if (!viewportLookActive && middleMouseDown && viewport.hovered) {
                     window.setRelativeMouseMode(true);
                     viewportLookActive = true;
@@ -177,7 +182,8 @@ namespace lumin::core {
                 const render::ImGuiCaptureState capture = renderer->imguiCaptureState();
                 const bool escapeDown = window.isKeyDown(platform::Key::Escape);
                 const game::InputRoutingDecision routing =
-                    game::routeInput(!viewportLookActive && capture.uiClaimsInput(), escapeDown);
+                    project.hasProject() ? game::routeInput(!viewportLookActive && capture.uiClaimsInput(), escapeDown)
+                                         : game::InputRoutingDecision{};
                 if (routing.exitOnEscape && !escapeHeld) {
                     editor->requestExit();
                 }

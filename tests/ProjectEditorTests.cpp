@@ -243,6 +243,47 @@ namespace {
                 "Viewport picking must return empty for background clicks.");
     }
 
+    void testNewProjectResetsSceneState() {
+        TemporaryDirectory temporary;
+        lumin::scene::Level level;
+        lumin::scene::Camera camera;
+        lumin::scripting::ScriptRuntime scripts({.scriptRoot = temporary.path});
+        lumin::project::ProjectSession project(level, camera, scripts);
+        std::string error;
+        require(project.create(temporary.path, "First", error), error.c_str());
+
+        camera.setPosition({9.0f, 8.0f, 7.0f});
+        camera.setOrientation(25.0f, 15.0f);
+        lumin::scene::SceneEnvironment changedEnvironment = level.environment();
+        changedEnvironment.sun.direction = {1.0f, 0.0f, 0.0f};
+        changedEnvironment.sun.illuminanceLux = 42.0f;
+        level.setEnvironment(changedEnvironment);
+        project.setRenderSettings({.directLighting = false,
+                                   .shadows = false,
+                                   .rayTracing = false,
+                                   .ssao = false,
+                                   .sharc = false,
+                                   .nrd = false,
+                                   .taa = false,
+                                   .splitLambda = 0.1f,
+                                   .shadowDistance = 5.0f,
+                                   .exposure = 3.0f});
+        level.spawnActor();
+
+        require(project.create(temporary.path, "Second", error), error.c_str());
+        const lumin::scene::Camera defaultCamera;
+        const lumin::scene::SceneEnvironment defaultEnvironment;
+        const auto& defaults = project.renderSettings();
+        require(level.actorCount() == 0 && level.models().empty() && camera.position() == defaultCamera.position() &&
+                    camera.yawDegrees() == defaultCamera.yawDegrees() &&
+                    camera.pitchDegrees() == defaultCamera.pitchDegrees() && camera.cutEpoch() == 1 &&
+                    level.environment().sun.direction == defaultEnvironment.sun.direction &&
+                    level.environment().sun.illuminanceLux == defaultEnvironment.sun.illuminanceLux &&
+                    defaults.directLighting && defaults.shadows && defaults.rayTracing && defaults.ssao &&
+                    defaults.sharc && defaults.nrd && defaults.taa && defaults.exposure == 1.0f,
+                "A new empty project must reset scene, camera, environment, and project render settings.");
+    }
+
 } // namespace
 
 int main() {
@@ -250,6 +291,7 @@ int main() {
         testProjectAssetAndSceneRoundTrip();
         testFilesystemAssetIdentityAndMigration();
         testViewportPickingUsesNearestHit();
+        testNewProjectResetsSceneState();
         std::cout << "ProjectEditor PASS\n";
         return 0;
     } catch (const std::exception& exception) {

@@ -9,6 +9,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 add_library(lumin_core STATIC
     ${PROJECT_SOURCE_DIR}/core/assets/ImageLoader.cpp
     ${PROJECT_SOURCE_DIR}/core/assets/ObjLoader.cpp
+    ${PROJECT_SOURCE_DIR}/core/config/EngineSettings.cpp
     ${PROJECT_SOURCE_DIR}/core/project/ProjectSession.cpp
     ${PROJECT_SOURCE_DIR}/core/scene/Camera.cpp
     ${PROJECT_SOURCE_DIR}/core/scene/CameraController.cpp

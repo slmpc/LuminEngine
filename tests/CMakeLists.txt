@@ -197,6 +197,11 @@ lumin_configure_test(lumin_game_engine_tests)
 target_link_libraries(lumin_game_engine_tests PRIVATE Lumin::GameEngine)
 lumin_register_test(lumin_game_engine_tests GameEngineIntegration LABELS scene integration TIMEOUT 60)
 
+add_executable(lumin_engine_settings_tests EngineSettingsTests.cpp)
+lumin_configure_test(lumin_engine_settings_tests)
+target_link_libraries(lumin_engine_settings_tests PRIVATE Lumin::Core)
+lumin_register_test(lumin_engine_settings_tests EngineSettings LABELS config unit)
+
 add_executable(lumin_level_renderer_tests LevelRendererTests.cpp)
 lumin_configure_test(lumin_level_renderer_tests)
 target_compile_definitions(lumin_level_renderer_tests PRIVATE LUMIN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

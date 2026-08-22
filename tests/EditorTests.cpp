@@ -3,13 +3,15 @@
 #include "render/editor/EditorStyle.hpp"
 
 #include "assets/ObjLoader.hpp"
+#include "render/LevelRenderer.hpp"
 #include "render/editor/ImGuiContent.hpp"
 #include "render/editor/ImGuiLayer.hpp"
 #include "render/editor/ImGuiManager.hpp"
-#include "render/LevelRenderer.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
@@ -32,6 +34,22 @@ namespace {
         }
 
         int drawCount = 0;
+    };
+
+    class TemporaryDirectory {
+    public:
+        TemporaryDirectory() {
+            const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
+            path = std::filesystem::temp_directory_path() / ("lumin-editor-tests-" + std::to_string(suffix));
+            std::filesystem::create_directories(path);
+        }
+
+        ~TemporaryDirectory() {
+            std::error_code error;
+            std::filesystem::remove_all(path, error);
+        }
+
+        std::filesystem::path path;
     };
 
     void require(bool condition, const char* message) {
@@ -351,6 +369,78 @@ namespace {
                 "Inspector model materials must use the Level mutation API.");
     }
 
+    void testProjectNavigatorAndPersistedWindowVisibility() {
+        TemporaryDirectory temporary;
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+        io.IniFilename = nullptr;
+        io.LogFilename = nullptr;
+        io.DisplaySize = {1280.0f, 720.0f};
+        unsigned char* fontPixels = nullptr;
+        int fontWidth = 0;
+        int fontHeight = 0;
+        io.Fonts->GetTexDataAsRGBA32(&fontPixels, &fontWidth, &fontHeight);
+
+        lumin::scene::Level level;
+        lumin::scene::Camera camera;
+        lumin::render::RenderSettings renderSettings;
+        lumin::scripting::ScriptRuntime runtime({.scriptRoot = temporary.path});
+        lumin::project::ProjectSession project(level, camera, runtime);
+        lumin::config::EngineSettings persisted;
+        const auto missingProject = temporary.path / "Missing/Missing.luminproject";
+        persisted.startupDestination = lumin::config::StartupDestination::LastProject;
+        persisted.lastProject = missingProject;
+        persisted.recentProjects.push_back(missingProject);
+        persisted.windows.viewport = false;
+        int saveCount = 0;
+
+        lumin::editor::Editor editor{
+            level,
+            camera,
+            renderSettings,
+            runtime,
+            [] {
+                return lumin::render::gi::BackendInfo{"SSAO", false, false};
+            },
+            {},
+            &project,
+            {},
+            lumin::editor::EditorSettingsServices{
+                .settings = persisted,
+                .save = [&persisted, &saveCount](const lumin::config::EngineSettings& settings, std::string&) {
+                    persisted = settings;
+                    ++saveCount;
+                    return true;
+                }}};
+        require(!editor.openProject(missingProject) && saveCount == 1 && !persisted.lastProject.has_value() &&
+                    persisted.recentProjects.empty(),
+                "A missing startup project must be cleared and persisted before showing the navigator.");
+
+        ImGui::NewFrame();
+        ImGui::GetMainViewport()->WorkPos = {0.0f, 0.0f};
+        ImGui::GetMainViewport()->WorkSize = io.DisplaySize;
+        editor.draw();
+        ImGui::EndFrame();
+        require(ImGui::FindWindowByName("Project Navigator") != nullptr &&
+                    ImGui::FindWindowByName("Viewport") == nullptr &&
+                    !editor.viewportInteraction().hasRenderableExtent(),
+                "Without a project the navigator must replace editor panels and clear viewport interaction.");
+
+        std::string error;
+        require(project.create(temporary.path, "VisibleProject", error), error.c_str());
+        ImGui::NewFrame();
+        ImGui::GetMainViewport()->WorkPos = {0.0f, 0.0f};
+        ImGui::GetMainViewport()->WorkSize = io.DisplaySize;
+        editor.draw();
+        ImGui::EndFrame();
+        require(ImGui::FindWindowByName("Scene Hierarchy") != nullptr &&
+                    ImGui::FindWindowByName("Viewport") == nullptr &&
+                    !editor.viewportInteraction().hasRenderableExtent(),
+                "Persisted hidden panels must stay closed while the remaining editor layout is available.");
+        ImGui::DestroyContext();
+    }
+
 } // namespace
 
 int main() {
@@ -365,6 +455,7 @@ int main() {
         testFailedCommandAppearsOnce();
         testUninitializedBeginFrameIsSafe();
         testSettingsAndSelectionMutation();
+        testProjectNavigatorAndPersistedWindowVisibility();
         std::cout << "Editor PASS\n";
         return 0;
     } catch (const std::exception& error) {

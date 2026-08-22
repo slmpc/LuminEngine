@@ -9,7 +9,7 @@ Render 只读取 Core 的场景和资产接口，Application 是唯一同时组�
 
 `Application` 拥有窗口、Vulkan 上下文、`Level`、`Camera`、`ScriptRuntime`、`LevelRenderer` 和 `Editor`。
 具体游戏通过 `GameContext` 只接收 `Level`、`Camera` 与 `ScriptRuntime`，因此场景初始化和逐帧逻辑可以脱离 Vulkan
-测试。沙盒的 OBJ 选择、回退网格、材质和地形全部位于 `apps/sandbox/SandboxGame.*`，不属于通用应用宿主。
+测试。`apps/editor` 使用无行为的 `Game` 宿主，不创建演示场景；项目内容只由 `ProjectSession` 创建或加载。
 
 renderer 创建后会安装 idle 守卫，正常退出或异常展开都会先调用 `waitIdle()`；成员销毁顺序保证 Editor 和 renderer
 先于 Vulkan 上下文与窗口关闭。
@@ -20,8 +20,8 @@ renderer 创建后会安装 idle 守卫，正常退出或异常展开都会先�
 在 `tick`、`onSpawn` 或 `onDestroy` 中发起的生成与销毁请求会延迟处理，直到当前回调遍历可以安全提交变更。
 
 `Application` 先处理 SDL 事件并调用 `beginUiFrame(editor)` 构建当前 ImGui 帧，再读取当前帧 capture 状态。
-UI 未捕获输入时才更新相机和派发 `GameInput`，随后始终调用 `Game::tick`、`Level::tick(deltaSeconds)` 和渲染。
-Viewport 图像被悬停并按住鼠标右键时，应用启用 SDL relative mouse mode；该模式隐藏并约束鼠标，以帧内相对位移
+只有项目已打开且 UI 未捕获输入时才更新相机和派发 `GameInput`，随后调用 `Game::tick`、`Level::tick(deltaSeconds)` 和渲染。
+Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mouse mode；该模式隐藏并约束鼠标，以帧内相对位移
 更新相机 yaw/pitch，同时继续使用 `WASD`、`Space` 和 `Left Ctrl` 平移。松开右键后立即恢复普通鼠标模式。
 因此，即使编辑器捕获输入，游戏模拟、Actor 与 Lua 生命周期仍会推进。`drawFrame` 只消费已经准备的 UI 帧；旧调用方
 未显式准备时由 renderer 兼容性补建。交换链图像获取提前返回时会取消该 UI 帧，避免重复 `NewFrame` 或遗留活动帧。
@@ -175,13 +175,17 @@ GameEngine 只通过 `LevelRenderer::globalIlluminationBackendInfo()` 向 Editor
 
 ## Lua 与编辑器工作流
 
-启动时，`Application` 先调用 `Game::initialize` 组装场景，再通过自身拥有的 `ScriptRuntime` 加载可选启动脚本。
-`scriptRoot` 是脚本文件访问边界。`--script <path>` 与 `--script=<path>` 都会将显式脚本所在目录设为根目录；默认值为
-`apps/sandbox/scripts/sandbox.lua`。加载失败会终止启动并报告源路径，事务式加载保证失败脚本不留下 Actor。
+启动时，`Application` 先调用 `Game::initialize`，再通过自身拥有的 `ScriptRuntime` 加载调用方在
+`ApplicationConfig::startupScript` 中提供的可选启动脚本。`scriptRoot` 是脚本文件访问边界；加载失败会终止启动并报告
+源路径，事务式加载保证失败脚本不留下 Actor。独立 editor 应用不设置启动脚本。
 
 同一个 `ScriptRuntime` 被传给 `Game` 和 `Editor`。编辑器可以查看脚本与诊断、重新加载变更并执行 Lua 控制台命令；
 Scene 面板选择仍引用同一个 `Level`。每帧渲染调用 `drawFrame(camera, settings, editor)`，因此编辑器与游戏视图共享渲染
 设置和后端状态。ImGui SDL3 后端负责文本输入与 IME，应用层不重复调用 SDL 文本输入 API。
+
+Application 从 SDL 首选目录加载版本化 `engine-settings.json`，并把设置快照及保存回调注入 Editor。没有项目时 Editor
+绘制全工作区 `Project Navigator`；有项目时才构建 dockspace。`File > Configuration` 修改启动目标，`View` 和面板标题栏
+修改六个面板的全局可见性。缺失或损坏的上次项目不会阻止启动，而是清除该路径并回退到导航器。
 
 ## 级联阴影
 

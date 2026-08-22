@@ -1,8 +1,8 @@
 # Lumin Engine
 
-Lumin Engine 是一个使用 C++23、SDL3、Slang 和动态渲染构建的紧凑型 Vulkan 1.3 渲染器与场景沙盒。
+Lumin Engine 是一个使用 C++23、SDL3、Slang 和动态渲染构建的紧凑型 Vulkan 1.3 渲染器与场景编辑器。
 
-当前沙盒包含：
+当前引擎包含：
 
 - 由 `Level` 管理、支持延迟生成与销毁及逐帧 `Tick` 的 Actor 系统。
 - 可生成法线并支持高度查询的程序化高度场地形。
@@ -14,7 +14,7 @@ Lumin Engine 是一个使用 C++23、SDL3、Slang 和动态渲染构建的紧凑
 
 ## 目录结构
 
-- `apps/sandbox`：可运行的示例程序。
+- `apps/editor`：可运行的项目编辑器。
 - `core`：不依赖图形 API 的场景、资产、脚本和 Game API。
 - `render`：独立渲染模块，包含 Vulkan/NvRHI、FrameGraph、GPU Scene、GI、Atmosphere 和编辑器 UI。
 - `application`：连接 Core 与 Render 的应用组合层；游戏逻辑不会反向进入 Render。
@@ -64,27 +64,14 @@ cmake --preset debug -DLUMIN_RAY_TRACING=OFF
 其他值会在 configure 阶段报错。该选择会写入生成头
 `generated/include/render/RayTracingBuildConfiguration.hpp`，属于构建产物能力，不能由运行时描述覆盖。
 
-运行沙盒：
+运行编辑器：
 
 ```powershell
 .\out\build\debug\LuminEngine.exe
 ```
 
-沙盒默认加载仓库内的 `apps/sandbox/scripts/sandbox.lua`。也可以用以下两种等价形式指定启动脚本：
-
-```powershell
-.\out\build\debug\LuminEngine.exe --script .\my-game\startup.lua
-.\out\build\debug\LuminEngine.exe --script=.\my-game\startup.lua
-```
-
-显式脚本路径的父目录会成为该次运行的 `scriptRoot`。脚本及其派生加载只能访问此目录内的文件；缺失、语法错误或
-越界路径会在启动时返回明确错误，且不会留下无主的脚本 Actor。
-
-也可以使用 OBJ 文件替换默认模型：
-
-```powershell
-.\out\build\debug\LuminEngine.exe .\assets\models\your_model.obj
-```
+编辑器不会创建演示场景，默认显示 `Project Navigator`。可从最近项目列表打开项目，或使用 `New Project...` 和
+`Open Project...` 进入项目工作区。
 
 如需在 SDL 和 Vulkan 初始化前挂载 RenderDoc，请同时传入启用参数和 RenderDoc 动态库路径：
 
@@ -117,7 +104,14 @@ NRD 开关；TAA 是两条路径共用的选项。面板还可调整相机、曝
 
 ## 项目与资源编辑
 
-编辑器的 `File` 菜单提供 `New Project`、`Open Project`、`Recent Projects` 和 `Save Scene`。
+编辑器的 `File` 菜单提供 `New Project`、`Open Project`、`Recent Projects`、`Save Scene`、`Close Project` 和
+`Configuration`。关闭 dirty 项目时会先显示 Save、Discard、Cancel。`Configuration` 可选择启动时显示项目导航器或
+直接打开上次成功开启的项目；路径失效或项目损坏时会安全回退到导航器。
+
+`View` 菜单控制 `Viewport`、`Scene Hierarchy`、`Details`、`Content Browser`、`Script Console` 和 `Render / GI`。
+通过标题栏关闭或菜单切换的状态会跨重启保存。全局设置位于 SDL 为 `Lumin/LuminEngine` 分配的首选目录中的
+`engine-settings.json`；旧 `recent-projects.txt` 会在首次启动时自动迁移。
+
 项目会创建 `.luminproject` 清单、`Scenes/Main.lumin.scene`、资源注册表，以及 Mesh、Texture、Script 内容目录。
 项目根目录任意位置的 OBJ、PNG/JPG 和 Lua 文件会被自动登记为带稳定 `AssetId` 的资源，内容在实际使用时加载。
 
@@ -127,15 +121,12 @@ NRD 开关；TAA 是两条路径共用的选项。面板还可调整相机、曝
 材质、脚本组件、环境、编辑器相机和渲染设置。完整目录和生命周期约定见
 [`docs/project-editor.md`](docs/project-editor.md)。
 
-如果未提供 OBJ 路径，沙盒会优先加载 `assets/models/stanford-bunny.obj`；该文件不可用时则使用内置立方体。
-场景还会创建一个程序化地形 Actor 和第二个内置网格。
-
-默认主模型使用 `assets/materials/aerial_asphalt_01` 下的沥青材质。base color 按 sRGB 解码，OpenGL normal
+示例材质位于 `assets/materials/aerial_asphalt_01`。base color 按 sRGB 解码，OpenGL normal
 贴图在采样时修正 Y 方向，roughness 写入 G-buffer 的法线附件 alpha，metallic 写入反照率附件 alpha。
 该材质没有 metallic 或 AO 贴图，因此使用 `metallic=0`；Legacy 路径可由 SSAO 提供环境遮蔽。缺少 `vt` 的 OBJ 会在加载时
 生成柱面 UV。当前材质路径不执行几何位移或视差映射。
 
-材质贴图不纳入版本控制。首次运行沙盒前，请使用 Python 3 下载清单中的全部材质：
+材质贴图不纳入版本控制。需要使用示例材质时，请使用 Python 3 下载清单中的全部材质：
 
 ```powershell
 python scripts/download_materials.py

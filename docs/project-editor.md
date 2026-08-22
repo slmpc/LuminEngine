@@ -44,8 +44,16 @@ roughness 槽。三张贴图全部就绪前材质使用无纹理 fallback，避�
 禁用脚本只跳过 Tick，移除或销毁 Actor 时仍执行销毁回调。旧 `ScriptRuntime::spawn` 保留兼容，它会创建普通脚本宿主
 Actor 并调用同一附着接口。
 
-项目场景只保存带持久 ID 的通用 Actor。Sandbox 中未注册的原生 C++ Actor、程序化网格和其他临时运行时对象不会写入
-项目文件；创建或打开项目会用项目场景替换当前演示场景。
+项目场景只保存带持久 ID 的通用 Actor。未注册的原生 C++ Actor、程序化网格和其他临时运行时对象不会写入项目文件。
+新项目使用空场景，并重置相机、环境和项目渲染设置。
+
+## 项目导航与全局设置
+
+没有项目时，编辑器只显示 `Project Navigator`，其中提供最近项目、`New Project...` 和 `Open Project...`。项目打开后
+切换到 dock 工作区；`File > Close Project` 关闭当前会话并返回导航器，dirty 项目继续使用 Save、Discard、Cancel。
+
+`File > Configuration` 可选择默认进入导航器或打开上次项目。`View` 菜单及各面板标题栏控制六个编辑器面板的可见性。
+启动模式、上次项目、最近十个项目和面板可见性保存在 SDL 首选目录的 `engine-settings.json` 中，不写入项目文件。
 
 ## Viewport 输入
 

@@ -11,6 +11,7 @@
 
 #include <glm/vec3.hpp>
 
+#include "config/EngineSettings.hpp"
 #include "project/ProjectSession.hpp"
 #include "render/RenderSettings.hpp"
 #include "render/editor/ImGuiContent.hpp"
@@ -48,8 +49,13 @@ namespace lumin::editor {
     struct EditorDialogServices {
         std::function<void(DialogResultCallback)> openProject;
         std::function<void(DialogResultCallback)> openFolder;
-        std::function<std::vector<std::filesystem::path>()> loadRecentProjects;
-        std::function<void(const std::vector<std::filesystem::path>&)> saveRecentProjects;
+    };
+
+    using SaveEngineSettingsCallback = std::function<bool(const config::EngineSettings& settings, std::string& error)>;
+
+    struct EditorSettingsServices {
+        config::EngineSettings settings;
+        SaveEngineSettingsCallback save;
     };
 
     struct ViewportInteractionState {
@@ -68,7 +74,7 @@ namespace lumin::editor {
         Editor(scene::Level& level, scene::Camera& camera, render::RenderSettings& settings,
                scripting::ScriptRuntime& scripts, BackendInfoProvider backendInfo,
                ViewportImageProvider viewportImage = {}, project::ProjectSession* project = nullptr,
-               EditorDialogServices dialogs = {});
+               EditorDialogServices dialogs = {}, EditorSettingsServices settingsServices = {});
         ~Editor() override;
 
         Editor(const Editor&) = delete;
@@ -116,6 +122,7 @@ namespace lumin::editor {
         [[nodiscard]] std::string commandHistoryPrevious(std::string_view draft);
         [[nodiscard]] std::string commandHistoryNext();
         [[nodiscard]] std::vector<scripting::ScriptReloadResult> reloadChangedScripts();
+        bool openProject(const std::filesystem::path& path);
         [[nodiscard]] bool exitRequested() const noexcept;
         void requestExit();
 

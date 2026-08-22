@@ -26,7 +26,7 @@ project(LuminEngine VERSION 0.1.0 LANGUAGES CXX)
 # 模块在各自的 CMakeLists.txt 中发现依赖；将 imported targets 提升到目录树全局，供 tests/apps 复用。
 set(CMAKE_FIND_PACKAGE_TARGETS_GLOBAL ON)
 
-option(LUMIN_BUILD_SANDBOX "Build the sandbox executable." ON)
+option(LUMIN_BUILD_EDITOR "Build the editor executable." ON)
 option(LUMIN_BUILD_TESTS "Build the engine tests." ON)
 
 set(CMAKE_CXX_STANDARD 23)
@@ -76,8 +76,8 @@ add_library(lumin_engine INTERFACE)
 add_library(Lumin::Engine ALIAS lumin_engine)
 target_link_libraries(lumin_engine INTERFACE Lumin::Application)
 
-if(LUMIN_BUILD_SANDBOX)
-    add_subdirectory(apps/sandbox)
+if(LUMIN_BUILD_EDITOR)
+    add_subdirectory(apps/editor)
 endif()
 
 if(LUMIN_BUILD_TESTS)
