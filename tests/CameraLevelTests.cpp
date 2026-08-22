@@ -326,6 +326,20 @@ namespace {
         asphalt.textures->roughness = asphaltTextures.normal;
         require(level.setModelMaterial(first, asphalt) && level.topologyRevision() > textureTopologyRevision,
                 "Changing PBR texture paths must rebuild texture-array resources.");
+
+        lumin::scene::Level partialTextureLevel;
+        const auto partialTextureMesh = partialTextureLevel.addMesh(makeTriangle("partial-texture-material"));
+        lumin::scene::Material partialTextureMaterial;
+        partialTextureMaterial.textures = lumin::scene::PbrTextureSet{.baseColor = "base-color.png"};
+        partialTextureLevel.addModel(partialTextureMesh, {}, partialTextureMaterial);
+        const auto partialTextureWorld = lumin::render::world::RenderWorldExtractor::extract(partialTextureLevel);
+        const lumin::render::ModelBatch partialTextureBatch =
+            lumin::render::ModelRenderer::buildBatch(*partialTextureWorld);
+        require(partialTextureBatch.objects.size() == 1 &&
+                    nearlyEqual(partialTextureBatch.objects.front().materialParameters.z, 0.0f) &&
+                    partialTextureBatch.materials.front().metadata.y == 0U &&
+                    partialTextureBatch.materials.front().metadata.z == 0U,
+                "Incomplete texture sets must use the fallback descriptor until all images are assigned.");
     }
 
     struct ActorCounters {

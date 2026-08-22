@@ -53,6 +53,14 @@ namespace lumin::scene {
         std::filesystem::path roughness;
         bool flipNormalY = true;
 
+        [[nodiscard]] bool complete() const noexcept {
+            return !baseColor.empty() && !normal.empty() && !roughness.empty();
+        }
+
+        [[nodiscard]] bool empty() const noexcept {
+            return baseColor.empty() && normal.empty() && roughness.empty();
+        }
+
         /** 只比较会改变 descriptor image 绑定的路径，不比较采样约定。 */
         [[nodiscard]] bool referencesSameImages(const PbrTextureSet& other) const noexcept {
             return baseColor == other.baseColor && normal == other.normal && roughness == other.roughness;

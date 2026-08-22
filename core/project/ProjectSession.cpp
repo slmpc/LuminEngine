@@ -141,7 +141,7 @@ namespace lumin::project {
                        {"specular", vectorJson(material.blinnPhong.specularColor)},
                        {"shininess", material.blinnPhong.shininess},
                        {"textureScale", material.textureScale}};
-            if (material.textures.has_value()) {
+            if (material.textures.has_value() && !material.textures->empty()) {
                 const auto makeRelative = [&root](const std::filesystem::path& path) {
                     if (path.empty()) {
                         return std::string{};
@@ -178,7 +178,9 @@ namespace lumin::project {
                 textures.normal = resolve(iterator->value("normal", std::string{}));
                 textures.roughness = resolve(iterator->value("roughness", std::string{}));
                 textures.flipNormalY = iterator->value("flipNormalY", true);
-                material.textures = std::move(textures);
+                if (!textures.empty()) {
+                    material.textures = std::move(textures);
+                }
             }
             return material;
         }

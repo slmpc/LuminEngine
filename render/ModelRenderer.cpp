@@ -55,7 +55,7 @@ namespace lumin::render {
             std::vector<scene::PbrTextureSet> textureSets;
             for (const world::RenderWorldInstance& instance : worldSnapshot.instances()) {
                 const scene::ModelInstance& model = instance.model;
-                if (!model.material.textures.has_value()) {
+                if (!model.material.textures.has_value() || !model.material.textures->complete()) {
                     continue;
                 }
                 const auto existing = std::find_if(textureSets.begin(), textureSets.end(), [&](const auto& candidate) {
@@ -70,7 +70,7 @@ namespace lumin::render {
 
         std::uint32_t textureDescriptorIndexFor(const scene::Material& material,
                                                 const std::vector<scene::PbrTextureSet>& textureSets) {
-            if (!material.textures.has_value()) {
+            if (!material.textures.has_value() || !material.textures->complete()) {
                 return 0;
             }
             const auto iterator = std::find_if(textureSets.begin(), textureSets.end(), [&](const auto& candidate) {

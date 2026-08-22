@@ -269,6 +269,13 @@ namespace {
                     std::abs(gpu.surfaceParameters.x - expectedRoughness) < 1e-6f && gpu.surfaceParameters.y == 2.0f &&
                     gpu.surfaceParameters.z == -1.0f && gpu.surfaceParameters.w == 0.0f,
                 "Blinn-Phong GPU packing must preserve direct-lighting data and derive canonical NRD roughness.");
+
+        lumin::scene::Material incompleteTextures;
+        incompleteTextures.textures = lumin::scene::PbrTextureSet{.baseColor = "base-color.png"};
+        const GpuMaterialData incompleteGpu = lumin::render::gpu::packGpuMaterial(incompleteTextures, 17U);
+        require(incompleteGpu.metadata.y == 0U && incompleteGpu.metadata.z == 0U &&
+                    incompleteGpu.surfaceParameters.z == 1.0f,
+                "Incomplete texture sets must not expose a descriptor or normal-map convention to shaders.");
     }
 
     void testSurfaceModelChangesPatchOnlyMaterialData() {

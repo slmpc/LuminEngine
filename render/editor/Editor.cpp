@@ -12,9 +12,11 @@
 #include <stdexcept>
 #include <utility>
 
+// clang-format off
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <ImGuizmo.h>
+// clang-format on
 
 namespace lumin::editor {
     namespace {
@@ -788,9 +790,8 @@ namespace lumin::editor {
             propertyLabel("Texture scale");
             changed |= ImGui::DragFloat("##textureScale", &material.textureScale, 0.05f, 0.01f, 100.0f);
             if (projectSession != nullptr && projectSession->hasProject()) {
-                if (!material.textures.has_value()) {
-                    material.textures = scene::PbrTextureSet{};
-                }
+                scene::PbrTextureSet textureDraft = material.textures.value_or(scene::PbrTextureSet{});
+                bool textureChanged = false;
                 const auto textureSlot = [&](const char* label, const char* id, std::filesystem::path& target) {
                     propertyLabel(label);
                     const std::string value = target.empty() ? "None" : target.filename().string();
@@ -803,15 +804,19 @@ namespace lumin::editor {
                             if (const project::AssetRecord* record = projectSession->assets().find(asset);
                                 record != nullptr && record->type == project::AssetType::Texture) {
                                 target = projectSession->rootDirectory() / record->relativePath;
-                                changed = true;
+                                textureChanged = true;
                             }
                         }
                         ImGui::EndDragDropTarget();
                     }
                 };
-                textureSlot("Base color", "##baseColorTexture", material.textures->baseColor);
-                textureSlot("Normal", "##normalTexture", material.textures->normal);
-                textureSlot("Roughness", "##roughnessTexture", material.textures->roughness);
+                textureSlot("Base color", "##baseColorTexture", textureDraft.baseColor);
+                textureSlot("Normal", "##normalTexture", textureDraft.normal);
+                textureSlot("Roughness", "##roughnessTexture", textureDraft.roughness);
+                if (textureChanged) {
+                    material.textures = std::move(textureDraft);
+                    changed = true;
+                }
             }
             if (changed) {
                 setSelectedMaterial(material);

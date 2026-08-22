@@ -8,6 +8,8 @@
 #include <iostream>
 #include <stdexcept>
 
+#include <nlohmann/json.hpp>
+
 namespace {
 
     void require(bool condition, const char* message) {
@@ -87,12 +89,23 @@ namespace {
         require(project.save(error), error.c_str());
 
         const auto projectFile = project.projectFile();
+        const auto scenePath = project.rootDirectory() / "Scenes/Main.lumin.scene";
+        nlohmann::json sceneDocument;
+        {
+            std::ifstream sceneStream(scenePath, std::ios::binary);
+            sceneStream >> sceneDocument;
+        }
+        sceneDocument["actors"][0]["material"]["textures"] = {
+            {"baseColor", ""}, {"normal", ""}, {"roughness", ""}, {"flipNormalY", true}};
+        writeText(scenePath, sceneDocument.dump(2));
         require(project.open(projectFile, error), error.c_str());
         require(level.actorCount() == 1, "Scene load must replace the previous Level contents.");
         const lumin::scene::Actor* restored = level.actor(level.actorHandles().front());
         require(restored != nullptr && restored->name() == "Round Trip Actor" &&
                     restored->transform().position == glm::vec3(2.0f, 3.0f, 4.0f),
                 "Persistent Actor identity, name, and transform must round-trip.");
+        require(!restored->material().textures.has_value(),
+                "Legacy empty texture objects must load as an untextured material.");
         const auto restoredScripts = scripts.scriptsForActor(restored->handle());
         require(restoredScripts.size() == 2 && !restoredScripts.front().enabled && restoredScripts.back().enabled,
                 "Script order and enabled state must round-trip.");

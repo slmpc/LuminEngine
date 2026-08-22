@@ -28,7 +28,7 @@ ProjectName/
 
 被当前场景模型、材质或脚本组件引用的资源不能删除。已绑定脚本必须先从 Actor 移除才能重命名，以免热重载源路径
 失效。模型资源可从 `Content Browser` 双击或拖到 Viewport 创建 Actor，纹理可拖到材质的 base color、normal 和
-roughness 槽。
+roughness 槽。三张贴图全部就绪前材质使用无纹理 fallback，避免编辑中的部分纹理集触发渲染失败。
 
 ## Actor 与脚本
 

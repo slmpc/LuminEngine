@@ -195,14 +195,15 @@ namespace lumin::render::gpu {
                                     : 48.0f;
         const float textureScale =
             std::isfinite(material.textureScale) ? std::max(std::abs(material.textureScale), 0.0001f) : 1.0f;
-        const float normalYSign = material.textures.has_value() && material.textures->flipNormalY ? -1.0f : 1.0f;
+        const bool hasTextures = material.textures.has_value() && material.textures->complete();
+        const float normalYSign = hasTextures && material.textures->flipNormalY ? -1.0f : 1.0f;
 
         return GpuMaterialData{
             .baseColorMetallic = glm::vec4{baseColor, metallic},
             .specularColorShininess = glm::vec4{specularColor, shininess},
             .surfaceParameters = glm::vec4{materialDenoisingRoughness(material), textureScale, normalYSign, 0.0f},
-            .metadata = glm::uvec4{static_cast<std::uint32_t>(material.surfaceModel), textureDescriptorIndex,
-                                   material.textures.has_value() ? 1U : 0U, 0U},
+            .metadata = glm::uvec4{static_cast<std::uint32_t>(material.surfaceModel),
+                                   hasTextures ? textureDescriptorIndex : 0U, hasTextures ? 1U : 0U, 0U},
         };
     }
 
