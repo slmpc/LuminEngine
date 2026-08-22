@@ -80,8 +80,9 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 
 `application/Application.cpp` 是组合层，不属于 Core 或 Render 的内部实现。它创建窗口、场景、脚本、主线程
 `RenderFramePacketBuilder`、settings adapter 和异步 `Renderer`，并把 `Game` 注入到 Core 的 `GameContext`。Application
-在每帧完成场景、相机、设置和 ImGui 更新后构建完全拥有的 packet；Runtime 不读取这些活动对象。`VulkanContext` 仅在
-主线程完成 SDL surface bootstrap，随即移交给渲染线程，Application 不保留 GPU context 成员。
+在每帧完成场景、相机、设置和 ImGui 更新后构建完全拥有的 packet；Runtime 不读取这些活动对象。Application 在主线程
+创建只包含 Vulkan instance 与 SDL surface 的 `VulkanSurfaceBootstrap` 并立即移交；`VulkanContext` 及 device、NvRHI、
+swapchain 由渲染线程创建和销毁，Application 不保留 GPU context 成员。
 `Lumin::Application`（兼容名
 `Lumin::GameEngine`）链接 `Lumin::Core` 与 `Lumin::Render`；Render 不反向链接 Application。
 

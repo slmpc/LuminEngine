@@ -39,14 +39,14 @@ namespace lumin::render {
     }
 
     struct Renderer::Impl final {
-        Impl(std::unique_ptr<VulkanContext> contextValue, world::RenderWorldSnapshotPtr initialWorldValue,
+        Impl(std::unique_ptr<VulkanSurfaceBootstrap> bootstrapValue, world::RenderWorldSnapshotPtr initialWorldValue,
              std::filesystem::path shaderDirectoryValue, core::UiFontAtlas uiFontAtlasValue,
              std::unique_ptr<gi::GlobalIlluminationBackend> globalIlluminationValue)
-            : context(std::move(contextValue)), initialWorld(std::move(initialWorldValue)),
+            : bootstrap(std::move(bootstrapValue)), initialWorld(std::move(initialWorldValue)),
               shaderDirectory(std::move(shaderDirectoryValue)), uiFontAtlas(std::move(uiFontAtlasValue)),
               globalIllumination(std::move(globalIlluminationValue)) {
-            if (context == nullptr || initialWorld == nullptr) {
-                throw std::invalid_argument("Renderer requires a VulkanContext and initial render-world snapshot.");
+            if (bootstrap == nullptr || initialWorld == nullptr) {
+                throw std::invalid_argument("Renderer requires a Vulkan surface bootstrap and initial render-world snapshot.");
             }
             worker = std::thread([this] {
                 run();
@@ -96,7 +96,9 @@ namespace lumin::render {
             std::unique_ptr<LevelRenderer> renderer;
             std::optional<runtime::RenderMailboxControl> activeControl;
             try {
-                // VulkanContext 已完成 SDL surface bootstrap；从这里起只有本线程访问 GPU 对象。
+                // 主线程只完成 instance/surface bootstrap；设备、NvRHI、交换链及其销毁全部归本线程。
+                context = std::make_unique<VulkanContext>(std::move(*bootstrap));
+                bootstrap.reset();
                 renderer =
                     std::make_unique<LevelRenderer>(*context, std::move(initialWorld), std::move(shaderDirectory),
                                                     std::move(uiFontAtlas), std::move(globalIllumination));
@@ -236,6 +238,7 @@ namespace lumin::render {
             }
         }
 
+        std::unique_ptr<VulkanSurfaceBootstrap> bootstrap;
         std::unique_ptr<VulkanContext> context;
         world::RenderWorldSnapshotPtr initialWorld;
         std::filesystem::path shaderDirectory;
@@ -251,10 +254,10 @@ namespace lumin::render {
         std::thread worker;
     };
 
-    Renderer::Renderer(std::unique_ptr<VulkanContext> context, world::RenderWorldSnapshotPtr initialWorld,
+    Renderer::Renderer(std::unique_ptr<VulkanSurfaceBootstrap> bootstrap, world::RenderWorldSnapshotPtr initialWorld,
                        std::filesystem::path shaderDirectory, core::UiFontAtlas uiFontAtlas,
                        std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
-        : impl_(std::make_unique<Impl>(std::move(context), std::move(initialWorld), std::move(shaderDirectory),
+        : impl_(std::make_unique<Impl>(std::move(bootstrap), std::move(initialWorld), std::move(shaderDirectory),
                                        std::move(uiFontAtlas), std::move(globalIllumination))) {
     }
 

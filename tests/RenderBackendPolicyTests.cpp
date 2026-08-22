@@ -229,10 +229,12 @@ namespace {
         const std::string application = stripCommentsAndLiterals(readFile(root / "application/Application.cpp"));
         const std::string rendererRuntime = stripCommentsAndLiterals(readFile(root / "render/runtime/Renderer.cpp"));
         if (application.find("std::unique_ptr<render::Renderer> renderer") == std::string::npos ||
-            application.find("render::VulkanContext vulkan") != std::string::npos ||
+            application.find("make_unique<render::VulkanSurfaceBootstrap>") == std::string::npos ||
+            application.find("make_unique<render::VulkanContext>") != std::string::npos ||
+            rendererRuntime.find("make_unique<VulkanContext>(std::move(*bootstrap))") == std::string::npos ||
             rendererRuntime.find("renderer.reset();\n                    context.reset();") == std::string::npos) {
             throw std::runtime_error(
-                "Renderer thread must destroy LevelRenderer children before its owned VulkanContext");
+                "Main thread must transfer a surface bootstrap before the Renderer thread creates and destroys VulkanContext");
         }
 
         const auto recordCleanup = [](lumin::render::detail::BackendLifetimeAvailability availability) {

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -19,23 +20,73 @@ namespace lumin::platform {
 
 namespace lumin::render {
 
+    /** Vulkan 后端创建参数。 */
     struct VulkanContextDesc {
+        /** 写入 Vulkan instance 的应用名称。 */
         std::string applicationName = "Lumin Engine";
+        /** 请求启用可用的 Vulkan validation layer。 */
         bool enableValidation = true;
 
         /// 控制 Vulkan RT 运行阶段策略；`build` 字段由 CMake 生成配置覆盖，调用方不能修改构建能力。
         RayTracingPolicy rayTracing;
     };
 
+    /** 一次可提交 Vulkan 帧的 NvRHI 命令列表和帧槽身份。 */
     struct VulkanFrame {
+        /** 由当前 Context 创建且已经打开的命令列表。 */
         nvrhi::CommandListHandle commandList;
+        /** 当前 in-flight frame slot。 */
         std::uint32_t frameIndex = 0;
+        /** 本帧 acquire 到的交换链图像。 */
         std::uint32_t imageIndex = 0;
     };
 
+    /**
+     * @brief 主线程创建的 Vulkan instance 与 SDL window surface 所有权包。
+     *
+     * SDL 要求 surface bootstrap 与窗口事件生命周期保持在主线程。构造完成后必须立即移动给 `Renderer`；
+     * 除析构外不公开原生句柄，避免主线程在移交后继续访问 Vulkan 对象。
+     */
+    class VulkanSurfaceBootstrap final {
+    public:
+        /**
+         * @brief 为窗口创建 Vulkan instance 和 SDL surface。
+         * @param window surface 所属窗口；只在构造期间访问，不会持久保存。
+         * @param desc Vulkan instance 与设备策略描述。
+         * @throws std::runtime_error Vulkan 1.3、instance 或 SDL surface 创建失败时抛出。
+         * @thread_safety 必须在拥有 SDL window 的主线程调用。
+         */
+        VulkanSurfaceBootstrap(platform::Window& window, VulkanContextDesc desc);
+        /** 释放尚未移交的 surface 和 instance。 */
+        ~VulkanSurfaceBootstrap();
+
+        VulkanSurfaceBootstrap(VulkanSurfaceBootstrap&&) noexcept;
+        VulkanSurfaceBootstrap& operator=(VulkanSurfaceBootstrap&&) noexcept;
+        VulkanSurfaceBootstrap(const VulkanSurfaceBootstrap&) = delete;
+        VulkanSurfaceBootstrap& operator=(const VulkanSurfaceBootstrap&) = delete;
+
+    private:
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
+
+        friend class VulkanContext;
+    };
+
+    /**
+     * @brief 渲染线程独占的 Vulkan 1.3/NvRHI 设备、交换链与提交上下文。
+     *
+     * 构造后所有方法（只读 capability accessor 除外）均只能在构造线程调用。该类型是引擎唯一允许直接使用
+     * 原生 Vulkan device、queue、swapchain 和同步对象的边界。
+     */
     class VulkanContext {
     public:
-        VulkanContext(platform::Window& window, const VulkanContextDesc& desc);
+        /**
+         * @brief 接收主线程 bootstrap，并在当前渲染线程创建设备、NvRHI 与交换链。
+         * @param bootstrap 唯一的 instance/surface 所有权；构造开始后即被消费。
+         * @throws std::exception 设备能力不足或任一后端资源创建失败时抛出。
+         * @thread_safety 必须在专用渲染线程构造和销毁。
+         */
+        explicit VulkanContext(VulkanSurfaceBootstrap bootstrap);
         ~VulkanContext();
 
         VulkanContext(const VulkanContext&) = delete;
@@ -120,9 +171,7 @@ namespace lumin::render {
             [[nodiscard]] bool complete() const noexcept;
         };
 
-        void createInstance();
         void createDebugMessenger();
-        void createSurface(platform::Window& window);
         void pickPhysicalDevice();
         void createDevice();
         void createRhiDevice();
@@ -137,8 +186,6 @@ namespace lumin::render {
         void createRenderFinishedSemaphores();
         void destroy() noexcept;
 
-        [[nodiscard]] bool validationLayersAvailable() const;
-        [[nodiscard]] bool instanceExtensionAvailable(const char* extensionName) const;
         [[nodiscard]] QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) const;
         [[nodiscard]] bool deviceExtensionsAvailable(VkPhysicalDevice device) const;
         [[nodiscard]] VulkanRayTracingSupport queryRayTracingSupport(VkPhysicalDevice device) const;
@@ -156,7 +203,6 @@ namespace lumin::render {
 
         VulkanContextDesc desc_;
         core::SurfaceState surfaceState_;
-        std::vector<const char*> requiredInstanceExtensions_;
         bool validationEnabled_ = false;
         bool debugUtilsEnabled_ = false;
         std::uint32_t apiVersion_ = VK_API_VERSION_1_0;

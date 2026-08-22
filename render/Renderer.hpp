@@ -11,7 +11,7 @@
 
 namespace lumin::render {
 
-    class VulkanContext;
+    class VulkanSurfaceBootstrap;
 
     /** Renderer 异步 Runtime 的生命周期状态。 */
     enum class RendererState : std::uint8_t {
@@ -78,14 +78,14 @@ namespace lumin::render {
     /**
      * @brief 主线程使用的异步渲染门面。
      *
-     * 构造函数完成启动握手后，专用渲染线程独占传入的 `VulkanContext` 及其全部 NvRHI/Vulkan 子资源。
+     * 构造函数完成启动握手后，专用渲染线程消费 surface bootstrap，并独占创建出的全部 NvRHI/Vulkan 子资源。
      * `submit()` 使用 latest-wins 语义；`flush()` 与 `stop()` 进入独立 FIFO 控制队列，永不被 frame 替换。
      */
     class Renderer final {
     public:
         /**
          * @brief 创建专用渲染线程并等待 Runtime 初始化完成。
-         * @param context 已完成 SDL surface bootstrap 的 Context；所有权立即转入渲染线程。
+         * @param bootstrap 主线程完成的 SDL surface bootstrap；所有权立即转入渲染线程。
          * @param initialWorld 完全拥有的初始不可变世界快照。
          * @param shaderDirectory 编译后 shader 目录。
          * @param uiFontAtlas 主线程深拷贝的字体图集。
@@ -93,7 +93,7 @@ namespace lumin::render {
          * @throws std::invalid_argument 必需输入为空时抛出。
          * @throws std::exception 渲染线程启动期间的初始化异常会在构造线程重新抛出。
          */
-        Renderer(std::unique_ptr<VulkanContext> context, world::RenderWorldSnapshotPtr initialWorld,
+        Renderer(std::unique_ptr<VulkanSurfaceBootstrap> bootstrap, world::RenderWorldSnapshotPtr initialWorld,
                  std::filesystem::path shaderDirectory, core::UiFontAtlas uiFontAtlas,
                  std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination = {});
 

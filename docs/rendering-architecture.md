@@ -9,13 +9,14 @@ SDL、NvRHI 或渲染器；Render 只读取 Core 的场景和资产接口，Appl
 使用 PImpl，只公开窗口配置、脚本配置和 `Game` 注入点，不泄露 SDL、Vulkan、renderer 或场景的具体所有权。
 
 `Application` 拥有窗口、`Level`、`Camera`、`ScriptRuntime`、主线程 `RenderFramePacketBuilder`、
-`RenderSettingsPanelAdapter`、异步 `Renderer` 和 `Editor`。`VulkanContext` 在主线程完成 SDL surface bootstrap 后立即把
-所有权转入 `Renderer`；专用渲染线程创建 `LevelRenderer` 及全部 Feature 资源，并在退出时先销毁它们再销毁 Context。
+`RenderSettingsPanelAdapter`、异步 `Renderer` 和 `Editor`。主线程只创建包含 Vulkan instance 与 SDL surface 的
+`VulkanSurfaceBootstrap`，随后立即把唯一所有权转入 `Renderer`；专用渲染线程才创建 `VulkanContext`、物理/逻辑设备、
+NvRHI、交换链及全部 Feature 资源。退出时先销毁 Feature，再依次销毁交换链、设备、surface 和 instance。
 具体游戏通过 `GameContext` 只接收 `Level`、`Camera` 与 `ScriptRuntime`，因此场景初始化和逐帧逻辑可以脱离 Vulkan
 测试。`apps/editor` 使用无行为的 `Game` 宿主，不创建演示场景；项目内容只由 `ProjectSession` 创建或加载。
 
 正常退出通过有序控制队列执行 `flush()` 和 `stop()`；异常展开由 `Renderer` 析构等待线程结束。stop 在渲染线程等待
-GPU idle，并按 `LevelRenderer -> VulkanContext -> Window` 的顺序释放。
+GPU idle，并按 `LevelRenderer -> VulkanContext -> Window` 的顺序释放；窗口与 SDL backend 始终留在主线程。
 
 ## 模块化重构状态
 
@@ -295,9 +296,10 @@ fence 后，才能更新帧槽。
 ## NvRHI 与 Vulkan 平台边界
 
 渲染实现基于 NvRHI Vulkan 后端，并通过 NvRHI 使用 Vulkan 1.3 dynamic rendering；渲染器不创建
-`VkRenderPass` 或 `VkFramebuffer`。NvRHI 不负责创建交换链。`VulkanContext` 是唯一原生 Vulkan 边界，保留
-实例、物理/逻辑设备、队列、SDL surface、交换链与 image view、图像获取/呈现、二进制信号量、能力查询和
-NvRHI native interop。交换链图像对应的 NvRHI texture 是非拥有型包装，销毁顺序固定为 renderer 及其子句柄、
+`VkRenderPass` 或 `VkFramebuffer`。NvRHI 不负责创建交换链。`VulkanSurfaceBootstrap` 与 `VulkanContext` 位于唯一
+原生 Vulkan backend 边界：前者只在主线程创建 instance 和 SDL surface，后者在渲染线程接管它们并保留物理/逻辑设备、
+队列、交换链与 image view、图像获取/呈现、二进制信号量、能力查询和 NvRHI native interop。交换链图像对应的
+NvRHI texture 是非拥有型包装，销毁顺序固定为 renderer 及其子句柄、
 交换链 NvRHI 包装、NvRHI device、`VkDevice`。正常销毁和构造中途失败共用幂等清理路径。
 
 `submitFrame` 在同一次图形队列提交中依次调用 `queueWaitForSemaphore`、`queueSignalSemaphore` 和

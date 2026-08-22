@@ -15,6 +15,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <vulkan/vulkan.hpp>
@@ -106,6 +107,35 @@ namespace lumin::render {
             return VK_API_VERSION_1_0;
         }
 
+        bool validationLayersAvailable() {
+            std::uint32_t layerCount = 0;
+            vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+
+            std::vector<VkLayerProperties> layers(layerCount);
+            vkEnumerateInstanceLayerProperties(&layerCount, layers.data());
+            for (const char* requiredLayer : validationLayers) {
+                const auto found =
+                    std::find_if(layers.begin(), layers.end(), [requiredLayer](const VkLayerProperties& layer) {
+                        return std::strcmp(requiredLayer, layer.layerName) == 0;
+                    });
+                if (found == layers.end()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool instanceExtensionAvailable(const char* extensionName) {
+            std::uint32_t extensionCount = 0;
+            vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+
+            std::vector<VkExtensionProperties> extensions(extensionCount);
+            vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
+            return std::any_of(extensions.begin(), extensions.end(), [extensionName](const VkExtensionProperties& item) {
+                return std::strcmp(extensionName, item.extensionName) == 0;
+            });
+        }
+
         void checkVk(VkResult result, const char* message) {
             if (result != VK_SUCCESS) {
                 throw std::runtime_error(message);
@@ -130,37 +160,104 @@ namespace lumin::render {
 
     } // namespace
 
+    struct VulkanSurfaceBootstrap::Impl final {
+        VulkanContextDesc desc;
+        core::SurfaceState surfaceState;
+        bool validationEnabled = false;
+        bool debugUtilsEnabled = false;
+        std::uint32_t apiVersion = VK_API_VERSION_1_0;
+        VkInstance instance = VK_NULL_HANDLE;
+        VkSurfaceKHR surface = VK_NULL_HANDLE;
+
+        ~Impl() {
+            if (surface != VK_NULL_HANDLE) {
+                vkDestroySurfaceKHR(instance, surface, nullptr);
+            }
+            if (instance != VK_NULL_HANDLE) {
+                vkDestroyInstance(instance, nullptr);
+            }
+        }
+    };
+
+    VulkanSurfaceBootstrap::VulkanSurfaceBootstrap(platform::Window& window, VulkanContextDesc desc)
+        : impl_(std::make_unique<Impl>()) {
+        impl_->desc = std::move(desc);
+        const VkExtent2D initialExtent = window.framebufferExtent();
+        impl_->surfaceState = core::SurfaceState{
+            .windowExtent = {initialExtent.width, initialExtent.height},
+            .viewportExtent = {initialExtent.width, initialExtent.height},
+            .framebufferResized = window.framebufferResized(),
+            .minimized = initialExtent.width == 0 || initialExtent.height == 0,
+        };
+
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
+        impl_->apiVersion = selectApiVersion();
+        if (impl_->apiVersion < VK_API_VERSION_1_3) {
+            throw std::runtime_error("Lumin Engine requires Vulkan 1.3 for Dynamic Rendering.");
+        }
+
+        impl_->validationEnabled = impl_->desc.enableValidation && validationLayersAvailable();
+        impl_->debugUtilsEnabled = instanceExtensionAvailable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        std::vector<const char*> requiredExtensions = window.requiredInstanceExtensions();
+        if (impl_->debugUtilsEnabled &&
+            std::find(requiredExtensions.begin(), requiredExtensions.end(), VK_EXT_DEBUG_UTILS_EXTENSION_NAME) ==
+                requiredExtensions.end()) {
+            requiredExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        }
+
+        VkApplicationInfo appInfo{};
+        appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+        appInfo.pApplicationName = impl_->desc.applicationName.c_str();
+        appInfo.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
+        appInfo.pEngineName = "Lumin Engine";
+        appInfo.engineVersion = VK_MAKE_VERSION(0, 1, 0);
+        appInfo.apiVersion = impl_->apiVersion;
+
+        VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo;
+        populateDebugCreateInfo(debugCreateInfo);
+        VkInstanceCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+        createInfo.pNext = impl_->validationEnabled && impl_->debugUtilsEnabled ? &debugCreateInfo : nullptr;
+        createInfo.pApplicationInfo = &appInfo;
+        createInfo.enabledExtensionCount = static_cast<std::uint32_t>(requiredExtensions.size());
+        createInfo.ppEnabledExtensionNames = requiredExtensions.data();
+        if (impl_->validationEnabled) {
+            createInfo.enabledLayerCount = static_cast<std::uint32_t>(std::size(validationLayers));
+            createInfo.ppEnabledLayerNames = validationLayers;
+        }
+
+        if (vkCreateInstance(&createInfo, nullptr, &impl_->instance) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create Vulkan instance.");
+        }
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Instance(impl_->instance));
+        impl_->surface = window.createSurface(impl_->instance);
+    }
+
+    VulkanSurfaceBootstrap::~VulkanSurfaceBootstrap() = default;
+    VulkanSurfaceBootstrap::VulkanSurfaceBootstrap(VulkanSurfaceBootstrap&&) noexcept = default;
+    VulkanSurfaceBootstrap& VulkanSurfaceBootstrap::operator=(VulkanSurfaceBootstrap&&) noexcept = default;
+
     bool VulkanContext::QueueFamilyIndices::complete() const noexcept {
         return graphics.has_value() && present.has_value();
     }
 
-    VulkanContext::VulkanContext(platform::Window& window, const VulkanContextDesc& desc) : desc_(desc) {
-        try {
-            const VkExtent2D initialExtent = window.framebufferExtent();
-            surfaceState_ = core::SurfaceState{
-                .windowExtent = {initialExtent.width, initialExtent.height},
-                .viewportExtent = {initialExtent.width, initialExtent.height},
-                .framebufferResized = window.framebufferResized(),
-                .minimized = initialExtent.width == 0 || initialExtent.height == 0,
-            };
-            requiredInstanceExtensions_ = window.requiredInstanceExtensions();
-            VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
-            apiVersion_ = selectApiVersion();
-            if (apiVersion_ < VK_API_VERSION_1_3) {
-                throw std::runtime_error("Lumin Engine requires Vulkan 1.3 for Dynamic Rendering.");
-            }
-            validationEnabled_ = desc_.enableValidation && validationLayersAvailable();
-            debugUtilsEnabled_ = instanceExtensionAvailable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-            if (debugUtilsEnabled_ &&
-                std::find(requiredInstanceExtensions_.begin(), requiredInstanceExtensions_.end(),
-                          VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == requiredInstanceExtensions_.end()) {
-                requiredInstanceExtensions_.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-            }
+    VulkanContext::VulkanContext(VulkanSurfaceBootstrap bootstrap) {
+        if (bootstrap.impl_ == nullptr || bootstrap.impl_->instance == VK_NULL_HANDLE ||
+            bootstrap.impl_->surface == VK_NULL_HANDLE) {
+            throw std::invalid_argument("VulkanContext requires a valid surface bootstrap.");
+        }
 
-            createInstance();
+        desc_ = std::move(bootstrap.impl_->desc);
+        surfaceState_ = bootstrap.impl_->surfaceState;
+        validationEnabled_ = bootstrap.impl_->validationEnabled;
+        debugUtilsEnabled_ = bootstrap.impl_->debugUtilsEnabled;
+        apiVersion_ = bootstrap.impl_->apiVersion;
+        instance_ = std::exchange(bootstrap.impl_->instance, VK_NULL_HANDLE);
+        surface_ = std::exchange(bootstrap.impl_->surface, VK_NULL_HANDLE);
+        try {
+            VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
             VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Instance(instance_));
             createDebugMessenger();
-            createSurface(window);
             pickPhysicalDevice();
             createDevice();
             VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Device(device_));
@@ -486,40 +583,6 @@ namespace lumin::render {
         }
     }
 
-    void VulkanContext::createInstance() {
-        VkApplicationInfo appInfo;
-        appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pNext = nullptr;
-        appInfo.pApplicationName = desc_.applicationName.c_str();
-        appInfo.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
-        appInfo.pEngineName = "Lumin Engine";
-        appInfo.engineVersion = VK_MAKE_VERSION(0, 1, 0);
-        appInfo.apiVersion = apiVersion_;
-
-        VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo;
-        populateDebugCreateInfo(debugCreateInfo);
-
-        VkInstanceCreateInfo createInfo;
-        createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-        createInfo.pNext = validationEnabled_ && debugUtilsEnabled_ ? &debugCreateInfo : nullptr;
-        createInfo.flags = 0;
-        createInfo.pApplicationInfo = &appInfo;
-        createInfo.enabledExtensionCount = static_cast<std::uint32_t>(requiredInstanceExtensions_.size());
-        createInfo.ppEnabledExtensionNames = requiredInstanceExtensions_.data();
-
-        if (validationEnabled_) {
-            createInfo.enabledLayerCount = static_cast<std::uint32_t>(std::size(validationLayers));
-            createInfo.ppEnabledLayerNames = validationLayers;
-        } else {
-            createInfo.enabledLayerCount = 0;
-            createInfo.ppEnabledLayerNames = nullptr;
-        }
-
-        if (vkCreateInstance(&createInfo, nullptr, &instance_) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create Vulkan instance.");
-        }
-    }
-
     void VulkanContext::createDebugMessenger() {
         if (!validationEnabled_ || !debugUtilsEnabled_) {
             return;
@@ -531,10 +594,6 @@ namespace lumin::render {
         if (createDebugUtilsMessengerEXT(instance_, &createInfo, nullptr, &debugMessenger_) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create Vulkan debug messenger.");
         }
-    }
-
-    void VulkanContext::createSurface(platform::Window& window) {
-        surface_ = window.createSurface(instance_);
     }
 
     void VulkanContext::pickPhysicalDevice() {
@@ -939,38 +998,6 @@ namespace lumin::render {
             checkVk(vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &semaphore),
                     "Failed to create render-finished semaphore.");
         }
-    }
-
-    bool VulkanContext::validationLayersAvailable() const {
-        std::uint32_t layerCount = 0;
-        vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
-
-        std::vector<VkLayerProperties> layers(layerCount);
-        vkEnumerateInstanceLayerProperties(&layerCount, layers.data());
-
-        for (const char* requiredLayer : validationLayers) {
-            const auto found =
-                std::find_if(layers.begin(), layers.end(), [requiredLayer](const VkLayerProperties& layer) {
-                    return std::strcmp(requiredLayer, layer.layerName) == 0;
-                });
-
-            if (found == layers.end()) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    bool VulkanContext::instanceExtensionAvailable(const char* extensionName) const {
-        std::uint32_t extensionCount = 0;
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-
-        std::vector<VkExtensionProperties> extensions(extensionCount);
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
-        return std::any_of(extensions.begin(), extensions.end(), [extensionName](const VkExtensionProperties& item) {
-            return std::strcmp(extensionName, item.extensionName) == 0;
-        });
     }
 
     VulkanContext::QueueFamilyIndices VulkanContext::findQueueFamilies(VkPhysicalDevice device) const {

@@ -77,7 +77,8 @@ namespace lumin::core {
 #endif
             ui = std::make_unique<render::ImGuiFrontend>();
             ui->initialize(window);
-            auto vulkan = std::make_unique<render::VulkanContext>(
+            const VkExtent2D initialExtent = window.framebufferExtent();
+            auto vulkanBootstrap = std::make_unique<render::VulkanSurfaceBootstrap>(
                 window, render::VulkanContextDesc{.applicationName = config.title,
                                                   .enableValidation =
 #if defined(LUMIN_ENABLE_VALIDATION)
@@ -86,8 +87,8 @@ namespace lumin::core {
                                                       false,
 #endif
                                                   .rayTracing = {}});
-            viewportExtent = render::core::RenderExtent{vulkan->swapchainWidth(), vulkan->swapchainHeight()};
-            renderer = std::make_unique<render::Renderer>(std::move(vulkan),
+            viewportExtent = render::core::RenderExtent{initialExtent.width, initialExtent.height};
+            renderer = std::make_unique<render::Renderer>(std::move(vulkanBootstrap),
                                                           render::world::RenderWorldExtractor::extract(level),
                                                           shaderDirectory, ui->fontAtlas());
             const std::filesystem::path engineSettingsPath = preferenceFilePath("engine-settings.json");
