@@ -1,161 +1,204 @@
 #include "render/pipelines/default/DefaultRenderPipelineSession.hpp"
 
-#include <functional>
 #include <memory>
 #include <utility>
 
 namespace lumin::render::pipelines {
-    namespace {
 
-        struct FeatureModuleCallbacks {
-            using AddPasses = std::function<void(core::RenderFeatureFrameContext&)>;
-            using FrameEvent = std::function<void(const core::RenderFrameIdentity&)>;
-
-            FeatureModuleCallbacks(AddPasses addPassesCallback, FrameEvent submittedCallback = {},
-                                   FrameEvent discardedCallback = {})
-                : addPasses(std::move(addPassesCallback)), submitted(std::move(submittedCallback)),
-                  discarded(std::move(discardedCallback)) {
-            }
-
-            AddPasses addPasses;
-            FrameEvent submitted;
-            FrameEvent discarded;
-        };
-
-        class DefaultFeatureModule final : public core::IRenderFeature {
-        public:
-            DefaultFeatureModule(core::FeatureDescriptor descriptor, FeatureModuleCallbacks callbacks)
-                : descriptor_(std::move(descriptor)), callbacks_(std::move(callbacks)) {
-            }
-
-            [[nodiscard]] const core::FeatureDescriptor& descriptor() const noexcept override {
-                return descriptor_;
-            }
-
-            void addPasses(core::RenderFeatureFrameContext& context) override {
-                callbacks_.addPasses(context);
-            }
-
-            void onFrameSubmitted(const core::RenderFrameIdentity& identity) noexcept override {
-                if (callbacks_.submitted) {
-                    callbacks_.submitted(identity);
-                }
-            }
-
-            void onFrameDiscarded(const core::RenderFrameIdentity& identity) noexcept override {
-                if (callbacks_.discarded) {
-                    callbacks_.discarded(identity);
-                }
-            }
-
-        private:
-            core::FeatureDescriptor descriptor_;
-            FeatureModuleCallbacks callbacks_;
-        };
-
-        void registerStaticModule(core::RenderFeatureRegistry& registry, core::FeatureDescriptor descriptor,
-                                  FeatureModuleCallbacks callbacks) {
-            core::FeatureDescriptor factoryDescriptor = descriptor;
-            registry.registerFeature(
-                std::move(descriptor),
-                [descriptor = std::move(factoryDescriptor), callbacks = std::move(callbacks)](
-                    const core::FeatureCreateContext&) {
-                    return std::make_unique<DefaultFeatureModule>(descriptor, callbacks);
-                });
+    class DefaultRenderPipelineSession::FeatureModuleBase : public core::IRenderFeature {
+    public:
+        FeatureModuleBase(DefaultRenderPipelineSession& session, core::FeatureDescriptor descriptor)
+            : session_(session), descriptor_(std::move(descriptor)) {
         }
 
-    } // namespace
+        [[nodiscard]] const core::FeatureDescriptor& descriptor() const noexcept override {
+            return descriptor_;
+        }
+
+    protected:
+        DefaultRenderPipelineSession& session_;
+
+    private:
+        core::FeatureDescriptor descriptor_;
+    };
+
+    class DefaultRenderPipelineSession::AtmosphereFeatureModule final : public FeatureModuleBase {
+    public:
+        using FeatureModuleBase::FeatureModuleBase;
+
+        void addPasses(core::RenderFeatureFrameContext& context) override {
+            session_.addAtmosphereLutFeaturePasses(context);
+        }
+
+        void onFrameSubmitted(const core::RenderFrameIdentity& identity) noexcept override {
+            session_.commitAtmosphereFeature(identity);
+        }
+
+        void onFrameDiscarded(const core::RenderFrameIdentity&) noexcept override {
+            session_.discardAtmosphereFeature();
+        }
+    };
+
+    class DefaultRenderPipelineSession::ShadowFeatureModule final : public FeatureModuleBase {
+    public:
+        using FeatureModuleBase::FeatureModuleBase;
+
+        void addPasses(core::RenderFeatureFrameContext& context) override {
+            session_.addShadowFeaturePasses(context);
+        }
+    };
+
+    class DefaultRenderPipelineSession::RasterSurfaceFeatureModule final : public FeatureModuleBase {
+    public:
+        using FeatureModuleBase::FeatureModuleBase;
+
+        void addPasses(core::RenderFeatureFrameContext& context) override {
+            session_.addGBufferFeaturePasses(context);
+        }
+
+        void onFrameSubmitted(const core::RenderFrameIdentity&) noexcept override {
+            if (session_.modelRenderer_ != nullptr) {
+                session_.modelRenderer_->commitSubmittedFrame();
+            }
+        }
+
+        void onFrameDiscarded(const core::RenderFrameIdentity&) noexcept override {
+            if (session_.modelRenderer_ != nullptr) {
+                session_.modelRenderer_->discardPendingFrame();
+            }
+        }
+    };
+
+    class DefaultRenderPipelineSession::HybridSurfaceFeatureModule final : public FeatureModuleBase {
+    public:
+        using FeatureModuleBase::FeatureModuleBase;
+
+        void addPasses(core::RenderFeatureFrameContext& context) override {
+            session_.addHybridSurfaceFeaturePasses(context);
+        }
+
+        void onFrameSubmitted(const core::RenderFrameIdentity& identity) noexcept override {
+            session_.commitHybridSurfaceFeature(identity);
+            if (session_.modelRenderer_ != nullptr) {
+                session_.modelRenderer_->commitSubmittedFrame();
+            }
+        }
+
+        void onFrameDiscarded(const core::RenderFrameIdentity&) noexcept override {
+            session_.discardHybridSurfaceFeature();
+            if (session_.modelRenderer_ != nullptr) {
+                session_.modelRenderer_->discardPendingFrame();
+            }
+        }
+    };
+
+    class DefaultRenderPipelineSession::GlobalIlluminationFeatureModule final : public FeatureModuleBase {
+    public:
+        using FeatureModuleBase::FeatureModuleBase;
+
+        void addPasses(core::RenderFeatureFrameContext& context) override {
+            session_.addGlobalIlluminationFeaturePasses(context);
+        }
+
+        void onFrameSubmitted(const core::RenderFrameIdentity& identity) noexcept override {
+            session_.commitGlobalIlluminationFeature(identity);
+        }
+
+        void onFrameDiscarded(const core::RenderFrameIdentity&) noexcept override {
+            session_.discardGlobalIlluminationFeature();
+        }
+    };
+
+    class DefaultRenderPipelineSession::DenoisingFeatureModule final : public FeatureModuleBase {
+    public:
+        using FeatureModuleBase::FeatureModuleBase;
+
+        void addPasses(core::RenderFeatureFrameContext& context) override {
+            session_.addGiDenoiserFeaturePasses(context);
+        }
+
+        void onFrameSubmitted(const core::RenderFrameIdentity& identity) noexcept override {
+            session_.commitGiDenoiserFeature(identity);
+        }
+
+        void onFrameDiscarded(const core::RenderFrameIdentity&) noexcept override {
+            session_.discardGiDenoiserFeature();
+        }
+    };
+
+    class DefaultRenderPipelineSession::LightingCompositeFeatureModule final : public FeatureModuleBase {
+    public:
+        using FeatureModuleBase::FeatureModuleBase;
+
+        void addPasses(core::RenderFeatureFrameContext& context) override {
+            session_.addSkyCompositeFeaturePasses(context);
+            session_.addDirectLightingFeaturePasses(context);
+        }
+    };
+
+    class DefaultRenderPipelineSession::TemporalAaFeatureModule final : public FeatureModuleBase {
+    public:
+        using FeatureModuleBase::FeatureModuleBase;
+
+        void addPasses(core::RenderFeatureFrameContext& context) override {
+            session_.addTemporalAaFeaturePasses(context);
+        }
+
+        void onFrameSubmitted(const core::RenderFrameIdentity& identity) noexcept override {
+            session_.postFxResources_.markHistoryValid(identity.frameSlot.value());
+        }
+    };
+
+    class DefaultRenderPipelineSession::ToneMappingFeatureModule final : public FeatureModuleBase {
+    public:
+        using FeatureModuleBase::FeatureModuleBase;
+
+        void addPasses(core::RenderFeatureFrameContext& context) override {
+            session_.addToneMappingFeaturePasses(context);
+        }
+    };
+
+    class DefaultRenderPipelineSession::PresentationFeatureModule final : public FeatureModuleBase {
+    public:
+        using FeatureModuleBase::FeatureModuleBase;
+
+        void addPasses(core::RenderFeatureFrameContext& context) override {
+            session_.addUiPresentFeaturePasses(context);
+        }
+
+        void onFrameSubmitted(const core::RenderFrameIdentity&) noexcept override {
+            session_.viewportOutputInitialized_ = true;
+        }
+    };
 
     core::RenderFeatureRegistry DefaultRenderPipelineSession::createFeatureRegistry(
         const DefaultRenderPipelineDefinition& definition, DefaultRenderPipelineKind path) {
         core::RenderFeatureRegistry registry;
-        const auto registerModule = [&registry, &definition](const core::FeatureId& id,
-                                                             FeatureModuleCallbacks callbacks) {
-            registerStaticModule(registry, definition.descriptor(id), std::move(callbacks));
+        const auto registerModule = [&registry, &definition, this]<typename Module>(const core::FeatureId& id) {
+            core::FeatureDescriptor descriptor = definition.descriptor(id);
+            core::FeatureDescriptor instanceDescriptor = descriptor;
+            registry.registerFeature(
+                std::move(descriptor),
+                [this, descriptor = std::move(instanceDescriptor)](const core::FeatureCreateContext&) {
+                    return std::make_unique<Module>(*this, descriptor);
+                });
         };
 
         using namespace feature_ids;
-        // 每个模块显式声明提交/丢弃边界，frame replace 或录制失败不会推进任何历史候选。
-        registerModule(atmosphere(), {[this](core::RenderFeatureFrameContext& context) {
-                                          addAtmosphereLutFeaturePasses(context);
-                                      },
-                                      [this](const core::RenderFrameIdentity& identity) {
-                                          commitAtmosphereFeature(identity);
-                                      },
-                                      [this](const core::RenderFrameIdentity&) {
-                                          discardAtmosphereFeature();
-                                      }});
+        // 每个静态模块直接实现自己的提交/丢弃边界，失败帧不会通过中央回调壳推进历史。
+        registerModule.template operator()<AtmosphereFeatureModule>(atmosphere());
         if (path == DefaultRenderPipelineKind::Raster) {
-            registerModule(shadow(), {[this](core::RenderFeatureFrameContext& context) {
-                               addShadowFeaturePasses(context);
-                           }});
-            registerModule(rasterSurface(), {[this](core::RenderFeatureFrameContext& context) {
-                                                 addGBufferFeaturePasses(context);
-                                             },
-                                             [this](const core::RenderFrameIdentity&) {
-                                                 if (modelRenderer_ != nullptr) {
-                                                     modelRenderer_->commitSubmittedFrame();
-                                                 }
-                                             },
-                                             [this](const core::RenderFrameIdentity&) {
-                                                 if (modelRenderer_ != nullptr) {
-                                                     modelRenderer_->discardPendingFrame();
-                                                 }
-                                             }});
+            registerModule.template operator()<ShadowFeatureModule>(shadow());
+            registerModule.template operator()<RasterSurfaceFeatureModule>(rasterSurface());
         } else {
-            registerModule(hybridSurface(), {[this](core::RenderFeatureFrameContext& context) {
-                                                 addHybridSurfaceFeaturePasses(context);
-                                             },
-                                             [this](const core::RenderFrameIdentity& identity) {
-                                                 commitHybridSurfaceFeature(identity);
-                                                 if (modelRenderer_ != nullptr) {
-                                                     modelRenderer_->commitSubmittedFrame();
-                                                 }
-                                             },
-                                             [this](const core::RenderFrameIdentity&) {
-                                                 discardHybridSurfaceFeature();
-                                                 if (modelRenderer_ != nullptr) {
-                                                     modelRenderer_->discardPendingFrame();
-                                                 }
-                                             }});
+            registerModule.template operator()<HybridSurfaceFeatureModule>(hybridSurface());
         }
-        registerModule(globalIllumination(), {[this](core::RenderFeatureFrameContext& context) {
-                                                  addGlobalIlluminationFeaturePasses(context);
-                                              },
-                                              [this](const core::RenderFrameIdentity& identity) {
-                                                  commitGlobalIlluminationFeature(identity);
-                                              },
-                                              [this](const core::RenderFrameIdentity&) {
-                                                  discardGlobalIlluminationFeature();
-                                              }});
-        registerModule(denoising(), {[this](core::RenderFeatureFrameContext& context) {
-                                         addGiDenoiserFeaturePasses(context);
-                                     },
-                                     [this](const core::RenderFrameIdentity& identity) {
-                                         commitGiDenoiserFeature(identity);
-                                     },
-                                     [this](const core::RenderFrameIdentity&) {
-                                         discardGiDenoiserFeature();
-                                     }});
-        registerModule(lightingComposite(), {[this](core::RenderFeatureFrameContext& context) {
-                           addSkyCompositeFeaturePasses(context);
-                           addDirectLightingFeaturePasses(context);
-                       }});
-        registerModule(temporalAa(), {[this](core::RenderFeatureFrameContext& context) {
-                                          addTemporalAaFeaturePasses(context);
-                                      },
-                                      [this](const core::RenderFrameIdentity& identity) {
-                                          postFxResources_.markHistoryValid(identity.frameSlot.value());
-                                      }});
-        registerModule(toneMapping(), {[this](core::RenderFeatureFrameContext& context) {
-                           addToneMappingFeaturePasses(context);
-                       }});
-        registerModule(presentation(), {[this](core::RenderFeatureFrameContext& context) {
-                                            addUiPresentFeaturePasses(context);
-                                        },
-                                        [this](const core::RenderFrameIdentity&) {
-                                            viewportOutputInitialized_ = true;
-                                        }});
+        registerModule.template operator()<GlobalIlluminationFeatureModule>(globalIllumination());
+        registerModule.template operator()<DenoisingFeatureModule>(denoising());
+        registerModule.template operator()<LightingCompositeFeatureModule>(lightingComposite());
+        registerModule.template operator()<TemporalAaFeatureModule>(temporalAa());
+        registerModule.template operator()<ToneMappingFeatureModule>(toneMapping());
+        registerModule.template operator()<PresentationFeatureModule>(presentation());
         return registry;
     }
 

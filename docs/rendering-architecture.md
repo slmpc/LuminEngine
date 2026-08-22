@@ -100,14 +100,16 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 
 `DefaultRenderPipelineSession` 位于 `Lumin::RenderPipelines`，是内置 Raster/Hybrid recipe 的帧事务协调器。它只接收
 非拥有 `VulkanContext`、初始 `RenderWorldSnapshotPtr` 和逐帧 `RenderFramePacket`，不保存活动场景、相机、ImGui 或 SDL
-引用。`DefaultFeatureRegistry.cpp` 是默认模块唯一显式组合点：factory 由稳定 ID 注册，DAG resolver 决定执行顺序；没有
-`LevelRenderFeatureKind`、中央 switch 或字符串式运行时分派。
+引用。`DefaultFeatureRegistry.cpp` 是默认模块唯一显式组合点：Atmosphere、Raster/Hybrid surface、GI、Denoising、
+Lighting、TAA、ToneMapping 和 Presentation 都由各自具体 `IRenderFeature` 类型注册并直接处理提交/丢弃生命周期，DAG
+resolver 决定执行顺序；没有万能回调 Feature、`LevelRenderFeatureKind`、中央 switch 或字符串式运行时分派。
 
 实现按职责分成以下文件：
 
 - `render/pipelines/default/DefaultRenderPipelineSession.hpp` 保存内置组合的私有所有权和跨帧状态声明。
 - `render/pipelines/default/DefaultRenderResources.cpp` 创建、销毁和重建 Viewport、Raster、Atmosphere 与 Hybrid GI 资源。
-- `render/pipelines/default/DefaultFeatureRegistry.cpp` 显式注册默认 Feature factory 及其提交/丢弃事务回调。
+- `render/pipelines/default/DefaultFeatureRegistry.cpp` 定义并显式注册默认具体 Feature 类型；每个类型直接实现自身的
+  `addPasses`、提交和丢弃事务边界。
 - `render/core/RenderFramePacket.*` 定义跨线程不可变消息和主线程场景/相机快照 builder。
 - `render/runtime/RenderMailbox.*` 定义 latest-wins frame 单槽和不可丢失有序控制队列。
 - `render/runtime/Renderer.cpp` 独占渲染线程、启动/退出握手、异常传播与状态发布。

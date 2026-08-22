@@ -145,10 +145,15 @@ namespace {
                 present != std::string::npos && submit < pipelineCommit && pipelineCommit < changesConsumed &&
                 changesConsumed < sequenceAdvance && sequenceAdvance < present,
             "Feature history must commit after queue submit and before present, whose failure cannot roll it back.");
-        require(level.find("registerModule(rasterSurface()") != std::string::npos &&
-                    level.find("modelRenderer_->commitSubmittedFrame") != std::string::npos &&
-                    level.find("registerModule(temporalAa()") != std::string::npos &&
-                    level.find("postFxResources_.markHistoryValid") != std::string::npos,
+        const std::size_t rasterFeature = level.find("class DefaultRenderPipelineSession::RasterSurfaceFeatureModule");
+        const std::size_t rasterCommit = level.find("modelRenderer_->commitSubmittedFrame", rasterFeature);
+        const std::size_t rasterDiscard = level.find("modelRenderer_->discardPendingFrame", rasterCommit);
+        const std::size_t temporalFeature = level.find("class DefaultRenderPipelineSession::TemporalAaFeatureModule");
+        const std::size_t temporalCommit = level.find("postFxResources_.markHistoryValid", temporalFeature);
+        require(rasterFeature != std::string::npos && rasterCommit != std::string::npos &&
+                    rasterDiscard != std::string::npos && temporalFeature != std::string::npos &&
+                    temporalCommit != std::string::npos && rasterFeature < rasterCommit &&
+                    rasterCommit < rasterDiscard && temporalFeature < temporalCommit,
                 "Model and TAA histories must be committed through independent Feature submission notifications.");
         require(level.find("LevelRenderFeatureKind") == std::string::npos &&
                     level.find("switch (kind)") == std::string::npos,

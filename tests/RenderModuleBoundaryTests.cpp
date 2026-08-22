@@ -76,6 +76,20 @@ namespace {
                 "Renderer runtime must depend only on injected pipeline session contracts.");
     }
 
+    void verifyConcreteFeatureModules(const fs::path& root) {
+        const std::string registry = readSource(root, "render/pipelines/default/DefaultFeatureRegistry.cpp");
+        for (std::string_view forbidden : {"FeatureModuleCallbacks", "std::function"}) {
+            require(registry.find(forbidden) == std::string::npos,
+                    "Default registry uses a central callback feature shell: " + std::string{forbidden});
+        }
+        for (std::string_view required : {"AtmosphereFeatureModule", "RasterSurfaceFeatureModule",
+                                          "HybridSurfaceFeatureModule", "GlobalIlluminationFeatureModule",
+                                          "DenoisingFeatureModule", "PresentationFeatureModule"}) {
+            require(registry.find(required) != std::string::npos,
+                    "Default registry is missing an explicit feature module: " + std::string{required});
+        }
+    }
+
     void verifyObsoleteArchitectureRemoved(const fs::path& root) {
         std::string renderSources;
         for (const fs::directory_entry& entry : fs::recursive_directory_iterator(root / "render")) {
@@ -102,6 +116,7 @@ int main() {
         const fs::path root = fs::path{LUMIN_TEST_SOURCE_DIR};
         verifyRealBuildTargets(root);
         verifyRuntimeSourceBoundary(root);
+        verifyConcreteFeatureModules(root);
         verifyObsoleteArchitectureRemoved(root);
         std::cout << "Render module boundaries passed.\n";
         return 0;

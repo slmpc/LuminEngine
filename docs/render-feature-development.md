@@ -48,6 +48,9 @@ pass。导入持久资源时使用本帧唯一的 `FrameGraphResourceImporter`�
 缺失 producer、重复 producer、环和重复历史 owner。添加新 Feature 不得修改 `Renderer`、`RenderMailbox`、
 `VulkanContext` 或其他 Feature；正常改动范围应是所属模块、显式注册、recipe、可选设置 adapter 和测试。
 
+每个注册项必须创建一个语义明确的具体 `IRenderFeature` 类型，并由该类型直接实现 `addPasses`、提交、丢弃、尺寸变化和
+关闭阶段中适用的生命周期。禁止用保存 `std::function` 的万能 Feature 壳把不同模块重新集中到一组中央回调中。
+
 ## 验证清单
 
 - 为 descriptor、能力降级、初始化回滚和提交/丢弃顺序添加 CPU 测试。

@@ -109,6 +109,18 @@ namespace lumin::render::pipelines {
         [[nodiscard]] const std::string& diagnostic() const noexcept;
 
     private:
+        class FeatureModuleBase;
+        class AtmosphereFeatureModule;
+        class ShadowFeatureModule;
+        class RasterSurfaceFeatureModule;
+        class HybridSurfaceFeatureModule;
+        class GlobalIlluminationFeatureModule;
+        class DenoisingFeatureModule;
+        class LightingCompositeFeatureModule;
+        class TemporalAaFeatureModule;
+        class ToneMappingFeatureModule;
+        class PresentationFeatureModule;
+
         void createRenderResources();
         void createRenderFeaturePipeline(
             DefaultRenderPipelineKind requestedPath = DefaultRenderPipelineKind::Hybrid);
