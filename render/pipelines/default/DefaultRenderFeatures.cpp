@@ -1,3 +1,4 @@
+#include "render/gpu/GpuScene.hpp"
 #include "render/level/FeatureFrameData.hpp"
 #include "render/pipelines/default/DefaultRenderPipelineSession.hpp"
 
@@ -520,11 +521,8 @@ namespace lumin::render {
         core::RenderFeatureFrameContext& context) {
         const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
         core::IndirectLightingData& indirect = context.blackboard().get<core::IndirectLightingData>();
-        HybridPassData& data = context.blackboard().get<HybridPassData>();
         const GlobalIlluminationSettings& settings =
             sceneData.settings.get<GlobalIlluminationSettings>(pipelines::feature_ids::globalIllumination());
-        const DirectLightingFeatureSettings& lightingSettings =
-            sceneData.settings.get<DirectLightingFeatureSettings>(pipelines::feature_ids::lightingComposite());
         const std::uint32_t frameIndex = context.identity().frameSlot.value();
         core::HistoryAction fallbackAction = context.historyAction(core::HistoryDomain::NrdDiffuse);
         fallbackAction =
@@ -555,6 +553,9 @@ namespace lumin::render {
         }
 
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
+        HybridPassData& data = context.blackboard().get<HybridPassData>();
+        const DirectLightingFeatureSettings& lightingSettings =
+            sceneData.settings.get<DirectLightingFeatureSettings>(pipelines::feature_ids::lightingComposite());
         HybridGiState& runtime = *hybridGi_;
         if (!runtime.pendingSequence || *runtime.pendingSequence != context.identity().sequence ||
             !runtime.pendingScenePlan || !runtime.pendingSceneUpdate || !runtime.directLighting->hasPendingFrame() ||
@@ -856,11 +857,11 @@ namespace lumin::render {
 
     void pipelines::DefaultRenderPipelineSession::addSkyCompositeFeaturePasses(
         core::RenderFeatureFrameContext& context) {
-        HybridPassData& hybridData = context.blackboard().get<HybridPassData>();
         core::SceneHdrData& sceneHdr = context.blackboard().get<core::SceneHdrData>();
         const core::DenoisedLightingData& indirect = context.blackboard().get<core::DenoisedLightingData>();
         const std::uint32_t frameIndex = context.identity().frameSlot.value();
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
+        HybridPassData& hybridData = context.blackboard().get<HybridPassData>();
         // RT primary miss 已经把 atmosphere environment 写入 directRadiance；Hybrid 的 compute composite
         // 只需等待 GI denoiser，不再声明旧的 raster sky framebuffer/CSM 输入。
         if (hybridData.active) {
@@ -930,8 +931,8 @@ namespace lumin::render {
 
     void pipelines::DefaultRenderPipelineSession::addDirectLightingFeaturePasses(
         core::RenderFeatureFrameContext& context) {
-        const HybridPassData& hybridData = context.blackboard().get<HybridPassData>();
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
+        const HybridPassData& hybridData = context.blackboard().get<HybridPassData>();
         if (hybridData.active) {
             return;
         }
