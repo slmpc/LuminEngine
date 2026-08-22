@@ -8,7 +8,8 @@ SDL、NvRHI 或渲染器；Render 只读取 Core 的场景和资产接口，Appl
 构建 target。`Application` 的公共头
 使用 PImpl，只公开窗口配置、脚本配置和 `Game` 注入点，不泄露 SDL、Vulkan、renderer 或场景的具体所有权。
 
-`Application` 拥有窗口、Vulkan 上下文、`Level`、`Camera`、`ScriptRuntime`、`LevelRenderer` 和 `Editor`。
+`Application` 拥有窗口、Vulkan 上下文、`Level`、`Camera`、`ScriptRuntime`、主线程
+`RenderFramePacketBuilder`、`LevelRenderer` 和 `Editor`。
 具体游戏通过 `GameContext` 只接收 `Level`、`Camera` 与 `ScriptRuntime`，因此场景初始化和逐帧逻辑可以脱离 Vulkan
 测试。`apps/editor` 使用无行为的 `Game` 宿主，不创建演示场景；项目内容只由 `ProjectSession` 创建或加载。
 
@@ -34,8 +35,9 @@ resize 和 shutdown 在安全边界按逆序通知，使消费者先释放对上
 
 当前运行时使用 `DefaultRenderPipelines` 提供的 Raster/Hybrid recipe，并经
 `RenderPipelineRecipeResolver + RenderPipelineInstance` 事务式创建候选管线。Feature 通过显式 factory 注册；旧
-`DeferredRenderFeatureSet`、`LevelRenderFeatureKind`、`LevelRenderFeatureHost` 和中央分派 `switch` 已删除。运行时仍直接
-读取活动场景，Feature 资源已经拆为 `RasterFeatureResources` 与 `PostFxResources`；旧 `TextureManager` 和
+`DeferredRenderFeatureSet`、`LevelRenderFeatureKind`、`LevelRenderFeatureHost` 和中央分派 `switch` 已删除。运行时只
+消费 `RenderFramePacket`，不保存或读取活动 `Level`、`Camera`、ImGui、SDL 或 Editor。Feature 资源已经拆为
+`RasterFeatureResources` 与 `PostFxResources`；旧 `TextureManager` 和
 `PipelineManager` 均已删除。各 Feature pipeline handle 由拥有者保存，并统一使用 RenderRhi 的无业务语义
 `FullscreenPipelineFactory` 创建。帧内数据已经通过 typed blackboard 隔离，不再存在万能帧数据结构。Hybrid 兼容实现
 当前仍复用 Raster surface 的部分物理纹理，后续由 RT surface owner 完全接管。
@@ -50,9 +52,12 @@ capture 状态。
 只有项目已打开且 UI 未捕获输入时才更新相机和派发 `GameInput`，随后调用 `Game::tick`、`Level::tick(deltaSeconds)` 和渲染。
 Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mouse mode；该模式隐藏并约束鼠标，以帧内相对位移
 更新相机 yaw/pitch，同时继续使用 `WASD`、`Space` 和 `Left Ctrl` 平移。松开右键后立即恢复普通鼠标模式。
-因此，即使编辑器捕获输入，游戏模拟、Actor 与 Lua 生命周期仍会推进。主线程在渲染前调用
+因此，即使编辑器捕获输入，游戏模拟、Actor 与 Lua 生命周期仍会推进。主线程随后通过
+`RenderFramePacketBuilder` 提取 `RenderWorldSnapshot` 和相机值快照，并在渲染前调用
 `ImGuiFrontend::finishFrame()`，将顶点、索引、裁剪命令和 reset-state 命令深拷贝到 `UiDrawPacket`；任意 user callback
-会被拒绝。`drawFrame` 只消费该不可变 packet，不访问 ImGui context、SDL backend 或 Editor。
+会被拒绝。typed settings、窗口/Viewport 物理尺寸和 UI 一并按值进入 `RenderFramePacket`。`drawFrame` 只消费该 packet，
+不访问活动场景、相机、ImGui context、SDL backend 或 Editor。场景变化会在 Runtime 中相对最近成功提交的世界快照
+重新比较；尚未消费的 packet 即使被替换，也不会漏掉拓扑变化或错误推进历史。
 模型变换和材质变化会递增
 `modelRevision`；网格或模型成员变化会递增 `topologyRevision`。PBR 纹理路径变化也会递增 `topologyRevision`，
 因为材质纹理数组和 descriptor 需要重建；纯标量材质变化只更新对象 buffer。`LevelRenderer` 每帧上传对象记录，
@@ -80,8 +85,9 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 
 ## LevelRenderer 迁移边界
 
-`LevelRenderer` 是迁移期兼容门面。`render/LevelRenderer.hpp` 只保留窗口、上下文、场景引用和逐帧
-入口所需的 API；具体资源成员通过 `std::unique_ptr<LevelRenderer::Impl>` 隐藏在实现文件中。这样公共头不再暴露
+`LevelRenderer` 是迁移期同步 Runtime。`render/LevelRenderer.hpp` 只接收非拥有 `VulkanContext`、初始
+`RenderWorldSnapshotPtr` 和逐帧 `RenderFramePacket`；它不保存活动场景、相机或 UI backend 引用。具体资源成员通过
+`std::unique_ptr<LevelRenderer::Impl>` 隐藏在实现文件中。这样公共头不再暴露
 Raster/PostFX 资源 owner、各 Feature pipeline handle、Hybrid GI 后端或 NvRHI framebuffer，资源成员变化也不会迫使
 Application 和
 编辑器重新编译。`LevelRenderer.cpp` 只负责门面转发、帧入口、提交顺序和异常清理。
@@ -90,7 +96,9 @@ Application 和
 
 - `render/level/LevelRendererImpl.hpp` 保存私有所有权、Feature host 接口和跨帧状态声明。
 - `render/level/LevelRendererResources.cpp` 创建、销毁和重建交换链、Viewport、材质、Atmosphere 与 Hybrid GI 资源。
-- `render/level/LevelRendererFrame.cpp` 生成相机/阴影数据，导入逐帧资源，创建 framebuffer，并执行 `FrameGraph`。
+- `render/core/RenderFramePacket.*` 定义跨线程不可变消息和主线程场景/相机快照 builder。
+- `render/level/LevelRendererFrame.cpp` 从 packet 生成渲染提交相关的抖动/阴影数据，导入逐帧资源，创建 framebuffer，
+  并执行 `FrameGraph`。
 - `render/level/LevelRendererFeatures.cpp` 只实现各 Feature 的 pass setup/record，以及提交成功和丢弃时的资源通知。
 - `render/core/FrameDataContracts.hpp` 定义跨 Feature 的 typed blackboard 契约；每个 GPU 数据项同时携带物理 NvRHI
   handle、本帧唯一 FrameGraph handle、格式、范围和 ready pass，消费者必须复用 producer 发布的图身份。

@@ -97,7 +97,7 @@ namespace lumin::render {
     }
 
     void LevelRenderer::Impl::createModelRenderer() {
-        const world::RenderWorldSnapshotPtr snapshot = renderWorld_.snapshot();
+        const world::RenderWorldSnapshotPtr snapshot = currentWorld_;
         if (snapshot == nullptr) {
             throw std::logic_error("LevelRenderer requires a synchronized render-world snapshot.");
         }
@@ -175,7 +175,7 @@ namespace lumin::render {
         if (!context_.rayTracingDecision().enabled() || !context_.rayTracingSupport().supportsSharcShaderStorage()) {
             return;
         }
-        const world::RenderWorldSnapshotPtr snapshot = renderWorld_.snapshot();
+        const world::RenderWorldSnapshotPtr snapshot = currentWorld_;
         if (snapshot == nullptr) {
             throw std::logic_error("Hybrid GI requires a synchronized render-world snapshot.");
         }
@@ -295,7 +295,7 @@ namespace lumin::render {
             destroyHybridGiResources();
             return;
         }
-        const world::RenderWorldSnapshotPtr snapshot = renderWorld_.snapshot();
+        const world::RenderWorldSnapshotPtr snapshot = currentWorld_;
         if (snapshot == nullptr) {
             throw std::logic_error("Hybrid GI capacity check requires a render-world snapshot.");
         }

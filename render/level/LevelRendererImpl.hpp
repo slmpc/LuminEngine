@@ -37,7 +37,7 @@ namespace lumin::render {
         /// 迁移期 Runtime 与 VulkanContext 共用的并行帧槽数量。
         static constexpr std::uint32_t frameSlotCount = 2;
 
-        Impl(VulkanContext& context, const scene::Level& level, std::filesystem::path shaderDirectory,
+        Impl(VulkanContext& context, world::RenderWorldSnapshotPtr initialWorld, std::filesystem::path shaderDirectory,
              core::UiFontAtlas uiFontAtlas, std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination);
         ~Impl();
 
@@ -94,12 +94,11 @@ namespace lumin::render {
 #endif
         };
 
-        void drawFrame(scene::Camera& camera, RenderSettings& settings, core::UiDrawPacket uiDrawPacket);
+        void drawFrame(core::RenderFramePacket packet);
         void waitIdle() const;
         [[nodiscard]] std::uint32_t modelCount() const noexcept;
         [[nodiscard]] std::uint32_t mdiDrawCount() const noexcept;
         [[nodiscard]] gi::BackendInfo globalIlluminationBackendInfo() const noexcept;
-        void requestViewportExtent(std::uint32_t width, std::uint32_t height) noexcept;
         [[nodiscard]] ImGuiViewportImage viewportImage() const noexcept;
 
     private:
@@ -117,6 +116,7 @@ namespace lumin::render {
         void destroyHybridGiResources() noexcept;
         void destroyRenderResources() noexcept;
         void refreshSwapchainResources();
+        void requestViewportExtent(std::uint32_t width, std::uint32_t height) noexcept;
         void applyPendingViewportExtent();
         void createViewportOutput();
         void commitAtmosphereFeature(const core::RenderFrameIdentity& identity) noexcept;
@@ -127,12 +127,10 @@ namespace lumin::render {
         void discardHybridSurfaceFeature() noexcept;
         void discardGlobalIlluminationFeature() noexcept;
         void discardGiDenoiserFeature() noexcept;
-        [[nodiscard]] RecordedFrameState recordCommandList(nvrhi::ICommandList& commandList,
-                                                           const core::RenderFrameIdentity& identity,
-                                                           const scene::Camera& camera, const RenderSettings& settings,
-                                                           const core::UiDrawPacket& uiDrawPacket,
-                                                           world::SceneChangeMask sceneChanges,
-                                                           const core::FrameChangeSet& changes);
+        [[nodiscard]] RecordedFrameState
+        recordCommandList(nvrhi::ICommandList& commandList, const core::RenderFrameIdentity& identity,
+                          const core::RenderFramePacket& packet, const RenderSettings& settings,
+                          world::SceneChangeMask sceneChanges, const core::FrameChangeSet& changes);
         void addShadowFeaturePasses(core::RenderFeatureFrameContext& context);
         void addGBufferFeaturePasses(core::RenderFeatureFrameContext& context);
         void addHybridSurfaceFeaturePasses(core::RenderFeatureFrameContext& context);
@@ -161,7 +159,6 @@ namespace lumin::render {
         void recordHistoryCopy(nvrhi::ICommandList& commandList, std::uint32_t frameIndex);
 
         VulkanContext& context_;
-        const scene::Level& level_;
         std::filesystem::path shaderDirectory_;
         core::UiFontAtlas uiFontAtlas_;
         RasterFeatureResources rasterResources_;
@@ -179,7 +176,9 @@ namespace lumin::render {
         std::uint32_t requestedExtentStableFrames_ = 0;
         bool viewportOutputInitialized_ = false;
         FrameGraph frameGraph_;
-        world::RenderWorldCache renderWorld_;
+        // currentWorld_ 可随录制尝试改变；committedWorld_ 只在 GPU submit 成功后推进。
+        world::RenderWorldSnapshotPtr currentWorld_;
+        world::RenderWorldSnapshotPtr committedWorld_;
         atmosphere::AtmosphereLutScheduler atmosphereLutScheduler_;
         std::unique_ptr<atmosphere::AtmosphereLutGpu> atmosphereLutGpu_;
         std::optional<core::RenderSequence> pendingAtmosphereSequence_;

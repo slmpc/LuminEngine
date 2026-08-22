@@ -4,8 +4,6 @@
 #include "render/gi/legacy/LegacyBackend.hpp"
 #include "render/gpu/GpuScene.hpp"
 #include "render/platform/vulkan/VulkanContext.hpp"
-#include "scene/Camera.hpp"
-#include "scene/Level.hpp"
 
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
 #include "render/gi/raytracing/HybridLightingComposite.hpp"
@@ -81,17 +79,17 @@ namespace lumin::render {
 
     } // namespace
 
-    LevelRenderer::LevelRenderer(VulkanContext& context, const scene::Level& level,
+    LevelRenderer::LevelRenderer(VulkanContext& context, world::RenderWorldSnapshotPtr initialWorld,
                                  std::filesystem::path shaderDirectory, core::UiFontAtlas uiFontAtlas,
                                  std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
-        : impl_(std::make_unique<Impl>(context, level, std::move(shaderDirectory), std::move(uiFontAtlas),
-                                       std::move(globalIllumination))) {
+        : impl_(std::make_unique<Impl>(context, std::move(initialWorld), std::move(shaderDirectory),
+                                       std::move(uiFontAtlas), std::move(globalIllumination))) {
     }
 
     LevelRenderer::~LevelRenderer() = default;
 
-    void LevelRenderer::drawFrame(scene::Camera& camera, RenderSettings& settings, core::UiDrawPacket uiDrawPacket) {
-        impl_->drawFrame(camera, settings, std::move(uiDrawPacket));
+    void LevelRenderer::drawFrame(core::RenderFramePacket packet) {
+        impl_->drawFrame(std::move(packet));
     }
 
     void LevelRenderer::waitIdle() const {
@@ -110,28 +108,26 @@ namespace lumin::render {
         return impl_->globalIlluminationBackendInfo();
     }
 
-    void LevelRenderer::requestViewportExtent(std::uint32_t width, std::uint32_t height) noexcept {
-        impl_->requestViewportExtent(width, height);
-    }
-
     ImGuiViewportImage LevelRenderer::viewportImage() const noexcept {
         return impl_->viewportImage();
     }
 
-    LevelRenderer::Impl::Impl(VulkanContext& context, const scene::Level& level, std::filesystem::path shaderDirectory,
-                              core::UiFontAtlas uiFontAtlas,
+    LevelRenderer::Impl::Impl(VulkanContext& context, world::RenderWorldSnapshotPtr initialWorld,
+                              std::filesystem::path shaderDirectory, core::UiFontAtlas uiFontAtlas,
                               std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
-        : context_(context), level_(level), shaderDirectory_(std::move(shaderDirectory)),
-          uiFontAtlas_(std::move(uiFontAtlas)), rasterResources_(*context.rhiDevice().Get(), frameSlotCount),
+        : context_(context), shaderDirectory_(std::move(shaderDirectory)), uiFontAtlas_(std::move(uiFontAtlas)),
+          rasterResources_(*context.rhiDevice().Get(), frameSlotCount),
           postFxResources_(*context.rhiDevice().Get(), frameSlotCount),
           fullscreenPipelineFactory_(*context.rhiDevice().Get(), shaderDirectory_),
-          globalIllumination_(std::move(globalIllumination)) {
+          globalIllumination_(std::move(globalIllumination)), currentWorld_(std::move(initialWorld)) {
+        if (currentWorld_ == nullptr) {
+            throw std::invalid_argument("LevelRenderer requires a non-empty initial render-world snapshot.");
+        }
         if (globalIllumination_ == nullptr) {
             globalIllumination_ = gi::makeLegacyBackend(shaderDirectory_);
         }
         renderExtent_ = core::RenderExtent{context_.swapchainWidth(), context_.swapchainHeight()};
         requestedRenderExtent_ = renderExtent_;
-        static_cast<void>(renderWorld_.sync(level_));
         createRenderResources();
         // 先创建 RT 资源，再根据真实的 device/scene capability 选择固定的帧图拓扑。
         createRenderFeaturePipeline();
@@ -146,19 +142,24 @@ namespace lumin::render {
         destroyRenderResources();
     }
 
-    void LevelRenderer::Impl::drawFrame(scene::Camera& camera, RenderSettings& settings,
-                                        core::UiDrawPacket uiDrawPacket) {
+    void LevelRenderer::Impl::drawFrame(core::RenderFramePacket packet) {
+        if (!packet.isValid()) {
+            throw std::invalid_argument("LevelRenderer received an invalid render frame packet.");
+        }
+        const RenderSettings settings = pipelines::readDefaultRenderSettings(packet.settings);
         if (swapchainGeneration_ != context_.swapchainGeneration()) {
             refreshSwapchainResources();
         }
+        requestViewportExtent(packet.surface.viewportExtent.width, packet.surface.viewportExtent.height);
         applyPendingViewportExtent();
         requestedSharcEnabled_ = settings.globalIllumination.sharcEnabled;
-        const world::SceneDelta sceneDelta = renderWorld_.sync(level_);
-        pendingFrameChanges_.merge(core::frameChangesFromScene(sceneDelta.changes));
+        const world::SceneChangeMask sceneChanges = world::changesBetween(committedWorld_, packet.world);
+        currentWorld_ = packet.world;
+        pendingFrameChanges_.merge(core::frameChangesFromScene(sceneChanges));
         const world::SceneChangeMask rebuildChanges = world::SceneChangeMask::Geometry |
                                                       world::SceneChangeMask::InstanceTopology |
                                                       world::SceneChangeMask::MaterialBinding;
-        if (sceneDelta.has(rebuildChanges)) {
+        if (world::hasAnyChange(sceneChanges, rebuildChanges)) {
             context_.waitIdle();
             frameGraph_.reset();
             directLightingBindingSets_.fill(nullptr);
@@ -196,8 +197,8 @@ namespace lumin::render {
         };
         RecordedFrameState recorded;
         try {
-            recorded = recordCommandList(*frame->commandList, identity, camera, settings, uiDrawPacket,
-                                         sceneDelta.changes, pendingFrameChanges_);
+            recorded =
+                recordCommandList(*frame->commandList, identity, packet, settings, sceneChanges, pendingFrameChanges_);
         } catch (...) {
             const std::exception_ptr recordingFailure = std::current_exception();
             renderPipeline_->discardFrame();
@@ -224,6 +225,7 @@ namespace lumin::render {
         previousProjection_ = recorded.projection;
         previousJitter_ = recorded.jitter;
         committedFeatureConfiguration_ = recorded.featureConfiguration;
+        committedWorld_ = packet.world;
         hasSubmittedFrame_ = true;
         lastSubmittedFrameUsedHybridGi_ = recorded.usedHybridGlobalIllumination;
         pendingFrameChanges_.clear();
@@ -291,7 +293,7 @@ namespace lumin::render {
         capabilities.maxFramesInFlight = frameSlotCount;
         pipelines::DefaultRenderPipelineKind path = pipelines::DefaultRenderPipelineKind::Raster;
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-        const world::RenderWorldSnapshotPtr snapshot = renderWorld_.snapshot();
+        const world::RenderWorldSnapshotPtr snapshot = currentWorld_;
         const bool hybridPath = requestedPath == pipelines::DefaultRenderPipelineKind::Hybrid && hybridGi_ != nullptr &&
                                 context_.rayTracingDecision().enabled() &&
                                 context_.rayTracingSupport().supportsSharcShaderStorage() && snapshot != nullptr &&
@@ -422,7 +424,7 @@ namespace lumin::render {
             createHybridGiResources();
             pendingFrameChanges_.add(core::HistoryReason::FeatureConfigurationChanged);
         }
-        const world::RenderWorldSnapshotPtr snapshot = renderWorld_.snapshot();
+        const world::RenderWorldSnapshotPtr snapshot = currentWorld_;
         useRayTracing = settings.globalIllumination.mode == GlobalIlluminationMode::RayTracing &&
                         hybridGi_ != nullptr && context_.rayTracingDecision().enabled() &&
                         context_.rayTracingSupport().supportsSharcShaderStorage() && snapshot != nullptr &&

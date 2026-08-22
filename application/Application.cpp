@@ -5,6 +5,7 @@
 #include "render/LevelRenderer.hpp"
 #include "render/editor/Editor.hpp"
 #include "render/editor/ImGuiFrontend.hpp"
+#include "render/pipelines/DefaultRenderPipelines.hpp"
 #include "render/platform/RenderDocAttachment.hpp"
 #include "render/platform/Window.hpp"
 #include "render/platform/vulkan/VulkanContext.hpp"
@@ -101,7 +102,9 @@ namespace lumin::core {
 #endif
             ui = std::make_unique<render::ImGuiFrontend>();
             ui->initialize(window);
-            renderer = std::make_unique<render::LevelRenderer>(vulkan, level, shaderDirectory, ui->fontAtlas());
+            renderer = std::make_unique<render::LevelRenderer>(
+                vulkan, render::world::RenderWorldExtractor::extract(level), shaderDirectory, ui->fontAtlas());
+            viewportExtent = render::core::RenderExtent{vulkan.swapchainWidth(), vulkan.swapchainHeight()};
             RendererIdleGuard idleGuard{*renderer};
             const std::filesystem::path engineSettingsPath = preferenceFilePath("engine-settings.json");
             const config::EngineSettingsLoadResult loadedSettings =
@@ -168,7 +171,7 @@ namespace lumin::core {
                 }
                 const editor::ViewportInteractionState viewport = editor->viewportInteraction();
                 if (viewport.hasRenderableExtent()) {
-                    renderer->requestViewportExtent(viewport.width, viewport.height);
+                    viewportExtent = render::core::RenderExtent{viewport.width, viewport.height};
                 }
                 const bool middleMouseDown = window.isMouseButtonDown(platform::MouseButton::Middle);
                 if (!project.hasProject() && viewportLookActive) {
@@ -225,7 +228,16 @@ namespace lumin::core {
                 game::advanceGameFrame(*game, context,
                                        routing.dispatchGameInput ? std::optional<game::GameInput>{input} : std::nullopt,
                                        deltaSeconds);
-                renderer->drawFrame(camera, renderSettings, ui->finishFrame());
+                const VkExtent2D framebufferExtent = window.framebufferExtent();
+                renderer->drawFrame(framePacketBuilder.build(
+                    level, camera, render::pipelines::makeDefaultRenderSettingsSnapshot(renderSettings),
+                    ui->finishFrame(),
+                    render::core::SurfaceState{
+                        .windowExtent = {framebufferExtent.width, framebufferExtent.height},
+                        .viewportExtent = viewportExtent,
+                        .framebufferResized = window.framebufferResized(),
+                        .minimized = framebufferExtent.width == 0 || framebufferExtent.height == 0,
+                    }));
             }
             return 0;
         }
@@ -239,6 +251,8 @@ namespace lumin::core {
         scene::Camera camera;
         scripting::ScriptRuntime scripts;
         render::RenderSettings renderSettings;
+        render::core::RenderFramePacketBuilder framePacketBuilder;
+        render::core::RenderExtent viewportExtent{1280, 720};
         project::ProjectSession project;
         std::unique_ptr<render::ImGuiFrontend> ui;
         std::unique_ptr<render::LevelRenderer> renderer;

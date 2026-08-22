@@ -296,4 +296,15 @@ namespace lumin::render::pipelines {
         return store.snapshot();
     }
 
+    RenderSettings readDefaultRenderSettings(const core::RenderSettingsSnapshot& snapshot) {
+        return RenderSettings{
+            .directLighting = snapshot.get<DirectLightingFeatureSettings>(feature_ids::lightingComposite()),
+            .shadows = snapshot.get<ShadowSettings>(feature_ids::shadow()),
+            .globalIllumination = snapshot.get<GlobalIlluminationSettings>(feature_ids::globalIllumination()),
+            .temporalAa = snapshot.get<TemporalAaSettings>(feature_ids::temporalAa()),
+            .toneMapping = snapshot.get<ToneMappingSettings>(feature_ids::toneMapping()),
+            .atmosphere = snapshot.get<AtmosphereRenderSettings>(feature_ids::atmosphere()),
+        };
+    }
+
 } // namespace lumin::render::pipelines

@@ -74,4 +74,11 @@ namespace lumin::render::pipelines {
      */
     [[nodiscard]] core::RenderSettingsSnapshot makeDefaultRenderSettingsSnapshot(const RenderSettings& settings);
 
+    /**
+     * @brief 从完整 typed snapshot 读取内置 Feature 的兼容聚合值。
+     * @throws std::out_of_range 缺少任一内置 Feature 设置时抛出。
+     * @throws std::invalid_argument 任一 schema 类型不匹配时抛出。
+     */
+    [[nodiscard]] RenderSettings readDefaultRenderSettings(const core::RenderSettingsSnapshot& snapshot);
+
 } // namespace lumin::render::pipelines

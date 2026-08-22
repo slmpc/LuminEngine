@@ -22,6 +22,7 @@ add_library(lumin_render_core STATIC
     core/RenderFeaturePipeline.cpp
     core/RenderFeaturePlan.cpp
     core/RenderFeatureRegistry.cpp
+    core/RenderFramePacket.cpp
     core/RenderPipelineInstance.cpp
     core/RenderSettingsStore.cpp
     world/RenderWorld.cpp

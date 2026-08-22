@@ -66,8 +66,7 @@ namespace lumin::render::world {
             return !left.textures.has_value() || sameTextureSet(*left.textures, *right.textures);
         }
 
-        [[nodiscard]] bool sameMaterialBinding(const scene::Material& left,
-                                               const scene::Material& right) noexcept {
+        [[nodiscard]] bool sameMaterialBinding(const scene::Material& left, const scene::Material& right) noexcept {
             if (left.textures.has_value() != right.textures.has_value()) {
                 return false;
             }
@@ -265,11 +264,9 @@ namespace lumin::render::world {
     } // namespace
 
     RenderWorldSnapshot::RenderWorldSnapshot(std::uint64_t sourceRevision, std::uint64_t sourceTopologyRevision,
-                                             std::uint64_t sourceModelRevision,
-                                             std::uint64_t sourceLightingRevision,
+                                             std::uint64_t sourceModelRevision, std::uint64_t sourceLightingRevision,
                                              std::uint64_t sourceAtmosphereRevision,
-                                             scene::SceneEnvironment environment,
-                                             std::vector<RenderWorldMesh> meshes,
+                                             scene::SceneEnvironment environment, std::vector<RenderWorldMesh> meshes,
                                              std::vector<RenderWorldInstance> instances)
         : RenderWorldSnapshot(sourceRevision, sourceTopologyRevision, sourceModelRevision, sourceLightingRevision,
                               sourceAtmosphereRevision, std::move(environment),
@@ -278,8 +275,7 @@ namespace lumin::render::world {
     }
 
     RenderWorldSnapshot::RenderWorldSnapshot(std::uint64_t sourceRevision, std::uint64_t sourceTopologyRevision,
-                                             std::uint64_t sourceModelRevision,
-                                             std::uint64_t sourceLightingRevision,
+                                             std::uint64_t sourceModelRevision, std::uint64_t sourceLightingRevision,
                                              std::uint64_t sourceAtmosphereRevision,
                                              scene::SceneEnvironment environment,
                                              std::shared_ptr<const std::vector<RenderWorldMesh>> meshes,
@@ -328,6 +324,19 @@ namespace lumin::render::world {
                                                 return handleLess(instance.modelHandle, candidate);
                                             });
         return found != instances_->end() && found->modelHandle == handle ? &*found : nullptr;
+    }
+
+    SceneChangeMask changesBetween(const RenderWorldSnapshotPtr& previous, const RenderWorldSnapshotPtr& current) {
+        if (current == nullptr) {
+            throw std::invalid_argument("Cannot compare against an empty render-world snapshot.");
+        }
+        if (previous == nullptr) {
+            return SceneChangeMask::All;
+        }
+        if (previous == current) {
+            return SceneChangeMask::None;
+        }
+        return compareSnapshots(*previous, *current);
     }
 
     bool SceneDelta::has(SceneChangeMask categories) const noexcept {
@@ -394,7 +403,7 @@ namespace lumin::render::world {
                 std::make_shared<const std::vector<RenderWorldInstance>>(std::move(instances)))};
         }
 
-        const SceneChangeMask changes = compareSnapshots(*snapshot_, *next);
+        const SceneChangeMask changes = changesBetween(snapshot_, next);
         snapshot_ = std::move(next);
         return SceneDelta{changes, snapshot_};
     }

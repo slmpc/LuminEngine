@@ -127,7 +127,7 @@ namespace {
 
     void verifyHistoryAndErrorPaths(const std::string& level) {
         for (const std::string& token : std::vector<std::string>{
-                 "pendingFrameChanges_.merge(core::frameChangesFromScene(sceneDelta.changes))",
+                 "pendingFrameChanges_.merge(core::frameChangesFromScene(sceneChanges))",
                  "HistoryReason::FeatureConfigurationChanged", "HistoryReason::SwapchainRecreated",
                  "core::RenderFrameIdentity identity", "core::FrameSlotIndex{frame->frameIndex}",
                  "core::SwapImageIndex{frame->imageIndex}", "core::RenderSequence{nextRenderSequence_}",
@@ -171,8 +171,9 @@ namespace {
     }
 
     void verifyRenderWorldSnapshotBoundary(const std::string& level) {
-        require(level.find("renderWorld_.sync(level_)") != std::string::npos,
-                "LevelRenderer must synchronize its renderer-owned world before recording.");
+        require(level.find("world::changesBetween(committedWorld_, packet.world)") != std::string::npos &&
+                    level.find("committedWorld_ = packet.world") != std::string::npos,
+                "Runtime must compare packet snapshots with the last successfully submitted world.");
         for (const std::string& rebuildChange :
              {"SceneChangeMask::Geometry", "SceneChangeMask::InstanceTopology", "SceneChangeMask::MaterialBinding"}) {
             require(level.find(rebuildChange) != std::string::npos,
@@ -184,10 +185,10 @@ namespace {
                     level.find("*sceneData.world") != std::string::npos &&
                     level.find(".snapshot = sceneData.world") != std::string::npos,
                 "Raster and GPU-scene GI setup must consume the same immutable render-world snapshot.");
-        require(level.find("modelRenderer_->sync(level_") == std::string::npos &&
-                    level.find("gi::FrameInfo{level_") == std::string::npos,
-                "Rendering features must not read the live Level after snapshot extraction.");
-        std::cout << "RENDER_WORLD_BOUNDARY=sync>snapshot>ModelRenderer+SSAO+GPUScene\n";
+        require(level.find("renderWorld_.sync(") == std::string::npos &&
+                    level.find("scene::Level") == std::string::npos && level.find("scene::Camera") == std::string::npos,
+                "Runtime must not read an active Level or Camera after the packet boundary.");
+        std::cout << "RENDER_WORLD_BOUNDARY=packet>submitted-baseline>ModelRenderer+SSAO+GPUScene\n";
     }
 
     void verifyHybridGiIntegration(const std::string& level) {

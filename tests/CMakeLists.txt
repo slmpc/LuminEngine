@@ -336,6 +336,11 @@ lumin_configure_test(lumin_render_world_tests)
 target_link_libraries(lumin_render_world_tests PRIVATE Lumin::RenderCore)
 lumin_register_test(lumin_render_world_tests RenderWorld LABELS scene unit)
 
+add_executable(lumin_render_frame_packet_tests RenderFramePacketTests.cpp)
+lumin_configure_test(lumin_render_frame_packet_tests)
+target_link_libraries(lumin_render_frame_packet_tests PRIVATE Lumin::RenderPipelines)
+lumin_register_test(lumin_render_frame_packet_tests RenderFramePacket LABELS render scene thread unit contract)
+
 add_executable(lumin_gpu_scene_tests GpuSceneTests.cpp)
 lumin_configure_test(lumin_gpu_scene_tests)
 target_link_libraries(lumin_gpu_scene_tests PRIVATE Lumin::GpuScene)

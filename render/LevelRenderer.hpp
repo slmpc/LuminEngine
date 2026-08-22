@@ -1,17 +1,11 @@
 #pragma once
 
-#include "render/RenderSettings.hpp"
-#include "render/core/UiDrawPacket.hpp"
+#include "render/core/RenderFramePacket.hpp"
 #include "render/editor/ImGuiContent.hpp"
 #include "render/gi/GlobalIllumination.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-
-namespace lumin::scene {
-    class Camera;
-    class Level;
-} // namespace lumin::scene
 
 namespace lumin::render {
 
@@ -25,25 +19,34 @@ namespace lumin::render {
      */
     class LevelRenderer {
     public:
-        /** 创建渲染器并从 `level` 提取首份不可变渲染世界快照。 */
-        LevelRenderer(VulkanContext& context, const scene::Level& level, std::filesystem::path shaderDirectory,
-                      core::UiFontAtlas uiFontAtlas,
+        /**
+         * @brief 使用初始不可变世界快照创建同步 Runtime。
+         * @param context 非拥有 Vulkan/NvRHI 上下文；全部调用必须位于其所有线程。
+         * @param initialWorld 完全拥有的初始世界快照，用于创建场景相关 GPU 资源。
+         * @param shaderDirectory 编译后 shader 目录。
+         * @param uiFontAtlas 主线程深拷贝的字体图集。
+         * @param globalIllumination 可选 GI backend；为空时创建 Raster fallback。
+         */
+        LevelRenderer(VulkanContext& context, world::RenderWorldSnapshotPtr initialWorld,
+                      std::filesystem::path shaderDirectory, core::UiFontAtlas uiFontAtlas,
                       std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination = {});
         ~LevelRenderer();
 
         LevelRenderer(const LevelRenderer&) = delete;
         LevelRenderer& operator=(const LevelRenderer&) = delete;
 
-        /// 提取场景变化并消费主线程深拷贝的 UI packet，随后构建 Feature 管线并提交一帧。
-        void drawFrame(scene::Camera& camera, RenderSettings& settings, core::UiDrawPacket uiDrawPacket = {});
+        /**
+         * @brief 消费一份完全拥有的帧 packet，并同步录制、提交和 present。
+         * @param packet 主线程构建的不可变值；函数返回后不保留对调用方对象的引用。
+         */
+        void drawFrame(core::RenderFramePacket packet);
         /// 等待当前设备队列空闲。
         void waitIdle() const;
 
         [[nodiscard]] std::uint32_t modelCount() const noexcept;
         [[nodiscard]] std::uint32_t mdiDrawCount() const noexcept;
         [[nodiscard]] gi::BackendInfo globalIlluminationBackendInfo() const noexcept;
-        /** 请求按 Viewport 内容区物理像素重建渲染资源。连续 resize 会等待尺寸稳定后应用。 */
-        void requestViewportExtent(std::uint32_t width, std::uint32_t height) noexcept;
+        /** 返回 Presentation Feature 当前发布的稳定 Viewport 逻辑图像。 */
         [[nodiscard]] ImGuiViewportImage viewportImage() const noexcept;
 
     private:

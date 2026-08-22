@@ -1,6 +1,7 @@
 #include "render/ObjRenderer.hpp"
 
 #include "render/LevelRenderer.hpp"
+#include "render/pipelines/DefaultRenderPipelines.hpp"
 #include "render/platform/vulkan/VulkanContext.hpp"
 #include "scene/Camera.hpp"
 #include "scene/Level.hpp"
@@ -19,16 +20,20 @@ namespace lumin::render {
     } // namespace
 
     struct ObjRenderer::Impl {
+        VulkanContext& context;
         scene::Level level;
+        core::RenderFramePacketBuilder framePacketBuilder;
         std::unique_ptr<LevelRenderer> renderer;
 
-        Impl(VulkanContext& context, const assets::Mesh& mesh, std::filesystem::path shaderDirectory) {
+        Impl(VulkanContext& contextValue, const assets::Mesh& mesh, std::filesystem::path shaderDirectory)
+            : context(contextValue) {
             if (mesh.empty()) {
                 throw std::invalid_argument("ObjRenderer requires a non-empty mesh.");
             }
             const scene::MeshHandle handle = level.addMesh(mesh);
             level.addModel(handle);
-            renderer = std::make_unique<LevelRenderer>(context, level, std::move(shaderDirectory), fallbackFontAtlas());
+            renderer = std::make_unique<LevelRenderer>(contextValue, world::RenderWorldExtractor::extract(level),
+                                                       std::move(shaderDirectory), fallbackFontAtlas());
         }
     };
 
@@ -39,7 +44,14 @@ namespace lumin::render {
     ObjRenderer::~ObjRenderer() = default;
 
     void ObjRenderer::drawFrame(scene::Camera& camera, RenderSettings& settings) {
-        impl_->renderer->drawFrame(camera, settings);
+        const std::uint32_t width = impl_->context.swapchainWidth();
+        const std::uint32_t height = impl_->context.swapchainHeight();
+        impl_->renderer->drawFrame(impl_->framePacketBuilder.build(
+            impl_->level, camera, pipelines::makeDefaultRenderSettingsSnapshot(settings), {},
+            core::SurfaceState{.windowExtent = {width, height},
+                               .viewportExtent = {width, height},
+                               .framebufferResized = false,
+                               .minimized = width == 0 || height == 0}));
     }
 
     void ObjRenderer::waitIdle() const {

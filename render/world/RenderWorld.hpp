@@ -143,6 +143,17 @@ namespace lumin::render::world {
     /** 不可变渲染世界快照的共享所有权类型。 */
     using RenderWorldSnapshotPtr = std::shared_ptr<const RenderWorldSnapshot>;
 
+    /**
+     * @brief 比较两个不可变世界快照并返回内容变化。
+     *
+     * `previous` 为空时返回
+     * `SceneChangeMask::All`，相同共享对象返回 `SceneChangeMask::None`。该函数用于
+     * Runtime
+     * 相对最近成功提交快照重新计算变化，避免 latest-wins 丢帧漏掉一次性修订。
+     */
+    [[nodiscard]] SceneChangeMask changesBetween(const RenderWorldSnapshotPtr& previous,
+                                                 const RenderWorldSnapshotPtr& current);
+
     /** 一次渲染世界同步的结果。 */
     struct SceneDelta {
         /** 与上一次同步结果相比发生的变化。 */

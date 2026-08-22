@@ -41,8 +41,9 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 
 当前 target 及职责如下：
 
-- `Lumin::RenderCore`：帧身份、历史策略、typed blackboard、typed frame-data contract、Feature registry、recipe DAG、
-  typed settings 和 `RenderPipelineInstance` 生命周期事务；不依赖 SDL、原生 Vulkan或 Editor。
+- `Lumin::RenderCore`：帧身份、`RenderFramePacket`、主线程快照 builder、历史策略、typed blackboard、typed frame-data
+  contract、Feature registry、recipe DAG、typed settings 和 `RenderPipelineInstance` 生命周期事务；不依赖 SDL、
+  原生 Vulkan 或 Editor。
 - `Lumin::RenderRhi`：`FrameGraph`、资源导入去重、`ShaderLibrary`、无业务语义的 Pipeline/资源 factory；只面向 NvRHI。
 - `Lumin::VulkanBackend`：窗口 surface、`VulkanContext`、交换链、能力探测和 RenderDoc 接入；这是唯一原生 Vulkan 边界。
 - `Lumin::Atmosphere`、`Lumin::GpuScene`、`Lumin::RasterFeatures`、`Lumin::GiFeatures`、`Lumin::PostFxFeatures`：按资源
@@ -50,7 +51,8 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 - `Lumin::RenderPresentation`：交换链 framebuffer 与 UI NvRHI renderer；只消费主线程深拷贝的 `UiDrawPacket`，不依赖
   ImGui、SDL 或 Editor。
 - `Lumin::RenderPipelines`：Raster/Hybrid recipe、typed producer/consumer 契约和默认模块稳定标识。
-- `Lumin::RenderRuntime`：帧事务和渲染门面。迁移期间仍包含旧 `LevelRenderer` 实现，最终由异步 `Renderer` 替换。
+- `Lumin::RenderRuntime`：帧事务和同步 `LevelRenderer` 实现。它只消费不可变 `RenderFramePacket`，后续由异步
+  `Renderer` 门面和专用渲染线程驱动。
 - `Lumin::Editor`：独立 Editor UI target，不再与 Render 单体库共享产物。
 
 物理目录继续按依赖边界划分：
@@ -76,7 +78,9 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 ## Application
 
 `application/Application.cpp` 是组合层，不属于 Core 或 Render 的内部实现。它创建窗口、Vulkan 上下文、
-场景、脚本和 `LevelRenderer`，并把 `Game` 注入到 Core 的 `GameContext`。`Lumin::Application`（兼容名
+场景、脚本、主线程 `RenderFramePacketBuilder` 和 `LevelRenderer`，并把 `Game` 注入到 Core 的 `GameContext`。
+Application 在每帧完成场景、相机、设置和 ImGui 更新后构建完全拥有的 packet；Runtime 不读取这些活动对象。
+`Lumin::Application`（兼容名
 `Lumin::GameEngine`）链接 `Lumin::Core` 与 `Lumin::Render`；Render 不反向链接 Application。
 
 ## CMake 入口

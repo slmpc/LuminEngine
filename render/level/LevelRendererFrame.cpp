@@ -3,9 +3,6 @@
 
 #include "render/platform/vulkan/VulkanContext.hpp"
 #include "render/resources/FrameGraphResourceImporter.hpp"
-#include "scene/Camera.hpp"
-#include "scene/Level.hpp"
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -40,42 +37,43 @@ namespace lumin::render {
             return result;
         }
 
-        core::ShadowData calculateCascadeShadows(const scene::Camera& camera, float aspectRatio,
+        core::ShadowData calculateCascadeShadows(const core::CameraFrameData& camera, float aspectRatio,
                                                  glm::vec3 lightDirection, const ShadowSettings& settings) {
             core::ShadowData result;
             std::array<float, shadowCascadeCount> splits{};
             const float splitLambda = std::clamp(settings.splitLambda, 0.0f, 1.0f);
-            const float shadowFar = std::clamp(settings.maxDistance, camera.nearPlane() + 0.001f, camera.farPlane());
-            const float clipRange = shadowFar - camera.nearPlane();
-            const float clipRatio = shadowFar / camera.nearPlane();
+            const float shadowFar = std::clamp(settings.maxDistance, camera.nearPlane + 0.001f, camera.farPlane);
+            const float clipRange = shadowFar - camera.nearPlane;
+            const float clipRatio = shadowFar / camera.nearPlane;
             for (std::uint32_t cascade = 0; cascade < shadowCascadeCount; ++cascade) {
                 const float fraction = static_cast<float>(cascade + 1) / static_cast<float>(shadowCascadeCount);
-                const float logarithmic = camera.nearPlane() * std::pow(clipRatio, fraction);
-                const float uniform = camera.nearPlane() + clipRange * fraction;
+                const float logarithmic = camera.nearPlane * std::pow(clipRatio, fraction);
+                const float uniform = camera.nearPlane + clipRange * fraction;
                 splits[cascade] = splitLambda * logarithmic + (1.0f - splitLambda) * uniform;
                 result.splits[cascade] = splits[cascade];
             }
 
             lightDirection = normalizedLightDirection(lightDirection);
-            const glm::vec3 cameraForward = camera.forward();
-            const glm::vec3 cameraRight = camera.right();
-            const glm::vec3 cameraUp = camera.up();
-            const float tanHalfFov = std::tan(glm::radians(camera.fieldOfViewDegrees()) * 0.5f);
+            const glm::vec3 cameraForward = glm::vec3{camera.forward};
+            const glm::vec3 cameraRight = camera.right;
+            const glm::vec3 cameraUp = camera.up;
+            const glm::vec3 cameraPosition = glm::vec3{camera.position};
+            const float tanHalfFov = std::tan(glm::radians(camera.fieldOfViewDegrees) * 0.5f);
             const glm::vec3 upReference = std::abs(glm::dot(lightDirection, glm::vec3{0.0f, 1.0f, 0.0f})) > 0.95f
                                               ? glm::vec3{0.0f, 0.0f, 1.0f}
                                               : glm::vec3{0.0f, 1.0f, 0.0f};
             const glm::vec3 lightRight = glm::normalize(glm::cross(lightDirection, upReference));
             const glm::vec3 lightUp = glm::normalize(glm::cross(lightRight, lightDirection));
 
-            float sliceNear = camera.nearPlane();
+            float sliceNear = camera.nearPlane;
             for (std::uint32_t cascade = 0; cascade < shadowCascadeCount; ++cascade) {
                 const float sliceFar = splits[cascade];
                 const float nearHalfHeight = tanHalfFov * sliceNear;
                 const float nearHalfWidth = nearHalfHeight * aspectRatio;
                 const float farHalfHeight = tanHalfFov * sliceFar;
                 const float farHalfWidth = farHalfHeight * aspectRatio;
-                const glm::vec3 nearCenter = camera.position() + cameraForward * sliceNear;
-                const glm::vec3 farCenter = camera.position() + cameraForward * sliceFar;
+                const glm::vec3 nearCenter = cameraPosition + cameraForward * sliceNear;
+                const glm::vec3 farCenter = cameraPosition + cameraForward * sliceFar;
                 const std::array<glm::vec3, 8> corners = {
                     nearCenter - cameraRight * nearHalfWidth - cameraUp * nearHalfHeight,
                     nearCenter + cameraRight * nearHalfWidth - cameraUp * nearHalfHeight,
@@ -160,9 +158,8 @@ namespace lumin::render {
 
     LevelRenderer::Impl::RecordedFrameState
     LevelRenderer::Impl::recordCommandList(nvrhi::ICommandList& commandList, const core::RenderFrameIdentity& identity,
-                                           const scene::Camera& camera, const RenderSettings& settings,
-                                           const core::UiDrawPacket& uiDrawPacket, world::SceneChangeMask sceneChanges,
-                                           const core::FrameChangeSet& changes) {
+                                           const core::RenderFramePacket& packet, const RenderSettings& settings,
+                                           world::SceneChangeMask sceneChanges, const core::FrameChangeSet& changes) {
         if (!identity.isValid()) {
             throw std::invalid_argument("LevelRenderer requires a valid render frame identity.");
         }
@@ -171,8 +168,11 @@ namespace lumin::render {
         const std::uint32_t width = identity.extent.width;
         const std::uint32_t height = identity.extent.height;
         const float aspectRatio = static_cast<float>(width) / static_cast<float>(height);
-        const glm::mat4 view = camera.viewMatrix();
-        const glm::mat4 unjitteredProjection = camera.projectionMatrix(aspectRatio);
+        const core::CameraFrameData& camera = packet.camera;
+        const glm::mat4 view = camera.view;
+        // resize 防抖期间 packet 的请求尺寸可能领先于当前 GPU 资源，投影必须以实际提交尺寸重新计算。
+        const glm::mat4 unjitteredProjection = glm::perspective(
+            glm::radians(camera.fieldOfViewDegrees), std::max(aspectRatio, 0.001f), camera.nearPlane, camera.farPlane);
         const glm::mat4 unjitteredViewProjection = unjitteredProjection * view;
         glm::mat4 projection = unjitteredProjection;
         glm::vec2 jitter{0.0f};
@@ -183,13 +183,13 @@ namespace lumin::render {
             projection[2][1] += (2.0f * jitter.y) / static_cast<float>(height);
         }
         const glm::mat4 viewProjection = projection * view;
-        const world::RenderWorldSnapshotPtr renderWorld = renderWorld_.snapshot();
+        const world::RenderWorldSnapshotPtr renderWorld = packet.world;
         if (renderWorld == nullptr) {
             throw std::logic_error("LevelRenderer cannot record without a render-world snapshot.");
         }
 
         const scene::DirectionalLight& sun = renderWorld->environment().sun;
-        const glm::vec3 cameraForward = camera.forward();
+        const glm::vec3 cameraForward = glm::vec3{camera.forward};
         const glm::vec3 lightDirection = normalizedLightDirection(sun.direction);
         core::ShadowData shadows = calculateCascadeShadows(camera, aspectRatio, lightDirection, settings.shadows);
         const std::uint32_t historyReadIndex = (frameIndex + frameSlotCount - 1) % frameSlotCount;
@@ -205,18 +205,18 @@ namespace lumin::render {
                     .projection = unjitteredProjection,
                     .viewProjection = viewProjection,
                     .previousViewProjection = previousViewProjection_,
-                    .position = glm::vec4{camera.position(), 1.0f},
+                    .position = camera.position,
                     .forward = glm::vec4{cameraForward, 0.0f},
-                    .right = camera.right(),
-                    .up = camera.up(),
-                    .fieldOfViewDegrees = camera.fieldOfViewDegrees(),
-                    .nearPlane = camera.nearPlane(),
-                    .farPlane = camera.farPlane(),
-                    .revision = camera.revision(),
+                    .right = camera.right,
+                    .up = camera.up,
+                    .fieldOfViewDegrees = camera.fieldOfViewDegrees,
+                    .nearPlane = camera.nearPlane,
+                    .farPlane = camera.farPlane,
+                    .revision = camera.revision,
                     .jitter = jitter,
-                    .cutEpoch = camera.cutEpoch(),
+                    .cutEpoch = camera.cutEpoch,
                 },
-            .settings = pipelines::makeDefaultRenderSettingsSnapshot(settings),
+            .settings = packet.settings,
             .changes = sceneChanges,
         };
         PostProcessPassData postProcess;
@@ -225,7 +225,7 @@ namespace lumin::render {
         postProcess.uniforms.viewProjection = viewProjection;
         postProcess.uniforms.cascadeViewProjections = shadows.viewProjections;
         postProcess.uniforms.cascadeSplits = shadows.splits;
-        postProcess.uniforms.cameraPosition = glm::vec4{camera.position(), 1.0f};
+        postProcess.uniforms.cameraPosition = camera.position;
         postProcess.uniforms.cameraForward = glm::vec4{cameraForward, 0.0f};
         postProcess.uniforms.lightDirection = glm::vec4{lightDirection, settings.directLighting.enabled ? 1.0f : 0.0f};
         postProcess.uniforms.renderSize =
@@ -378,7 +378,7 @@ namespace lumin::render {
         }
         swapDesc.finalState = nvrhi::ResourceStates::Present;
         core::PresentationInputData presentationInput;
-        presentationInput.ui = uiDrawPacket;
+        presentationInput.ui = packet.ui;
         presentationInput.imageIndex = imageIndex;
         presentationInput.frameSlot = frameIndex;
         presentationInput.swapchain =
@@ -431,7 +431,7 @@ namespace lumin::render {
         blackboard.set(AtmospherePassData{});
         blackboard.set(std::move(hybridData));
         blackboard.set(FrameImportServices{.importer = &importer});
-        renderPipeline_->prepareFrame(identity, camera.cutEpoch(), changes, frameGraph_, blackboard);
+        renderPipeline_->prepareFrame(identity, camera.cutEpoch, changes, frameGraph_, blackboard);
         frameGraph_.execute(FrameGraphContext{&commandList, nullptr, frameIndex});
         const bool usedHybridGlobalIllumination = blackboard.get<HybridPassData>().globalIlluminationActive;
         return RecordedFrameState{viewProjection,
