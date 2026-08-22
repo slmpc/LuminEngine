@@ -138,7 +138,8 @@ namespace lumin::render {
     LevelRenderer::Impl::RecordedFrameState
     LevelRenderer::Impl::recordCommandList(nvrhi::ICommandList& commandList, const core::RenderFrameIdentity& identity,
                                            const scene::Camera& camera, const RenderSettings& settings,
-                                           world::SceneChangeMask sceneChanges, const core::FrameChangeSet& changes) {
+                                           const core::UiDrawPacket& uiDrawPacket, world::SceneChangeMask sceneChanges,
+                                           const core::FrameChangeSet& changes) {
         if (!identity.isValid()) {
             throw std::invalid_argument("LevelRenderer requires a valid render frame identity.");
         }
@@ -179,6 +180,7 @@ namespace lumin::render {
         data.renderWorld = renderWorld.get();
         data.camera = &camera;
         data.settings = &settings;
+        data.uiDrawPacket = &uiDrawPacket;
         data.frame = &frame;
         data.frameIndex = frameIndex;
         data.imageIndex = imageIndex;
@@ -306,8 +308,8 @@ namespace lumin::render {
         swapDesc.finalState = nvrhi::ResourceStates::Present;
         data.swap = frameGraph_.importTexture("swapchain.color", swapDesc);
         FrameGraphTextureDesc fontDesc;
-        fontDesc.texture = imgui_.fontTexture();
-        fontDesc.initialState = imgui_.fontTextureInitialState();
+        fontDesc.texture = presentation_.fontTexture();
+        fontDesc.initialState = presentation_.fontTextureInitialState();
         fontDesc.finalState = nvrhi::ResourceStates::ShaderResource;
         data.imguiFont = frameGraph_.importTexture("imgui.font", fontDesc);
 

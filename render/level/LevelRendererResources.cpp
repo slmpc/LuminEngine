@@ -322,12 +322,12 @@ namespace lumin::render {
         }
         renderPipeline_->discardFrame();
         context_.waitIdle();
-        imgui_.setViewportTexture(nullptr);
+        presentation_.setViewportTexture(nullptr);
         destroyRenderResources();
         renderExtent_ = requestedRenderExtent_;
         pendingFrameChanges_.add(core::HistoryReason::RenderExtentChanged);
         createRenderResources();
-        imgui_.setViewportTexture(viewportOutput_.texture);
+        presentation_.setViewportTexture(viewportOutput_.texture);
     }
 
     void LevelRenderer::Impl::refreshSwapchainResources() {
@@ -335,13 +335,13 @@ namespace lumin::render {
         pendingFrameChanges_.add(core::HistoryReason::SwapchainRecreated);
         context_.waitIdle();
         const bool viewportFormatChanged = viewportOutput_.format != context_.swapchainRhiFormat();
-        imgui_.shutdown();
+        presentation_.shutdown();
         if (viewportFormatChanged) {
             destroyRenderResources();
             createRenderResources();
         }
-        imgui_.initialize(window_, context_);
-        imgui_.setViewportTexture(viewportOutput_.texture);
+        presentation_.initialize(context_, uiFontAtlas_, shaderDirectory_);
+        presentation_.setViewportTexture(viewportOutput_.texture);
         swapchainGeneration_ = context_.swapchainGeneration();
     }
 

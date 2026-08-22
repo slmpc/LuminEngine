@@ -1484,7 +1484,7 @@ namespace lumin::editor {
 
             const render::ImGuiViewportImage image = viewportImage ? viewportImage() : render::ImGuiViewportImage{};
             if (image.isValid() && available.x > 0.0f && available.y > 0.0f) {
-                ImGui::Image(static_cast<ImTextureID>(image.textureId), available);
+                ImGui::Image(static_cast<ImTextureID>(image.textureId.value()), available);
             } else {
                 ImGui::Dummy(available);
             }

@@ -5,9 +5,9 @@
 #include "render/ModelRenderer.hpp"
 #include "render/atmosphere/AtmosphereLutGpu.hpp"
 #include "render/atmosphere/AtmosphereLutScheduler.hpp"
-#include "render/editor/ImGuiManager.hpp"
 #include "render/gi/GlobalIllumination.hpp"
 #include "render/level/LevelRenderFrameData.hpp"
+#include "render/presentation/PresentationRenderer.hpp"
 #include "render/resources/FrameGraph.hpp"
 #include "render/resources/PipelineManager.hpp"
 #include "render/resources/TextureManager.hpp"
@@ -32,8 +32,8 @@ namespace lumin::render {
 
     struct LevelRenderer::Impl final : LevelRenderFeatureHost {
     public:
-        Impl(platform::Window& window, VulkanContext& context, const scene::Level& level,
-             std::filesystem::path shaderDirectory, std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination);
+        Impl(VulkanContext& context, const scene::Level& level, std::filesystem::path shaderDirectory,
+             core::UiFontAtlas uiFontAtlas, std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination);
         ~Impl();
 
         Impl(const Impl&) = delete;
@@ -89,14 +89,11 @@ namespace lumin::render {
 #endif
         };
 
-        void beginUiFrame(ImGuiContent* content = nullptr);
-        void cancelUiFrame() noexcept;
-        void drawFrame(scene::Camera& camera, RenderSettings& settings, ImGuiContent* content = nullptr);
+        void drawFrame(scene::Camera& camera, RenderSettings& settings, core::UiDrawPacket uiDrawPacket);
         void waitIdle() const;
         [[nodiscard]] std::uint32_t modelCount() const noexcept;
         [[nodiscard]] std::uint32_t mdiDrawCount() const noexcept;
         [[nodiscard]] gi::BackendInfo globalIlluminationBackendInfo() const noexcept;
-        [[nodiscard]] ImGuiCaptureState imguiCaptureState() const noexcept;
         void requestViewportExtent(std::uint32_t width, std::uint32_t height) noexcept;
         [[nodiscard]] ImGuiViewportImage viewportImage() const noexcept;
 
@@ -131,6 +128,7 @@ namespace lumin::render {
         [[nodiscard]] RecordedFrameState recordCommandList(nvrhi::ICommandList& commandList,
                                                            const core::RenderFrameIdentity& identity,
                                                            const scene::Camera& camera, const RenderSettings& settings,
+                                                           const core::UiDrawPacket& uiDrawPacket,
                                                            world::SceneChangeMask sceneChanges,
                                                            const core::FrameChangeSet& changes);
         void addShadowFeaturePasses(core::RenderFeatureFrameContext& context);
@@ -160,14 +158,14 @@ namespace lumin::render {
                                       std::uint32_t frameIndex);
         void recordHistoryCopy(nvrhi::ICommandList& commandList, std::uint32_t frameIndex);
 
-        platform::Window& window_;
         VulkanContext& context_;
         const scene::Level& level_;
         std::filesystem::path shaderDirectory_;
+        core::UiFontAtlas uiFontAtlas_;
         TextureManager textures_;
         PipelineManager pipelines_;
         std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination_;
-        ImGuiManager imgui_;
+        PresentationRenderer presentation_;
         GpuTexture viewportOutput_;
         core::RenderExtent renderExtent_{1, 1};
         core::RenderExtent requestedRenderExtent_{1, 1};

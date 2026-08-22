@@ -1,15 +1,12 @@
 #pragma once
 
+#include "render/RenderSettings.hpp"
+#include "render/core/UiDrawPacket.hpp"
+#include "render/editor/ImGuiContent.hpp"
+#include "render/gi/GlobalIllumination.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include "render/editor/ImGuiContent.hpp"
-#include "render/RenderSettings.hpp"
-#include "render/gi/GlobalIllumination.hpp"
-
-namespace lumin::platform {
-    class Window;
-}
 
 namespace lumin::scene {
     class Camera;
@@ -29,27 +26,22 @@ namespace lumin::render {
     class LevelRenderer {
     public:
         /** 创建渲染器并从 `level` 提取首份不可变渲染世界快照。 */
-        LevelRenderer(platform::Window& window, VulkanContext& context, const scene::Level& level,
-                      std::filesystem::path shaderDirectory,
+        LevelRenderer(VulkanContext& context, const scene::Level& level, std::filesystem::path shaderDirectory,
+                      core::UiFontAtlas uiFontAtlas,
                       std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination = {});
         ~LevelRenderer();
 
         LevelRenderer(const LevelRenderer&) = delete;
         LevelRenderer& operator=(const LevelRenderer&) = delete;
 
-        /// 开始 UI 帧；通常由编辑器在构建控件前调用。
-        void beginUiFrame(ImGuiContent* content = nullptr);
-        /// 放弃尚未录制的 UI 帧。
-        void cancelUiFrame() noexcept;
-        /// 提取场景变化、构建 Feature 管线并提交一帧。
-        void drawFrame(scene::Camera& camera, RenderSettings& settings, ImGuiContent* content = nullptr);
+        /// 提取场景变化并消费主线程深拷贝的 UI packet，随后构建 Feature 管线并提交一帧。
+        void drawFrame(scene::Camera& camera, RenderSettings& settings, core::UiDrawPacket uiDrawPacket = {});
         /// 等待当前设备队列空闲。
         void waitIdle() const;
 
         [[nodiscard]] std::uint32_t modelCount() const noexcept;
         [[nodiscard]] std::uint32_t mdiDrawCount() const noexcept;
         [[nodiscard]] gi::BackendInfo globalIlluminationBackendInfo() const noexcept;
-        [[nodiscard]] ImGuiCaptureState imguiCaptureState() const noexcept;
         /** 请求按 Viewport 内容区物理像素重建渲染资源。连续 resize 会等待尺寸稳定后应用。 */
         void requestViewportExtent(std::uint32_t width, std::uint32_t height) noexcept;
         [[nodiscard]] ImGuiViewportImage viewportImage() const noexcept;

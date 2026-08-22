@@ -32,7 +32,8 @@ resize 和 shutdown 在安全边界按逆序通知，使消费者先释放对上
 物理 NvRHI handle、本帧唯一 FrameGraph handle、format、extent 和 ready pass。同一物理资源必须经
 `FrameGraphResourceImporter` 导入；兼容重复导入复用首个 handle，状态或范围冲突立即失败。
 
-当前运行时仍由 `LevelRenderer` 和窄 `LevelRenderFeatureHost` 适配这些基础设施，仍直接读取活动场景和 ImGui 状态。
+当前运行时仍由 `LevelRenderer` 和窄 `LevelRenderFeatureHost` 适配这些基础设施，仍直接读取活动场景；ImGui 状态已经从
+renderer 断开。
 在 Feature typed-contract 迁移、资源所有权拆分、`RenderFramePacket` 与渲染线程接入完成前，这些旧类型属于明确的迁移
 边界，不得继续扩展业务逻辑。后续阶段会删除 `DeferredRenderFeatureSet`、`LevelRenderFeatureKind`、
 `LevelRenderFrameData`、`TextureManager`、`PipelineManager` 和旧 `LevelRenderer::Impl`。
@@ -42,12 +43,14 @@ resize 和 shutdown 在安全边界按逆序通知，使消费者先释放对上
 `Level` 管理网格、模型实例和 Actor。Actor 句柄包含索引和代数，因此槽位复用后，旧句柄不会解析到新对象。
 在 `tick`、`onSpawn` 或 `onDestroy` 中发起的生成与销毁请求会延迟处理，直到当前回调遍历可以安全提交变更。
 
-`Application` 先处理 SDL 事件并调用 `beginUiFrame(editor)` 构建当前 ImGui 帧，再读取当前帧 capture 状态。
+`Application` 先处理 SDL 事件并调用主线程 `ImGuiFrontend::beginFrame(editor)` 构建当前 ImGui 帧，再读取当前帧
+capture 状态。
 只有项目已打开且 UI 未捕获输入时才更新相机和派发 `GameInput`，随后调用 `Game::tick`、`Level::tick(deltaSeconds)` 和渲染。
 Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mouse mode；该模式隐藏并约束鼠标，以帧内相对位移
 更新相机 yaw/pitch，同时继续使用 `WASD`、`Space` 和 `Left Ctrl` 平移。松开右键后立即恢复普通鼠标模式。
-因此，即使编辑器捕获输入，游戏模拟、Actor 与 Lua 生命周期仍会推进。`drawFrame` 只消费已经准备的 UI 帧；旧调用方
-未显式准备时由 renderer 兼容性补建。交换链图像获取提前返回时会取消该 UI 帧，避免重复 `NewFrame` 或遗留活动帧。
+因此，即使编辑器捕获输入，游戏模拟、Actor 与 Lua 生命周期仍会推进。主线程在渲染前调用
+`ImGuiFrontend::finishFrame()`，将顶点、索引、裁剪命令和 reset-state 命令深拷贝到 `UiDrawPacket`；任意 user callback
+会被拒绝。`drawFrame` 只消费该不可变 packet，不访问 ImGui context、SDL backend 或 Editor。
 模型变换和材质变化会递增
 `modelRevision`；网格或模型成员变化会递增 `topologyRevision`。PBR 纹理路径变化也会递增 `topologyRevision`，
 因为材质纹理数组和 descriptor 需要重建；纯标量材质变化只更新对象 buffer。`LevelRenderer` 每帧上传对象记录，
@@ -99,8 +102,10 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
   `DescriptorIndexingLimits` 负责材质纹理 descriptor 的容量预检和绑定计划；两者都不依赖 Editor。
 - `render/platform/vulkan/` 包含 `VulkanContext` 和 `VulkanRayTracingCapabilities`，是唯一允许直接调用原生 Vulkan
   设备、交换链和能力查询的目录。
-- `render/editor/` 包含 `Editor`、`ImGuiContent`、`ImGuiLayer` 和 `ImGuiManager`。ImGui 层只消费注入的 NvRHI
-  device/framebuffer 和资源 binding，不在 UI 代码中维护场景资源所有权。
+- `render/editor/` 包含 `Editor`、`ImGuiContent` 和主线程 `ImGuiFrontend`。该前端独占 ImGui context 与 SDL backend，
+  并生成不含外部指针的 `UiDrawPacket` 和 `UiFontAtlas`。
+- `render/presentation/` 包含渲染侧 `UiRenderer` 与 `PresentationRenderer`。它们不依赖 ImGui、SDL 或 Editor，只将
+  packet 中的稳定 `UiTextureId` 解析为当前 NvRHI 资源并合成到交换链。
 
 `DeferredRenderPipeline` 拥有 `DeferredRenderFeatureSet` 中的独立 `IRenderFeature` 对象，并在构造时验证 descriptor ID
  与当前路径一致，再解析能力和依赖图。Raster 路径必须注册 `shadow` 与 `gbuffer`，不得注册 `hybrid-surface`；

@@ -1,4 +1,5 @@
-#include "render/editor/ImGuiLayer.hpp"
+#include "render/editor/ImGuiFrontend.hpp"
+#include "render/presentation/UiRenderer.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -6,21 +7,33 @@
 #include <fstream>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <imgui.h>
 
 namespace {
 
-    using lumin::render::ImGuiDrawEvent;
-    using lumin::render::ImGuiLayer;
+    using lumin::render::ImGuiFrontend;
+    using lumin::render::UiRenderer;
+    using lumin::render::core::UiDrawCommandType;
 
     void require(bool condition, const char* message) {
         if (!condition) {
             std::fprintf(stderr, "FAIL: %s\n", message);
             std::exit(EXIT_FAILURE);
         }
+    }
+
+    template <typename Exception, typename Function> void requireThrows(Function&& function, const char* message) {
+        try {
+            std::forward<Function>(function)();
+        } catch (const Exception&) {
+            return;
+        }
+        require(false, message);
     }
 
     struct SyntheticDrawData {
@@ -58,7 +71,7 @@ namespace {
 
     std::string readText(const char* relativePath) {
         std::ifstream input(std::string(LUMIN_TEST_SOURCE_DIR) + "/" + relativePath);
-        require(input.is_open(), "Required ImGui renderer source file must be readable.");
+        require(input.is_open(), "Required UI source file must be readable.");
         std::ostringstream contents;
         contents << input.rdbuf();
         return contents.str();
@@ -75,33 +88,35 @@ namespace {
     }
 
     void testBufferGrowth() {
-        require(ImGuiLayer::growBufferCapacity(0, 1'000, 5'000) == 5'000,
+        require(UiRenderer::growBufferCapacity(0, 1'000, 5'000) == 5'000,
                 "Initial vertex buffer capacity must honor the minimum allocation.");
-        require(ImGuiLayer::growBufferCapacity(5'000, 5'001, 5'000) >= 7'500, "A full buffer must grow geometrically.");
-        require(ImGuiLayer::growBufferCapacity(8'000, 7'999, 5'000) == 8'000,
+        require(UiRenderer::growBufferCapacity(5'000, 5'001, 5'000) >= 7'500, "A full buffer must grow geometrically.");
+        require(UiRenderer::growBufferCapacity(8'000, 7'999, 5'000) == 8'000,
                 "A sufficiently large buffer must be reused.");
     }
 
-    void testNvrhiProjectionMapsImGuiTopToPositiveNdcY() {
+    void testNvrhiProjectionMapsUiTopToPositiveNdcY() {
         constexpr float displayWidth = 1280.0f;
         constexpr float displayHeight = 720.0f;
-
-        const lumin::render::ImGuiProjection projection =
-            ImGuiLayer::makeNvrhiProjection(0.0f, 0.0f, displayWidth, displayHeight);
+        const lumin::render::UiProjection projection =
+            UiRenderer::makeNvrhiProjection(0.0f, 0.0f, displayWidth, displayHeight);
         const auto projectY = [&projection](float y) {
             return y * projection.scaleY + projection.translateY;
         };
-
         require(std::fabs(projectY(0.0f) - 1.0f) < 0.0001f,
-                "NvRHI logical viewport requires ImGui top to map to positive NDC Y.");
+                "NvRHI logical viewport requires UI top to map to positive NDC Y.");
         require(std::fabs(projectY(displayHeight) + 1.0f) < 0.0001f,
-                "NvRHI logical viewport requires ImGui bottom to map to negative NDC Y.");
+                "NvRHI logical viewport requires UI bottom to map to negative NDC Y.");
     }
 
-    void testScissorsOffsetsAndCallbacks() {
+    void testPacketDeepCopiesGeometryAndCommands() {
         constexpr std::uintptr_t textureId = 0x1234U;
         SyntheticDrawData synthetic({10.0f, 20.0f}, {100.0f, 50.0f}, {2.0f, 2.0f});
         ImDrawList& first = synthetic.addList(20, 30);
+        first.VtxBuffer[0].pos = {7.0f, 9.0f};
+        first.VtxBuffer[0].uv = {0.25f, 0.75f};
+        first.VtxBuffer[0].col = 0xAABBCCDDU;
+        first.IdxBuffer[0] = static_cast<ImDrawIdx>(11);
         ImDrawCmd clipped;
         clipped.ClipRect = {5.0f, 15.0f, 40.25f, 45.25f};
         clipped.ElemCount = 6;
@@ -114,7 +129,6 @@ namespace {
         fullyClipped.ClipRect = {-100.0f, -100.0f, 0.0f, 0.0f};
         fullyClipped.ElemCount = 3;
         first.CmdBuffer.push_back(fullyClipped);
-
         ImDrawCmd malformed;
         malformed.ClipRect = {std::numeric_limits<float>::quiet_NaN(), 0.0f, 1.0f, 1.0f};
         malformed.ElemCount = 3;
@@ -124,9 +138,6 @@ namespace {
         ImDrawCmd reset;
         reset.UserCallback = ImDrawCallback_ResetRenderState;
         second.CmdBuffer.push_back(reset);
-        ImDrawCmd callback;
-        callback.UserCallback = userCallback;
-        second.CmdBuffer.push_back(callback);
         ImDrawCmd draw;
         draw.ClipRect = {15.0f, 25.0f, 80.0f, 60.0f};
         draw.ElemCount = 9;
@@ -134,24 +145,44 @@ namespace {
         draw.VtxOffset = 1;
         second.CmdBuffer.push_back(draw);
 
-        const std::vector<ImGuiDrawEvent> events = ImGuiLayer::buildDrawEvents(synthetic.drawData);
-        require(events.size() == 4, "Fully clipped and malformed commands must not emit draw events.");
-        require(events[0].type == ImGuiDrawEvent::Type::Draw, "The first command must be a draw.");
-        require(events[0].scissorLeft == 0 && events[0].scissorTop == 0 && events[0].scissorRight == 61 &&
-                    events[0].scissorBottom == 51,
+        const lumin::render::core::UiDrawPacket packet = ImGuiFrontend::buildDrawPacket(synthetic.drawData);
+        require(packet.vertices.size() == 30 && packet.indices.size() == 42,
+                "UiDrawPacket must own all merged draw-list geometry.");
+        require(packet.vertices[0].positionX == 7.0f && packet.vertices[0].textureV == 0.75f &&
+                    packet.vertices[0].color == 0xAABBCCDDU && packet.indices[0] == 11,
+                "UiDrawPacket must preserve vertex and index values.");
+        require(packet.commands.size() == 3, "Clipped and malformed commands must not emit packet commands.");
+        require(packet.commands[0].type == UiDrawCommandType::Draw && packet.commands[0].scissorLeft == 0 &&
+                    packet.commands[0].scissorTop == 0 && packet.commands[0].scissorRight == 61 &&
+                    packet.commands[0].scissorBottom == 51,
                 "Clip rectangles must be transformed, clamped and conservatively rounded.");
-        require(events[0].indexOffset == 3 && events[0].vertexOffset == 4,
-                "First-list local offsets must be preserved.");
-        require(events[0].textureId == textureId,
-                "Each draw event must preserve the ImGui texture binding selected by its command.");
-        require(events[1].type == ImGuiDrawEvent::Type::ResetRenderState,
-                "Reset callbacks must become reset-state events.");
-        require(events[2].type == ImGuiDrawEvent::Type::UserCallback && events[2].command == &second.CmdBuffer[1],
-                "User callbacks must remain ordered and retain their source command.");
-        require(events[3].indexOffset == 32 && events[3].vertexOffset == 21,
-                "Draw offsets must include preceding command-list buffers.");
-        require(events[3].scissorRight == 140 && events[3].scissorBottom == 80,
-                "Clip rectangles must be clamped to framebuffer bounds.");
+        require(packet.commands[0].indexOffset == 3 && packet.commands[0].vertexOffset == 4 &&
+                    packet.commands[0].texture.value() == textureId,
+                "Packet commands must preserve offsets and stable logical texture IDs.");
+        require(packet.commands[1].type == UiDrawCommandType::ResetRenderState,
+                "Reset callbacks must become pointer-free reset-state commands.");
+        require(packet.commands[2].indexOffset == 32 && packet.commands[2].vertexOffset == 21 &&
+                    packet.commands[2].scissorRight == 140 && packet.commands[2].scissorBottom == 80,
+                "Packet offsets must include prior lists and clamp to framebuffer bounds.");
+
+        first.VtxBuffer[0].pos = {-999.0f, -999.0f};
+        first.IdxBuffer[0] = 0;
+        first.CmdBuffer[0].ElemCount = 0;
+        require(packet.vertices[0].positionX == 7.0f && packet.indices[0] == 11 && packet.commands[0].elementCount == 6,
+                "Packet data must not alias source ImGui buffers or commands.");
+    }
+
+    void testArbitraryCallbacksAreRejected() {
+        SyntheticDrawData synthetic({0.0f, 0.0f}, {100.0f, 50.0f}, {1.0f, 1.0f});
+        ImDrawList& list = synthetic.addList(3, 3);
+        ImDrawCmd callback;
+        callback.UserCallback = userCallback;
+        list.CmdBuffer.push_back(callback);
+        requireThrows<std::invalid_argument>(
+            [&] {
+                static_cast<void>(ImGuiFrontend::buildDrawPacket(synthetic.drawData));
+            },
+            "Arbitrary ImGui callbacks must never cross into the render thread.");
     }
 
     void testEmptyAndInvalidDrawData() {
@@ -159,52 +190,44 @@ namespace {
         empty.Valid = true;
         empty.DisplaySize = {1280.0f, 720.0f};
         empty.FramebufferScale = {1.0f, 1.0f};
-        require(ImGuiLayer::buildDrawEvents(empty).empty(), "Empty draw data must emit no GPU work.");
+        require(!ImGuiFrontend::buildDrawPacket(empty).isRenderable(), "Empty draw data must emit no GPU geometry.");
 
         SyntheticDrawData zeroFramebuffer({0.0f, 0.0f}, {0.0f, 720.0f}, {1.0f, 1.0f});
         zeroFramebuffer.addList(3, 3);
-        require(ImGuiLayer::buildDrawEvents(zeroFramebuffer.drawData).empty(),
-                "Zero-sized framebuffers must emit no GPU work.");
+        require(!ImGuiFrontend::buildDrawPacket(zeroFramebuffer.drawData).isRenderable(),
+                "Zero-sized framebuffers must emit no GPU geometry.");
     }
 
-    void testBackendIntegrationContract() {
-        const std::string layer = readText("render/editor/ImGuiLayer.cpp");
-        const std::string manager = readText("render/editor/ImGuiManager.cpp");
-        require(countOccurrences(layer, "createFontResources();") == 1,
-                "Font texture and binding initialization must run exactly once per layer initialization.");
-        require(layer.find("device_->createTexture(textureDesc)") != std::string::npos &&
-                    layer.find("device_->createBindingSet(bindingSetDesc, bindingLayout_)") != std::string::npos,
-                "The custom renderer must create its font texture and binding set through NvRHI.");
-        require(layer.find("ImGui_ImplSDL3_NewFrame") != std::string::npos,
-                "The SDL3 platform new-frame backend must remain active.");
-        require(
-            countOccurrences(layer, ".setCpuAccess(nvrhi::CpuAccessMode::Write)") == 2 &&
-                layer.find(".setIsVolatile(true)") == std::string::npos,
-            "NvRHI Vulkan only permits volatile constant buffers; ImGui vertex/index buffers must be CPU-writable.");
-        require(layer.find("device_->mapBuffer") != std::string::npos &&
-                    layer.find("device_->unmapBuffer") != std::string::npos &&
-                    layer.find("commandList.writeBuffer") == std::string::npos,
-                "Per-frame ImGui geometry must use fence-safe mapped writes without runtime upload barriers.");
-        require(layer.find("ImGui_ImplVulkan") == std::string::npos && layer.find("vkCmd") == std::string::npos &&
-                    manager.find("vkCmd") == std::string::npos,
-                "The custom renderer must not retain the Vulkan ImGui backend or raw Vulkan draw commands.");
-        require(manager.find("if (!layer_.initialized() || !framePrepared_") != std::string::npos &&
-                    manager.find("ImGui::EndFrame();") != std::string::npos,
-                "Unprepared record and cancel paths must preserve the established frame-state guards.");
-        require(manager.find("config.outputIsSrgb = context.swapchainIsSrgb()") != std::string::npos &&
-                    layer.find("outputIsSrgb_ = config.outputIsSrgb") != std::string::npos &&
-                    layer.find("outputIsSrgb_ ? 1.0f : 0.0f") != std::string::npos,
-                "ImGui must pass the swapchain transfer function to its fragment shader.");
+    void testFrontendAndRendererSeparationContract() {
+        const std::string frontend = readText("render/editor/ImGuiFrontend.cpp");
+        const std::string renderer = readText("render/presentation/UiRenderer.cpp");
+        const std::string presentation = readText("render/presentation/PresentationRenderer.cpp");
+
+        require(frontend.find("ImGui_ImplSDL3_NewFrame") != std::string::npos &&
+                    frontend.find("ImGui::Render()") != std::string::npos,
+                "Only the main-thread frontend must own SDL and ImGui frame construction.");
+        require(renderer.find("ImGui::") == std::string::npos && renderer.find("ImGui_Impl") == std::string::npos &&
+                    renderer.find("UserCallback") == std::string::npos,
+                "The render-thread UI renderer must not access ImGui state or callbacks.");
+        require(frontend.find("forbids arbitrary Dear ImGui user callbacks") != std::string::npos,
+                "Packet capture must explicitly reject arbitrary callbacks.");
+        require(countOccurrences(renderer, ".setCpuAccess(nvrhi::CpuAccessMode::Write)") == 2 &&
+                    renderer.find("device_->mapBuffer") != std::string::npos &&
+                    renderer.find("device_->unmapBuffer") != std::string::npos,
+                "Fence-safe per-slot UI geometry must use CPU-writable mapped buffers.");
+        require(renderer.find("textureBindings_.find") != std::string::npos &&
+                    presentation.find("renderer_.registerTexture(viewportTextureId(), texture)") != std::string::npos,
+                "Presentation must resolve stable logical IDs instead of casting GPU binding pointers.");
+        require(renderer.find("reinterpret_cast<nvrhi::IBindingSet*>") == std::string::npos &&
+                    renderer.find("vkCmd") == std::string::npos,
+                "The UI renderer must not decode native pointers or issue raw Vulkan commands.");
+        require(renderer.find("outputIsSrgb_ ? 1.0f : 0.0f") != std::string::npos,
+                "Presentation must preserve the swapchain transfer-function shader option.");
+
         const std::string shader = readText("shaders/ImGui.slang");
         require(shader.find("constants.outputConfig.x > 0.5") != std::string::npos &&
                     shader.find("vertexColor.rgb <= 0.04045") != std::string::npos,
-                "ImGui vertex colors must be linearized exactly once for an sRGB attachment.");
-        require(
-            layer.find("reinterpret_cast<nvrhi::IBindingSet*>(event.textureId)") != std::string::npos &&
-                layer.find("setRenderState(commandList, framebuffer, *drawData, buffers, scissor, *textureBinding)") !=
-                    std::string::npos &&
-                manager.find("layer_.createTextureBinding(texture)") != std::string::npos,
-            "ImGui image draws must select their NvRHI texture binding per command.");
+                "UI vertex colors must be linearized exactly once for an sRGB attachment.");
     }
 
 } // namespace
@@ -212,11 +235,12 @@ namespace {
 int main() {
     ImGui::CreateContext();
     testBufferGrowth();
-    testNvrhiProjectionMapsImGuiTopToPositiveNdcY();
-    testScissorsOffsetsAndCallbacks();
+    testNvrhiProjectionMapsUiTopToPositiveNdcY();
+    testPacketDeepCopiesGeometryAndCommands();
+    testArbitraryCallbacksAreRejected();
     testEmptyAndInvalidDrawData();
-    testBackendIntegrationContract();
+    testFrontendAndRendererSeparationContract();
     ImGui::DestroyContext();
-    std::puts("PASS: synthetic ImDrawData produces stable NvRHI draw events and safe empty paths.");
+    std::puts("PASS: immutable UiDrawPacket and split UI frontend/renderer contracts are stable.");
     return EXIT_SUCCESS;
 }

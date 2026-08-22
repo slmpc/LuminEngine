@@ -46,7 +46,8 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 - `Lumin::RenderRhi`：`FrameGraph`、资源导入去重、`ShaderLibrary`、无业务语义的 Pipeline/资源 factory；只面向 NvRHI。
 - `Lumin::VulkanBackend`：窗口 surface、`VulkanContext`、交换链、能力探测和 RenderDoc 接入；这是唯一原生 Vulkan 边界。
 - `Lumin::Atmosphere`、`Lumin::GpuScene`、`Lumin::RasterFeatures`、`Lumin::GiFeatures`：按资源所有权域拆分的 Feature 实现。
-- `Lumin::RenderPresentation`：当前 ImGui NvRHI renderer；主线程 `UiDrawPacket` 迁移完成后只消费深拷贝 UI 数据。
+- `Lumin::RenderPresentation`：交换链 framebuffer 与 UI NvRHI renderer；只消费主线程深拷贝的 `UiDrawPacket`，不依赖
+  ImGui、SDL 或 Editor。
 - `Lumin::RenderPipelines`：recipe 与默认模块注册。迁移期间仍包含旧 `DeferredRenderPipeline` 窄适配器。
 - `Lumin::RenderRuntime`：帧事务和渲染门面。迁移期间仍包含旧 `LevelRenderer` 实现，最终由异步 `Renderer` 替换。
 - `Lumin::Editor`：独立 Editor UI target，不再与 Render 单体库共享产物。
@@ -57,8 +58,10 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
   能力探测以及与 NvRHI 的 native interop。
 - `render/core/` 保存后端无关的规划、设置和帧事务契约；`render/resources/` 保存 NvRHI FrameGraph 和通用 factory。
   迁移完成前 `TextureManager`、`PipelineManager` 仍作为 Raster 兼容实现存在，禁止新增其他业务资源所有权。
-- `render/editor/` 保存 `Editor`、`ImGuiContent`、`ImGuiLayer` 和 `ImGuiManager`。该目录负责 UI 帧、
-  ImGui 输入捕获和交换链绘制，渲染资源通过 `resources` 的公共 API 注入。
+- `render/editor/` 保存 `Editor`、`ImGuiContent` 和 `ImGuiFrontend`。该目录在主线程独占 ImGui context 与 SDL backend，
+  深拷贝生成 `UiDrawPacket`；依赖关系不能反向流入 Runtime 或 Feature。
+- `render/presentation/` 保存 `UiRenderer` 与 `PresentationRenderer`，以稳定逻辑纹理 ID 解析字体和 Viewport 物理资源，
+  不保存 ImGui command、callback 或 NvRHI binding 指针形式的纹理 ID。
 - `render/level/`、`render/features/`、`render/gi/`、`render/atmosphere/` 和 `render/gpu/` 保存场景渲染功能；
   `render/gi/legacy/` 保存 raster fallback，`render/gi/raytracing/` 保存 RTDI、RTGI、SHARC、NRD 与 composite，
   通过 `resources` 声明和使用资源，不直接操作原生 Vulkan 状态。

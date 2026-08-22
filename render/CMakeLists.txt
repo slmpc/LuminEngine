@@ -123,14 +123,12 @@ lumin_configure_render_library(lumin_render_pipelines)
 target_link_libraries(lumin_render_pipelines PUBLIC Lumin::RenderCore Lumin::RenderRhi)
 
 add_library(lumin_render_presentation STATIC
-    editor/ImGuiLayer.cpp
-    editor/ImGuiManager.cpp
+    presentation/PresentationRenderer.cpp
+    presentation/UiRenderer.cpp
 )
 add_library(Lumin::RenderPresentation ALIAS lumin_render_presentation)
 lumin_configure_render_library(lumin_render_presentation)
-target_link_libraries(lumin_render_presentation
-    PUBLIC Lumin::RenderCore Lumin::RenderRhi Lumin::VulkanBackend SDL3::SDL3 imgui::imgui
-)
+target_link_libraries(lumin_render_presentation PUBLIC Lumin::RenderCore Lumin::RenderRhi Lumin::VulkanBackend)
 lumin_render_target_uses_shaders(lumin_render_presentation)
 
 add_library(lumin_render_features INTERFACE)
@@ -160,11 +158,15 @@ lumin_render_target_uses_shaders(lumin_render_runtime)
 add_library(lumin_editor_module STATIC
     editor/Editor.cpp
     editor/EditorStyle.cpp
+    editor/ImGuiFrontend.cpp
     editor/ViewportPicking.cpp
 )
 add_library(Lumin::Editor ALIAS lumin_editor_module)
 lumin_configure_render_library(lumin_editor_module)
-target_link_libraries(lumin_editor_module PUBLIC Lumin::Core Lumin::RenderCore PRIVATE imgui::imgui imguizmo::imguizmo)
+target_link_libraries(lumin_editor_module
+    PUBLIC Lumin::Core Lumin::RenderCore
+    PRIVATE Lumin::VulkanBackend SDL3::SDL3 imgui::imgui imguizmo::imguizmo
+)
 
 # 默认门面组合 Runtime 与内置静态 Feature；它本身不再隐藏额外源码。
 add_library(lumin_render INTERFACE)

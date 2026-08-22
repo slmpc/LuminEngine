@@ -158,8 +158,8 @@ namespace {
                 "Swapchain resize must preserve Viewport render resources unless the surface format changes.");
         require(level.find("context_.cancelFrame") != std::string::npos,
                 "Record failure must cancel the acquired frame through VulkanContext.");
-        require(level.find("imgui_.cancelFrame") != std::string::npos,
-                "Acquire/record failures must cancel the prepared UI frame.");
+        require(level.find("ImGui::") == std::string::npos && level.find("ImGuiManager") == std::string::npos,
+                "LevelRenderer must consume an immutable UI packet without accessing Dear ImGui state.");
         std::cout << "HISTORY_COORDINATION=FrameChangeSet>prepare>submit>commit;SEQUENCE=success-only\n"
                      "ERROR_PATH=acquire/record/submit-discard,retry\n";
     }

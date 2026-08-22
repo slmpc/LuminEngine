@@ -34,7 +34,14 @@ namespace {
     }
 
     std::string stripCommentsAndLiterals(std::string_view source) {
-        enum class State { Code, LineComment, BlockComment, String, Character, RawString };
+        enum class State {
+            Code,
+            LineComment,
+            BlockComment,
+            String,
+            Character,
+            RawString
+        };
         State state = State::Code;
         std::string result(source.size(), ' ');
         std::string rawEnd;
@@ -137,8 +144,7 @@ namespace {
             if (!contextAllowlist && nativeVulkan) {
                 violations.push_back({relative, "native Vulkan is restricted to VulkanContext", identifier});
             }
-            if (identifier == "VulkanBuffer" || identifier == "VulkanImage" ||
-                identifier == "VulkanResourceManager") {
+            if (identifier == "VulkanBuffer" || identifier == "VulkanImage" || identifier == "VulkanResourceManager") {
                 violations.push_back({relative, "temporary Vulkan resource aliases are forbidden", identifier});
             }
             if (identifier.starts_with("ImGui_ImplVulkan")) {
@@ -170,22 +176,19 @@ namespace {
         }
 
         static const std::regex createCommandListPattern(R"(\bcreateCommandList\s*\()");
-        static const std::regex enableAutomaticBarriersPattern(
-            R"(setEnableAutomaticBarriers\s*\(\s*true\s*\))");
-        static const std::regex disableAutomaticBarriersPattern(
-            R"(setEnableAutomaticBarriers\s*\(\s*false\s*\))");
+        static const std::regex enableAutomaticBarriersPattern(R"(setEnableAutomaticBarriers\s*\(\s*true\s*\))");
+        static const std::regex disableAutomaticBarriersPattern(R"(setEnableAutomaticBarriers\s*\(\s*false\s*\))");
         const std::size_t commandLists = std::distance(
             std::sregex_iterator(code.begin(), code.end(), createCommandListPattern), std::sregex_iterator());
         const std::size_t disables = std::distance(
-            std::sregex_iterator(code.begin(), code.end(), disableAutomaticBarriersPattern),
-            std::sregex_iterator());
+            std::sregex_iterator(code.begin(), code.end(), disableAutomaticBarriersPattern), std::sregex_iterator());
         const std::size_t enables = std::distance(
-            std::sregex_iterator(code.begin(), code.end(), enableAutomaticBarriersPattern),
-            std::sregex_iterator());
+            std::sregex_iterator(code.begin(), code.end(), enableAutomaticBarriersPattern), std::sregex_iterator());
         const bool initializationUpload = relative == fs::path("render/resources/VulkanResources.cpp") ||
-                                          relative == fs::path("render/editor/ImGuiLayer.cpp");
+                                          relative == fs::path("render/presentation/UiRenderer.cpp");
         if (enables != (initializationUpload ? 1U : 0U)) {
-            violations.push_back({relative, "automatic barriers are allowed exactly once on dedicated initialization uploads",
+            violations.push_back({relative,
+                                  "automatic barriers are allowed exactly once on dedicated initialization uploads",
                                   std::to_string(enables) + " enable"});
         }
         if (commandLists != enables + disables) {
@@ -209,7 +212,8 @@ namespace {
     }
 
     void verifySubmissionAndLifetime(const fs::path& root) {
-        const std::string context = stripCommentsAndLiterals(readFile(root / "render/platform/vulkan/VulkanContext.cpp"));
+        const std::string context =
+            stripCommentsAndLiterals(readFile(root / "render/platform/vulkan/VulkanContext.cpp"));
         std::size_t position = context.find("void VulkanContext::submitFrameCommands");
         position = requireAfter(context, "queueWaitForSemaphore", position, "same-submit ordering");
         position = requireAfter(context, "queueSignalSemaphore", position, "same-submit ordering");
@@ -225,7 +229,8 @@ namespace {
         const std::string application = stripCommentsAndLiterals(readFile(root / "application/Application.cpp"));
         const std::size_t contextMember = application.find("render::VulkanContext vulkan");
         const std::size_t rendererMember = application.find("std::unique_ptr<render::LevelRenderer> renderer");
-        if (contextMember == std::string::npos || rendererMember == std::string::npos || contextMember > rendererMember) {
+        if (contextMember == std::string::npos || rendererMember == std::string::npos ||
+            contextMember > rendererMember) {
             throw std::runtime_error("Application member order must destroy renderer children before VulkanContext");
         }
 
@@ -234,9 +239,19 @@ namespace {
             std::vector<std::string> events;
             const auto invoke = [&] {
                 lumin::render::detail::destroyBackendLifetime(
-                    destroyed, availability, [&] { events.emplace_back("children"); },
-                    [&] { events.emplace_back("swapchain-wrappers"); },
-                    [&] { events.emplace_back("nvrhi-device"); }, [&] { events.emplace_back("vk-device"); });
+                    destroyed, availability,
+                    [&] {
+                        events.emplace_back("children");
+                    },
+                    [&] {
+                        events.emplace_back("swapchain-wrappers");
+                    },
+                    [&] {
+                        events.emplace_back("nvrhi-device");
+                    },
+                    [&] {
+                        events.emplace_back("vk-device");
+                    });
             };
             invoke();
             invoke();
@@ -276,7 +291,7 @@ namespace {
         }
     }
 
-}
+} // namespace
 
 int main() {
     try {
@@ -301,7 +316,8 @@ int main() {
         verifySubmissionAndLifetime(root);
         std::cout << "PASS: enumerated " << sources.size()
                   << " renderer source files; VulkanContext is the only native Vulkan boundary.\n";
-        std::cout << "PASS: FrameGraph owns runtime barriers; only dedicated initialization uploads enable automatic barriers.\n";
+        std::cout << "PASS: FrameGraph owns runtime barriers; only dedicated initialization uploads enable automatic "
+                     "barriers.\n";
         std::cout << "PASS: lifetime recorder validated normal, partial, and repeated cleanup ordering.\n";
         return 0;
     } catch (const std::exception& error) {

@@ -3,7 +3,6 @@
 
 #include "render/gi/legacy/LegacyBackend.hpp"
 #include "render/gpu/GpuScene.hpp"
-#include "render/platform/Window.hpp"
 #include "render/platform/vulkan/VulkanContext.hpp"
 #include "scene/Camera.hpp"
 #include "scene/Level.hpp"
@@ -31,25 +30,17 @@
 
 namespace lumin::render {
 
-    LevelRenderer::LevelRenderer(platform::Window& window, VulkanContext& context, const scene::Level& level,
-                                 std::filesystem::path shaderDirectory,
+    LevelRenderer::LevelRenderer(VulkanContext& context, const scene::Level& level,
+                                 std::filesystem::path shaderDirectory, core::UiFontAtlas uiFontAtlas,
                                  std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
-        : impl_(std::make_unique<Impl>(window, context, level, std::move(shaderDirectory),
+        : impl_(std::make_unique<Impl>(context, level, std::move(shaderDirectory), std::move(uiFontAtlas),
                                        std::move(globalIllumination))) {
     }
 
     LevelRenderer::~LevelRenderer() = default;
 
-    void LevelRenderer::beginUiFrame(ImGuiContent* content) {
-        impl_->beginUiFrame(content);
-    }
-
-    void LevelRenderer::cancelUiFrame() noexcept {
-        impl_->cancelUiFrame();
-    }
-
-    void LevelRenderer::drawFrame(scene::Camera& camera, RenderSettings& settings, ImGuiContent* content) {
-        impl_->drawFrame(camera, settings, content);
+    void LevelRenderer::drawFrame(scene::Camera& camera, RenderSettings& settings, core::UiDrawPacket uiDrawPacket) {
+        impl_->drawFrame(camera, settings, std::move(uiDrawPacket));
     }
 
     void LevelRenderer::waitIdle() const {
@@ -68,10 +59,6 @@ namespace lumin::render {
         return impl_->globalIlluminationBackendInfo();
     }
 
-    ImGuiCaptureState LevelRenderer::imguiCaptureState() const noexcept {
-        return impl_->imguiCaptureState();
-    }
-
     void LevelRenderer::requestViewportExtent(std::uint32_t width, std::uint32_t height) noexcept {
         impl_->requestViewportExtent(width, height);
     }
@@ -80,11 +67,11 @@ namespace lumin::render {
         return impl_->viewportImage();
     }
 
-    LevelRenderer::Impl::Impl(platform::Window& window, VulkanContext& context, const scene::Level& level,
-                              std::filesystem::path shaderDirectory,
+    LevelRenderer::Impl::Impl(VulkanContext& context, const scene::Level& level, std::filesystem::path shaderDirectory,
+                              core::UiFontAtlas uiFontAtlas,
                               std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
-        : window_(window), context_(context), level_(level), shaderDirectory_(std::move(shaderDirectory)),
-          textures_(context), pipelines_(context, shaderDirectory_),
+        : context_(context), level_(level), shaderDirectory_(std::move(shaderDirectory)),
+          uiFontAtlas_(std::move(uiFontAtlas)), textures_(context), pipelines_(context, shaderDirectory_),
           globalIllumination_(std::move(globalIllumination)) {
         if (globalIllumination_ == nullptr) {
             globalIllumination_ = gi::makeLegacyBackend(shaderDirectory_);
@@ -95,36 +82,23 @@ namespace lumin::render {
         createRenderResources();
         // 先创建 RT 资源，再根据真实的 device/scene capability 选择固定的帧图拓扑。
         createRenderFeaturePipeline();
-        imgui_.initialize(window_, context_);
-        imgui_.setViewportTexture(viewportOutput_.texture);
+        presentation_.initialize(context_, uiFontAtlas_, shaderDirectory_);
+        presentation_.setViewportTexture(viewportOutput_.texture);
         swapchainGeneration_ = context_.swapchainGeneration();
     }
 
     LevelRenderer::Impl::~Impl() {
         waitIdle();
-        imgui_.shutdown();
+        presentation_.shutdown();
         destroyRenderResources();
     }
 
-    void LevelRenderer::Impl::beginUiFrame(ImGuiContent* content) {
+    void LevelRenderer::Impl::drawFrame(scene::Camera& camera, RenderSettings& settings,
+                                        core::UiDrawPacket uiDrawPacket) {
         if (swapchainGeneration_ != context_.swapchainGeneration()) {
             refreshSwapchainResources();
         }
         applyPendingViewportExtent();
-        imgui_.beginFrame(content);
-    }
-
-    void LevelRenderer::Impl::cancelUiFrame() noexcept {
-        imgui_.cancelFrame();
-    }
-
-    void LevelRenderer::Impl::drawFrame(scene::Camera& camera, RenderSettings& settings, ImGuiContent* content) {
-        if (swapchainGeneration_ != context_.swapchainGeneration()) {
-            refreshSwapchainResources();
-        }
-        if (!imgui_.framePrepared()) {
-            applyPendingViewportExtent();
-        }
         requestedSharcEnabled_ = settings.globalIllumination.sharcEnabled;
         const world::SceneDelta sceneDelta = renderWorld_.sync(level_);
         pendingFrameChanges_.merge(core::frameChangesFromScene(sceneDelta.changes));
@@ -146,12 +120,7 @@ namespace lumin::render {
             pendingFrameChanges_.add(core::HistoryReason::FeatureConfigurationChanged);
         }
 
-        if (!imgui_.framePrepared()) {
-            imgui_.beginFrame(content);
-        }
-
         if (nextRenderSequence_ == core::RenderSequence::invalidValue) {
-            imgui_.cancelFrame();
             throw std::overflow_error("LevelRenderer exhausted the logical render sequence range.");
         }
 
@@ -159,11 +128,9 @@ namespace lumin::render {
         try {
             frame = context_.beginFrame();
         } catch (...) {
-            imgui_.cancelFrame();
             throw;
         }
         if (!frame.has_value()) {
-            imgui_.cancelFrame();
             refreshSwapchainResources();
             return;
         }
@@ -176,12 +143,11 @@ namespace lumin::render {
         };
         RecordedFrameState recorded;
         try {
-            recorded = recordCommandList(*frame->commandList, identity, camera, settings, sceneDelta.changes,
-                                         pendingFrameChanges_);
+            recorded = recordCommandList(*frame->commandList, identity, camera, settings, uiDrawPacket,
+                                         sceneDelta.changes, pendingFrameChanges_);
         } catch (...) {
             const std::exception_ptr recordingFailure = std::current_exception();
             renderPipeline_->discardFrame();
-            imgui_.cancelFrame();
             try {
                 // cancelFrame 已消费 acquire semaphore 并更新 swapchain generation；下一帧入口负责统一重建。
                 context_.cancelFrame(*frame);
@@ -195,7 +161,6 @@ namespace lumin::render {
             context_.submitFrameCommands(*frame);
         } catch (...) {
             renderPipeline_->discardFrame();
-            imgui_.cancelFrame();
             throw;
         }
 
@@ -221,10 +186,6 @@ namespace lumin::render {
         context_.waitIdle();
     }
 
-    ImGuiCaptureState LevelRenderer::Impl::imguiCaptureState() const noexcept {
-        return imgui_.captureState();
-    }
-
     void LevelRenderer::Impl::requestViewportExtent(std::uint32_t width, std::uint32_t height) noexcept {
         if (width == 0 || height == 0) {
             return;
@@ -243,7 +204,7 @@ namespace lumin::render {
     }
 
     ImGuiViewportImage LevelRenderer::Impl::viewportImage() const noexcept {
-        return {imgui_.viewportTextureId(), viewportOutput_.width, viewportOutput_.height};
+        return {PresentationRenderer::viewportTextureId(), viewportOutput_.width, viewportOutput_.height};
     }
 
     std::uint32_t LevelRenderer::Impl::modelCount() const noexcept {
@@ -378,7 +339,6 @@ namespace lumin::render {
             textures_.markHistoryValid(identity.frameSlot.value());
             return;
         case LevelRenderFeatureKind::UiPresent:
-            imgui_.markFontTextureInitialized();
             viewportOutputInitialized_ = true;
             return;
         default:

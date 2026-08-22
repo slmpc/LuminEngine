@@ -10,24 +10,30 @@
 
 namespace lumin::render {
 
+    namespace {
+
+        core::UiFontAtlas fallbackFontAtlas() {
+            return core::UiFontAtlas{.width = 1, .height = 1, .rgba8 = {255, 255, 255, 255}};
+        }
+
+    } // namespace
+
     struct ObjRenderer::Impl {
         scene::Level level;
         std::unique_ptr<LevelRenderer> renderer;
 
-        Impl(platform::Window& window, VulkanContext& context, const assets::Mesh& mesh,
-             std::filesystem::path shaderDirectory) {
+        Impl(VulkanContext& context, const assets::Mesh& mesh, std::filesystem::path shaderDirectory) {
             if (mesh.empty()) {
                 throw std::invalid_argument("ObjRenderer requires a non-empty mesh.");
             }
             const scene::MeshHandle handle = level.addMesh(mesh);
             level.addModel(handle);
-            renderer = std::make_unique<LevelRenderer>(window, context, level, std::move(shaderDirectory));
+            renderer = std::make_unique<LevelRenderer>(context, level, std::move(shaderDirectory), fallbackFontAtlas());
         }
     };
 
-    ObjRenderer::ObjRenderer(platform::Window& window, VulkanContext& context, const assets::Mesh& mesh,
-                             std::filesystem::path shaderDirectory)
-        : impl_(std::make_unique<Impl>(window, context, mesh, std::move(shaderDirectory))) {
+    ObjRenderer::ObjRenderer(VulkanContext& context, const assets::Mesh& mesh, std::filesystem::path shaderDirectory)
+        : impl_(std::make_unique<Impl>(context, mesh, std::move(shaderDirectory))) {
     }
 
     ObjRenderer::~ObjRenderer() = default;
@@ -40,4 +46,4 @@ namespace lumin::render {
         impl_->renderer->waitIdle();
     }
 
-}
+} // namespace lumin::render

@@ -4,6 +4,7 @@
 #include "project/ProjectSession.hpp"
 #include "render/LevelRenderer.hpp"
 #include "render/editor/Editor.hpp"
+#include "render/editor/ImGuiFrontend.hpp"
 #include "render/platform/RenderDocAttachment.hpp"
 #include "render/platform/Window.hpp"
 #include "render/platform/vulkan/VulkanContext.hpp"
@@ -98,7 +99,9 @@ namespace lumin::core {
 #else
                 "shaders";
 #endif
-            renderer = std::make_unique<render::LevelRenderer>(window, vulkan, level, shaderDirectory);
+            ui = std::make_unique<render::ImGuiFrontend>();
+            ui->initialize(window);
+            renderer = std::make_unique<render::LevelRenderer>(vulkan, level, shaderDirectory, ui->fontAtlas());
             RendererIdleGuard idleGuard{*renderer};
             const std::filesystem::path engineSettingsPath = preferenceFilePath("engine-settings.json");
             const config::EngineSettingsLoadResult loadedSettings =
@@ -158,9 +161,9 @@ namespace lumin::core {
                         break;
                     }
                 }
-                renderer->beginUiFrame(editor.get());
+                ui->beginFrame(editor.get());
                 if (editor->exitRequested()) {
-                    renderer->cancelUiFrame();
+                    ui->cancelFrame();
                     break;
                 }
                 const editor::ViewportInteractionState viewport = editor->viewportInteraction();
@@ -179,7 +182,7 @@ namespace lumin::core {
                     window.setRelativeMouseMode(false);
                     viewportLookActive = false;
                 }
-                const render::ImGuiCaptureState capture = renderer->imguiCaptureState();
+                const render::ImGuiCaptureState capture = ui->captureState();
                 const bool escapeDown = window.isKeyDown(platform::Key::Escape);
                 const game::InputRoutingDecision routing =
                     project.hasProject() ? game::routeInput(!viewportLookActive && capture.uiClaimsInput(), escapeDown)
@@ -189,7 +192,7 @@ namespace lumin::core {
                 }
                 escapeHeld = escapeDown;
                 if (editor->exitRequested()) {
-                    renderer->cancelUiFrame();
+                    ui->cancelFrame();
                     break;
                 }
 
@@ -222,7 +225,7 @@ namespace lumin::core {
                 game::advanceGameFrame(*game, context,
                                        routing.dispatchGameInput ? std::optional<game::GameInput>{input} : std::nullopt,
                                        deltaSeconds);
-                renderer->drawFrame(camera, renderSettings, editor.get());
+                renderer->drawFrame(camera, renderSettings, ui->finishFrame());
             }
             return 0;
         }
@@ -237,6 +240,7 @@ namespace lumin::core {
         scripting::ScriptRuntime scripts;
         render::RenderSettings renderSettings;
         project::ProjectSession project;
+        std::unique_ptr<render::ImGuiFrontend> ui;
         std::unique_ptr<render::LevelRenderer> renderer;
         std::unique_ptr<editor::Editor> editor;
         std::optional<scripting::ScriptHandle> startupScript;

@@ -2,6 +2,7 @@
 
 #include "render/RenderSettings.hpp"
 #include "render/atmosphere/AtmosphereLutGpu.hpp"
+#include "render/core/UiDrawPacket.hpp"
 #include "render/gi/GlobalIllumination.hpp"
 #include "render/gpu/GpuScene.hpp"
 #include "render/resources/FrameGraph.hpp"
@@ -48,6 +49,7 @@ namespace lumin::render {
         const world::RenderWorldSnapshot* renderWorld = nullptr;
         const scene::Camera* camera = nullptr;
         const RenderSettings* settings = nullptr;
+        const core::UiDrawPacket* uiDrawPacket = nullptr;
         const TextureFrameResources* frame = nullptr;
         std::uint32_t frameIndex = 0;
         std::uint32_t imageIndex = 0;

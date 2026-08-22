@@ -890,7 +890,10 @@ namespace lumin::render {
                 builder.writeTexture(data.swap, nvrhi::ResourceStates::RenderTarget);
             },
             [this, &data](const FrameGraphContext& frameContext) {
-                imgui_.record(*frameContext.commandList, data.imageIndex, data.frameIndex);
+                if (data.uiDrawPacket == nullptr) {
+                    throw std::logic_error("Presentation Feature requires a UiDrawPacket.");
+                }
+                presentation_.record(*frameContext.commandList, data.imageIndex, data.frameIndex, *data.uiDrawPacket);
             });
         graph.addPass(
             "Present", FrameGraphPassType::Present,

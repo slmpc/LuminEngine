@@ -181,14 +181,9 @@ lumin_configure_test(lumin_render_pipeline_contract_tests)
 target_link_libraries(lumin_render_pipeline_contract_tests PRIVATE nvrhi)
 lumin_register_test(lumin_render_pipeline_contract_tests RenderPipelineContracts LABELS render shader unit contract)
 
-add_executable(lumin_imgui_renderer_tests
-    ImGuiRendererTests.cpp
-    "${PROJECT_SOURCE_DIR}/render/platform/Window.cpp"
-    "${PROJECT_SOURCE_DIR}/render/editor/ImGuiLayer.cpp"
-    "${PROJECT_SOURCE_DIR}/render/resources/ShaderLibrary.cpp"
-)
+add_executable(lumin_imgui_renderer_tests ImGuiRendererTests.cpp)
 lumin_configure_test(lumin_imgui_renderer_tests)
-target_link_libraries(lumin_imgui_renderer_tests PRIVATE Vulkan::Vulkan SDL3::SDL3 imgui::imgui nvrhi)
+target_link_libraries(lumin_imgui_renderer_tests PRIVATE Lumin::Editor Lumin::RenderPresentation imgui::imgui)
 target_compile_definitions(lumin_imgui_renderer_tests PRIVATE LUMIN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 lumin_register_test(lumin_imgui_renderer_tests ImGuiRenderer LABELS vulkan ui unit contract)
 

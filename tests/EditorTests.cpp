@@ -5,8 +5,7 @@
 #include "assets/ObjLoader.hpp"
 #include "render/LevelRenderer.hpp"
 #include "render/editor/ImGuiContent.hpp"
-#include "render/editor/ImGuiLayer.hpp"
-#include "render/editor/ImGuiManager.hpp"
+#include "render/editor/ImGuiFrontend.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -21,20 +20,7 @@
 
 namespace {
 
-    static_assert(requires(lumin::render::LevelRenderer& renderer, lumin::render::ImGuiContent* content) {
-        renderer.beginUiFrame(content);
-    });
-
     class TestActor final : public lumin::scene::Actor {};
-
-    class CountingContent final : public lumin::render::ImGuiContent {
-    public:
-        void draw() override {
-            ++drawCount;
-        }
-
-        int drawCount = 0;
-    };
 
     class TemporaryDirectory {
     public:
@@ -214,7 +200,7 @@ namespace {
         bool viewportImageRequested = false;
         auto editor = makeEditor(level, camera, settings, runtime, [&viewportImageRequested] {
             viewportImageRequested = true;
-            return lumin::render::ImGuiViewportImage{0x1234U, 640, 360};
+            return lumin::render::ImGuiViewportImage{lumin::render::core::UiTextureId{0x1234U}, 640, 360};
         });
 
         const auto drawFrame = [&editor](const ImVec2 workSize) {
@@ -306,18 +292,12 @@ namespace {
         require(errorCount == 1, "A failed command must produce exactly one visible console error.");
     }
 
-    void testUninitializedBeginFrameIsSafe() {
-        lumin::render::ImGuiLayer layer;
-        layer.newFrame();
-        require(!layer.initialized(), "A default ImGui layer must remain uninitialized after a no-op newFrame.");
-
-        lumin::render::ImGuiManager manager;
-        CountingContent content;
-        manager.beginFrame(&content);
-        require(content.drawCount == 0, "Uninitialized beginFrame must not draw content outside a valid ImGui frame.");
-        require(!manager.framePrepared(), "An uninitialized manager must not prepare a frame for recording.");
-        require(!manager.captureState().uiClaimsInput(),
-                "An uninitialized manager must expose an empty capture state.");
+    void testUninitializedFrontendHasNoThreadState() {
+        lumin::render::ImGuiFrontend frontend;
+        require(!frontend.initialized() && !frontend.frameActive(),
+                "A default ImGui frontend must not own a context or active frame.");
+        require(!frontend.captureState().uiClaimsInput(),
+                "An uninitialized frontend must expose an empty capture state.");
     }
 
     void testSettingsAndSelectionMutation() {
@@ -462,7 +442,7 @@ int main() {
         testDockLayoutSkipsNonpositiveWorkSizeAndBuildsAfterRestore();
         testConsoleHistoryAndClearScopes();
         testFailedCommandAppearsOnce();
-        testUninitializedBeginFrameIsSafe();
+        testUninitializedFrontendHasNoThreadState();
         testSettingsAndSelectionMutation();
         testProjectNavigatorAndPersistedWindowVisibility();
         std::cout << "Editor PASS\n";
