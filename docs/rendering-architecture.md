@@ -16,7 +16,7 @@ NvRHI、交换链及全部 Feature 资源。退出时先销毁 Feature，再依�
 测试。`apps/editor` 使用无行为的 `Game` 宿主，不创建演示场景；项目内容只由 `ProjectSession` 创建或加载。
 
 正常退出通过有序控制队列执行 `flush()` 和 `stop()`；异常展开由 `Renderer` 析构等待线程结束。stop 在渲染线程等待
-GPU idle，并按 `LevelRenderer -> VulkanContext -> Window` 的顺序释放；窗口与 SDL backend 始终留在主线程。
+GPU idle，并按 `IRenderPipelineSession -> VulkanContext -> Window` 的顺序释放；窗口与 SDL backend 始终留在主线程。
 
 ## 模块化重构状态
 
@@ -64,7 +64,7 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 重新比较；尚未消费的 packet 即使被替换，也不会漏掉拓扑变化或错误推进历史。
 模型变换和材质变化会递增
 `modelRevision`；网格或模型成员变化会递增 `topologyRevision`。PBR 纹理路径变化也会递增 `topologyRevision`，
-因为材质纹理数组和 descriptor 需要重建；纯标量材质变化只更新对象 buffer。`LevelRenderer` 每帧上传对象记录，
+因为材质纹理数组和 descriptor 需要重建；纯标量材质变化只更新对象 buffer。默认 Raster Feature 每帧上传对象记录，
 仅在拓扑修订号发生变化时重新构建打包后的几何数据和材质资源。
 
 `Terrain` 生成带索引的高度场网格，通过累积三角形法线得到归一化法线，并支持双线性高度查询。`TerrainActor`
@@ -94,29 +94,32 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 排队时必须先消费的 frame 序号，因此不会被 latest-wins 替换。最小化窗口的 packet 只被消费，不调用 Vulkan acquire，
 也不推进 GPU 历史。启动握手、逐帧异常和确定性退出状态通过 `RendererStatusSnapshot` 发布。
 
-`LevelRenderer` 是渲染线程内部的同步帧事务实现。`render/LevelRenderer.hpp` 只接收非拥有 `VulkanContext`、初始
-`RenderWorldSnapshotPtr` 和逐帧 `RenderFramePacket`；它不保存活动场景、相机或 UI backend 引用。具体资源成员通过
-`std::unique_ptr<LevelRenderer::Impl>` 隐藏在实现文件中。这样公共头不再暴露
-Raster/PostFX 资源 owner、各 Feature pipeline handle、Hybrid GI 后端或 NvRHI framebuffer，资源成员变化也不会迫使
-Application 和
-编辑器重新编译。`LevelRenderer.cpp` 只负责门面转发、帧入口、提交顺序和异常清理。
+`RenderRuntime` 只依赖 `IRenderPipelineSessionFactory` 与 `IRenderPipelineSession`，不知道默认 recipe、Feature 标识或
+任何 Raster/GI/PostFX/Presentation 类型。Application 显式调用 `makeDefaultRenderPipelineSessionFactory()` 注入内置
+静态组合；渲染线程在创建 `VulkanContext` 后调用 factory，启动失败会完整回滚并通过握手重新抛到主线程。
+
+`DefaultRenderPipelineSession` 位于 `Lumin::RenderPipelines`，是内置 Raster/Hybrid recipe 的帧事务协调器。它只接收
+非拥有 `VulkanContext`、初始 `RenderWorldSnapshotPtr` 和逐帧 `RenderFramePacket`，不保存活动场景、相机、ImGui 或 SDL
+引用。`DefaultFeatureRegistry.cpp` 是默认模块唯一显式组合点：factory 由稳定 ID 注册，DAG resolver 决定执行顺序；没有
+`LevelRenderFeatureKind`、中央 switch 或字符串式运行时分派。
 
 实现按职责分成以下文件：
 
-- `render/level/LevelRendererImpl.hpp` 保存私有所有权、Feature host 接口和跨帧状态声明。
-- `render/level/LevelRendererResources.cpp` 创建、销毁和重建交换链、Viewport、材质、Atmosphere 与 Hybrid GI 资源。
+- `render/pipelines/default/DefaultRenderPipelineSession.hpp` 保存内置组合的私有所有权和跨帧状态声明。
+- `render/pipelines/default/DefaultRenderResources.cpp` 创建、销毁和重建 Viewport、Raster、Atmosphere 与 Hybrid GI 资源。
+- `render/pipelines/default/DefaultFeatureRegistry.cpp` 显式注册默认 Feature factory 及其提交/丢弃事务回调。
 - `render/core/RenderFramePacket.*` 定义跨线程不可变消息和主线程场景/相机快照 builder。
 - `render/runtime/RenderMailbox.*` 定义 latest-wins frame 单槽和不可丢失有序控制队列。
 - `render/runtime/Renderer.cpp` 独占渲染线程、启动/退出握手、异常传播与状态发布。
-- `render/level/LevelRendererFrame.cpp` 从 packet 生成渲染提交相关的抖动/阴影数据，导入逐帧资源，创建 framebuffer，
+- `render/pipelines/default/DefaultRenderPipelineFrame.cpp` 从 packet 生成渲染提交相关的抖动/阴影数据，导入逐帧资源，创建 framebuffer，
   并执行 `FrameGraph`。
-- `render/level/LevelRendererFeatures.cpp` 只实现各 Feature 的 pass setup/record，以及提交成功和丢弃时的资源通知。
+- `render/pipelines/default/DefaultRenderFeatures.cpp` 实现内置模块的 pass setup/record；资源由对应 domain owner 管理。
 - `render/core/FrameDataContracts.hpp` 定义跨 Feature 的 typed blackboard 契约；每个 GPU 数据项同时携带物理 NvRHI
   handle、本帧唯一 FrameGraph handle、格式、范围和 ready pass，消费者必须复用 producer 发布的图身份。
 - `render/level/FeatureFrameData.hpp` 只保存迁移期实现细节，例如资源导入服务、预创建 framebuffer 和 Hybrid 候选状态；
   其中的非拥有指针、span 和 handle 只在当前 `recordCommandList` 调用期间有效，不得由 Feature 跨帧保存。
 - `render/pipelines/DefaultRenderPipelines.*` 定义 Raster/Hybrid recipe。数据 producer/consumer 决定 DAG 主顺序；只有
-  Presentation 等外部副作用边界使用少量 `after` 约束。Runtime 显式注册各模块 factory，不再按枚举转发生命周期。
+  Presentation 等外部副作用边界使用少量 `after` 约束。Pipelines 组合层注册各模块 factory，Runtime 不依赖具体模块。
 
 渲染基础设施按物理目录隔离：
 
@@ -125,8 +128,9 @@ Application 和
   `render/features/raster/` 与 `render/features/postfx/`；通用 factory 不缓存或命名 Feature pipeline；
   `FrameGraph` 只负责外部分配资源的依赖排序与状态转换，
   `DescriptorIndexingLimits` 负责材质纹理 descriptor 的容量预检和绑定计划；两者都不依赖 Editor。
-- `render/platform/vulkan/` 包含 `VulkanContext` 和 `VulkanRayTracingCapabilities`，是唯一允许直接调用原生 Vulkan
-  设备、交换链和能力查询的目录。Context 在构造时使用 `Window` 获取扩展和 surface，随后不保存 `Window&`；交换链
+- `render/platform/vulkan/` 包含 `VulkanSurfaceBootstrap`、`VulkanContext` 和 `VulkanRayTracingCapabilities`，是唯一
+  允许直接调用原生 Vulkan 设备、交换链和能力查询的目录。bootstrap 在主线程使用 `Window` 创建 instance/surface，
+  Context 在渲染线程接管且不保存 `Window&`；交换链
   resize 只消费 packet 中的 `SurfaceState`。单调 `surfaceRevision` 保证携带 resize 事件的 packet 被替换后仍会重建。
 - `render/editor/` 包含 `Editor`、`ImGuiContent` 和主线程 `ImGuiFrontend`。该前端独占 ImGui context 与 SDL backend，
   并生成不含外部指针的 `UiDrawPacket` 和 `UiFontAtlas`；`RenderSettingsPanelAdapter` 负责 typed store 适配。
@@ -226,8 +230,9 @@ texture 和 AS；该回收是逐帧资源生命周期的一部分，不能仅依
 忽略失效通知；SHARC、NRD diffuse/specular 和 TAA 分域决定 keep、soft reset 或 full reset，并且都只在成功提交后
 推进历史。失败帧不会污染下一帧的 previous matrices、jitter、cache 或 denoiser state。
 
-GameEngine 只通过 `LevelRenderer::globalIlluminationBackendInfo()` 向 Editor 提供只读后端信息；切换开关写入
-`RenderSettings`。该接缝不会让 Rendering 反向依赖 Editor，也不会让游戏代码接触 Vulkan 后端实现。
+Application 只通过按值 `RendererStatusSnapshot` 向 Editor 提供只读后端信息；切换开关由
+`RenderSettingsPanelAdapter` 写入 typed store。该接缝不会让 Rendering 反向依赖 Editor，也不会让游戏代码接触 Vulkan
+后端实现。
 
 ## Lua 与编辑器工作流
 
@@ -236,8 +241,9 @@ GameEngine 只通过 `LevelRenderer::globalIlluminationBackendInfo()` 向 Editor
 源路径，事务式加载保证失败脚本不留下 Actor。独立 editor 应用不设置启动脚本。
 
 同一个 `ScriptRuntime` 被传给 `Game` 和 `Editor`。编辑器可以查看脚本与诊断、重新加载变更并执行 Lua 控制台命令；
-Scene 面板选择仍引用同一个 `Level`。每帧渲染调用 `drawFrame(camera, settings, editor)`，因此编辑器与游戏视图共享渲染
-设置和后端状态。ImGui SDL3 后端负责文本输入与 IME，应用层不重复调用 SDL 文本输入 API。
+Scene 面板选择仍引用同一个 `Level`。每帧由 Application 构建 immutable packet 并调用 `Renderer::submit()`，因此编辑器
+与游戏视图共享设置快照和后端状态，但渲染线程不读取活动对象。ImGui SDL3 后端负责文本输入与 IME，应用层不重复调用
+SDL 文本输入 API。
 
 Application 从 SDL 首选目录加载版本化 `engine-settings.json`，并把设置快照及保存回调注入 Editor。没有项目时 Editor
 绘制全工作区 `Project Navigator`；有项目时才构建 dockspace。`File > Configuration` 修改启动目标，`View` 和面板标题栏
@@ -272,7 +278,7 @@ Vulkan 后端通过负物理 viewport 高度将正 NDC Y 映射到较小的屏�
 `RasterFeatureResources` 拥有两个帧槽的 G-buffer 与四张 CSM 阴影图；`PostFxResources` 独立拥有标准全局光照输出、
 HDR 光照、TAA 解析/历史、后处理 uniform buffer、sampler 和 descriptor set。PostFX 只通过显式
 `PostFxBindingInputs` 接收上游 sampled handle，销毁时必须先释放 descriptor set，再释放 Raster producer。
-`LevelRenderer` 另行拥有一张可作为颜色附件和 sampled image 使用的 Viewport
+默认 Presentation/PostFX 组合另行拥有一张可作为颜色附件和 sampled image 使用的 Viewport
 输出纹理；其物理像素尺寸来自 ImGui Viewport 内容区，尺寸连续两帧稳定后才重建，以免拖动 dock 边界时反复等待 GPU。
 尺寸变化通过 `HistoryReason::RenderExtentChanged` 统一失效 TAA、NRD 和 SHARC 等时序状态。
 `ModelRenderer` 同样拥有逐帧对象及相机 buffer、四个逐帧阴影矩阵

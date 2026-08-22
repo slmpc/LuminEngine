@@ -41,7 +41,7 @@ namespace {
     }
 
     void verifyPassOrder(const std::string& level, const std::string& pipelineDefinition) {
-        std::size_t position = level.find("LevelRenderer::Impl::recordCommandList");
+        std::size_t position = level.find("pipelines::DefaultRenderPipelineSession::recordCommandList");
         require(position != std::string::npos, "NvRHI frame recorder entry point is missing.");
         for (const std::string& pass : std::vector<std::string>{
                  "CSM cascade ", "G-buffer", "globalIllumination_->addPasses", "Procedural sky", "Deferred lighting",
@@ -77,7 +77,7 @@ namespace {
         require(level.find("ResourceStates::CopyDest") != std::string::npos,
                 "TAA history destination must be declared CopyDest.");
         require(level.find("context_.modelRendererCapabilities()") != std::string::npos,
-                "LevelRenderer must hand explicit device-derived ModelRendererCapabilities to ModelRenderer.");
+                "Default pipeline must hand explicit device-derived ModelRendererCapabilities to ModelRenderer.");
         require(level.find("textureDesc(rasterFrame.materialId") != std::string::npos &&
                     level.find("addColorAttachment(rasterFrame.materialId.texture)") != std::string::npos &&
                     level.find("clearTextureUInt(surface.materialId.texture") != std::string::npos &&
@@ -145,9 +145,9 @@ namespace {
                 present != std::string::npos && submit < pipelineCommit && pipelineCommit < changesConsumed &&
                 changesConsumed < sequenceAdvance && sequenceAdvance < present,
             "Feature history must commit after queue submit and before present, whose failure cannot roll it back.");
-        require(level.find("registerFeature(rasterSurface()") != std::string::npos &&
+        require(level.find("registerModule(rasterSurface()") != std::string::npos &&
                     level.find("modelRenderer_->commitSubmittedFrame") != std::string::npos &&
-                    level.find("registerFeature(temporalAa()") != std::string::npos &&
+                    level.find("registerModule(temporalAa()") != std::string::npos &&
                     level.find("postFxResources_.markHistoryValid") != std::string::npos,
                 "Model and TAA histories must be committed through independent Feature submission notifications.");
         require(level.find("LevelRenderFeatureKind") == std::string::npos &&
@@ -157,7 +157,7 @@ namespace {
                 "Discarded Feature frames must abandon pending model transforms.");
         require(level.find("postFxResources_.invalidateHistory") == std::string::npos &&
                     level.find("gi::shouldInvalidateHistory") == std::string::npos,
-                "LevelRenderer must not retain ad hoc TAA or GI invalidation decisions.");
+                "Default pipeline must not retain ad hoc TAA or GI invalidation decisions.");
         require(countOccurrences(level, "renderPipeline_->discardFrame") >= 3,
                 "Record, submit and swapchain-rebuild paths must all discard pending Feature work.");
         require(level.find("viewportOutput_.format != context_.swapchainRhiFormat()") != std::string::npos,
@@ -165,7 +165,7 @@ namespace {
         require(level.find("context_.cancelFrame") != std::string::npos,
                 "Record failure must cancel the acquired frame through VulkanContext.");
         require(level.find("ImGui::") == std::string::npos && level.find("ImGuiManager") == std::string::npos,
-                "LevelRenderer must consume an immutable UI packet without accessing Dear ImGui state.");
+                "Default pipeline must consume an immutable UI packet without accessing Dear ImGui state.");
         std::cout << "HISTORY_COORDINATION=FrameChangeSet>prepare>submit>commit;SEQUENCE=success-only\n"
                      "ERROR_PATH=acquire/record/submit-discard,retry\n";
     }
@@ -197,7 +197,7 @@ namespace {
                  "std::make_unique<gi::RayTracedDirectLightingPass>", "std::make_unique<gi::SharcRadianceCache>",
                  "std::make_unique<gi::RayTracedGiPass>", "std::make_unique<gi::NrdDenoiser>",
                  "std::make_unique<gi::GiCompositePass>", "std::make_unique<gi::HybridLightingCompositePass>"}) {
-            require(level.find(owner) != std::string::npos, "LevelRenderer is missing a hybrid GI resource owner.");
+            require(level.find(owner) != std::string::npos, "Default pipeline is missing a hybrid GI resource owner.");
         }
         require(level.find("context_.rayTracingDecision().enabled()") != std::string::npos &&
                     level.find("supportsSharcShaderStorage()") != std::string::npos &&
@@ -207,14 +207,14 @@ namespace {
                     level.find("std::unique_ptr<HybridGiState> candidate = buildCandidate()") != std::string::npos,
                 "Topology changes must transactionally rebuild Hybrid bindings from the waited-idle path.");
 
-        std::size_t position = level.find("LevelRenderer::Impl::addHybridSurfaceFeaturePasses");
+        std::size_t position = level.find("pipelines::DefaultRenderPipelineSession::addHybridSurfaceFeaturePasses");
         position = requireAfter(level, "runtime.sceneResources->recordUpdate", position);
         position = requireAfter(level, "runtime.sceneResources->candidateDescriptors", position);
         position = requireAfter(level, "runtime.sceneResources->candidateGeometry", position);
         position = requireAfter(level, "runtime.sharc->record(", position);
         position = requireAfter(level, "runtime.rayTracedGi->record(", position);
         position = requireAfter(level, "recordStatisticsReadback", position);
-        position = requireAfter(level, "LevelRenderer::Impl::addGiDenoiserFeaturePasses", position);
+        position = requireAfter(level, "pipelines::DefaultRenderPipelineSession::addGiDenoiserFeaturePasses", position);
         position = requireAfter(level, "runtime.nrd->record(", position);
         requireAfter(level, "runtime.composite->record(", position);
         require(level.find("if (runtime.sharcEnabled)") != std::string::npos &&
@@ -321,7 +321,7 @@ namespace {
         require(renderer.find("RenderControlKind::Flush") != std::string::npos &&
                     renderer.find("RenderControlKind::Stop") != std::string::npos,
                 "Flush and stop must use the ordered control queue.");
-        require(renderer.find("renderer.reset();") < renderer.find("context.reset();"),
+        require(renderer.find("session.reset();") < renderer.find("context.reset();"),
                 "Feature Runtime resources must be destroyed before VulkanContext on the render thread.");
         require(mailbox.find("latestFrame_ = RenderMailboxFrame") != std::string::npos &&
                     mailbox.find("controls_.push_back") != std::string::npos,
@@ -396,10 +396,11 @@ namespace {
 
 int main() {
     try {
-        const std::string level = readSource("render/LevelRenderer.cpp") +
-                                  readSource("render/level/LevelRendererFrame.cpp") +
-                                  readSource("render/level/LevelRendererResources.cpp") +
-                                  readSource("render/level/LevelRendererFeatures.cpp");
+        const std::string level = readSource("render/pipelines/default/DefaultRenderPipelineSession.cpp") +
+                                  readSource("render/pipelines/default/DefaultFeatureRegistry.cpp") +
+                                  readSource("render/pipelines/default/DefaultRenderPipelineFrame.cpp") +
+                                  readSource("render/pipelines/default/DefaultRenderResources.cpp") +
+                                  readSource("render/pipelines/default/DefaultRenderFeatures.cpp");
         const std::string context = readSource("render/platform/vulkan/VulkanContext.cpp");
         const std::string renderer = readSource("render/runtime/Renderer.cpp");
         const std::string mailbox = readSource("render/runtime/RenderMailbox.cpp");
@@ -416,10 +417,10 @@ int main() {
         verifyNvrhiYCoordinateConvention(level);
         verifyHybridMotionContract();
         verifyHybridRaySidednessContract();
-        std::cout << "LEVEL_RENDERER_RECORDER=PASS\n";
+        std::cout << "DEFAULT_PIPELINE_SESSION=PASS\n";
         return 0;
     } catch (const std::exception& exception) {
-        std::cerr << "LEVEL_RENDERER_RECORDER=FAIL: " << exception.what() << '\n';
+        std::cerr << "DEFAULT_PIPELINE_SESSION=FAIL: " << exception.what() << '\n';
         return 1;
     }
 }

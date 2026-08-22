@@ -1,5 +1,5 @@
 #include "render/level/FeatureFrameData.hpp"
-#include "render/level/LevelRendererImpl.hpp"
+#include "render/pipelines/default/DefaultRenderPipelineSession.hpp"
 
 #include "render/platform/vulkan/VulkanContext.hpp"
 #include "scene/Level.hpp"
@@ -17,7 +17,7 @@
 
 namespace lumin::render {
 
-    void LevelRenderer::Impl::createRenderResources() {
+    void pipelines::DefaultRenderPipelineSession::createRenderResources() {
         const std::uint32_t width = renderExtent_.width;
         const std::uint32_t height = renderExtent_.height;
         rasterResources_.create(width, height);
@@ -76,7 +76,7 @@ namespace lumin::render {
         frameResourcesInitialized_.fill(false);
     }
 
-    void LevelRenderer::Impl::createViewportOutput() {
+    void pipelines::DefaultRenderPipelineSession::createViewportOutput() {
         nvrhi::TextureDesc desc;
         desc.setWidth(renderExtent_.width)
             .setHeight(renderExtent_.height)
@@ -96,10 +96,10 @@ namespace lumin::render {
         viewportOutputInitialized_ = false;
     }
 
-    void LevelRenderer::Impl::createModelRenderer() {
+    void pipelines::DefaultRenderPipelineSession::createModelRenderer() {
         const world::RenderWorldSnapshotPtr snapshot = currentWorld_;
         if (snapshot == nullptr) {
-            throw std::logic_error("LevelRenderer requires a synchronized render-world snapshot.");
+            throw std::logic_error("Default pipeline session requires a synchronized render-world snapshot.");
         }
         if (snapshot->instances().empty()) {
             modelRenderer_.reset();
@@ -114,7 +114,7 @@ namespace lumin::render {
         createDirectLightingBindingSets();
     }
 
-    void LevelRenderer::Impl::createDirectLightingBindingLayout() {
+    void pipelines::DefaultRenderPipelineSession::createDirectLightingBindingLayout() {
         nvrhi::VulkanBindingOffsets offsets;
         offsets.setShaderResourceOffset(0).setSamplerOffset(0).setConstantBufferOffset(0).setUnorderedAccessViewOffset(
             0);
@@ -131,7 +131,7 @@ namespace lumin::render {
         }
     }
 
-    void LevelRenderer::Impl::createDirectLightingBindingSets() {
+    void pipelines::DefaultRenderPipelineSession::createDirectLightingBindingSets() {
         directLightingBindingSets_.fill(nullptr);
         if (modelRenderer_ == nullptr) {
             return;
@@ -149,7 +149,7 @@ namespace lumin::render {
         }
     }
 
-    void LevelRenderer::Impl::createAtmosphereConsumerBindings() {
+    void pipelines::DefaultRenderPipelineSession::createAtmosphereConsumerBindings() {
         atmosphereConsumerBindingSets_.fill(nullptr);
         atmosphereConsumerBindingLayout_ =
             context_.rhiDevice()->createBindingLayout(atmosphere::detail::makeAtmosphereConsumerBindingLayoutDesc());
@@ -169,7 +169,7 @@ namespace lumin::render {
         }
     }
 
-    void LevelRenderer::Impl::createHybridGiResources() {
+    void pipelines::DefaultRenderPipelineSession::createHybridGiResources() {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         const auto buildCandidate = [this]() -> std::unique_ptr<HybridGiState> {
             if (!context_.rayTracingDecision().enabled() ||
@@ -298,7 +298,7 @@ namespace lumin::render {
 #endif
     }
 
-    void LevelRenderer::Impl::ensureHybridGiCapacity() {
+    void pipelines::DefaultRenderPipelineSession::ensureHybridGiCapacity() {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (!context_.rayTracingDecision().enabled() || !context_.rayTracingSupport().supportsSharcShaderStorage()) {
             destroyHybridGiResources();
@@ -318,17 +318,17 @@ namespace lumin::render {
 #endif
     }
 
-    void LevelRenderer::Impl::destroyDirectLightingBindings() noexcept {
+    void pipelines::DefaultRenderPipelineSession::destroyDirectLightingBindings() noexcept {
         directLightingBindingSets_.fill(nullptr);
         directLightingBindingLayout_ = nullptr;
     }
 
-    void LevelRenderer::Impl::destroyHybridGiResources() noexcept {
+    void pipelines::DefaultRenderPipelineSession::destroyHybridGiResources() noexcept {
         hybridGi_.reset();
         lastSubmittedFrameUsedHybridGi_ = false;
     }
 
-    void LevelRenderer::Impl::destroyRenderResources() noexcept {
+    void pipelines::DefaultRenderPipelineSession::destroyRenderResources() noexcept {
         frameGraph_.reset();
         destroyHybridGiResources();
         directLightingBindingSets_.fill(nullptr);
@@ -351,7 +351,7 @@ namespace lumin::render {
         viewportOutputInitialized_ = false;
     }
 
-    void LevelRenderer::Impl::applyPendingViewportExtent() {
+    void pipelines::DefaultRenderPipelineSession::applyPendingViewportExtent() {
         if (requestedExtentStableFrames_ < 2 || requestedRenderExtent_ == renderExtent_) {
             return;
         }
@@ -365,7 +365,7 @@ namespace lumin::render {
         presentation_.setViewportTexture(viewportOutput_.texture);
     }
 
-    void LevelRenderer::Impl::refreshSwapchainResources() {
+    void pipelines::DefaultRenderPipelineSession::refreshSwapchainResources() {
         renderPipeline_->discardFrame();
         pendingFrameChanges_.add(core::HistoryReason::SwapchainRecreated);
         context_.waitIdle();

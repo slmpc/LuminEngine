@@ -2,7 +2,7 @@
 
 #include "render/core/RenderFramePacket.hpp"
 #include "render/core/UiDrawPacket.hpp"
-#include "render/gi/GlobalIllumination.hpp"
+#include "render/runtime/RenderPipelineSession.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -89,13 +89,13 @@ namespace lumin::render {
          * @param initialWorld 完全拥有的初始不可变世界快照。
          * @param shaderDirectory 编译后 shader 目录。
          * @param uiFontAtlas 主线程深拷贝的字体图集。
-         * @param globalIllumination 可选 Raster GI backend。
+         * @param pipelineFactory 显式静态模块组合工厂；所有权立即转入渲染线程。
          * @throws std::invalid_argument 必需输入为空时抛出。
          * @throws std::exception 渲染线程启动期间的初始化异常会在构造线程重新抛出。
          */
         Renderer(std::unique_ptr<VulkanSurfaceBootstrap> bootstrap, world::RenderWorldSnapshotPtr initialWorld,
                  std::filesystem::path shaderDirectory, core::UiFontAtlas uiFontAtlas,
-                 std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination = {});
+                 std::unique_ptr<runtime::IRenderPipelineSessionFactory> pipelineFactory);
 
         /** 停止渲染线程；析构期间不会传播停止异常。 */
         ~Renderer();

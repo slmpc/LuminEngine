@@ -207,10 +207,11 @@ lumin_configure_test(lumin_engine_settings_tests)
 target_link_libraries(lumin_engine_settings_tests PRIVATE Lumin::Core)
 lumin_register_test(lumin_engine_settings_tests EngineSettings LABELS config unit)
 
-add_executable(lumin_level_renderer_tests LevelRendererTests.cpp)
-lumin_configure_test(lumin_level_renderer_tests)
-target_compile_definitions(lumin_level_renderer_tests PRIVATE LUMIN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-lumin_register_test(lumin_level_renderer_tests LevelRendererRecorder LABELS render raster fallback contract)
+add_executable(lumin_default_pipeline_session_tests DefaultRenderPipelineSessionTests.cpp)
+lumin_configure_test(lumin_default_pipeline_session_tests)
+target_compile_definitions(lumin_default_pipeline_session_tests PRIVATE LUMIN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+lumin_register_test(lumin_default_pipeline_session_tests DefaultRenderPipelineSession
+    LABELS render raster fallback contract)
 
 add_executable(lumin_render_backend_policy_tests RenderBackendPolicyTests.cpp)
 lumin_configure_test(lumin_render_backend_policy_tests)
@@ -305,6 +306,11 @@ add_executable(lumin_render_architecture_tests RenderArchitectureTests.cpp)
 lumin_configure_test(lumin_render_architecture_tests)
 target_link_libraries(lumin_render_architecture_tests PRIVATE Lumin::RenderCore)
 lumin_register_test(lumin_render_architecture_tests RenderArchitecture LABELS render unit contract)
+
+add_executable(lumin_render_module_boundary_tests RenderModuleBoundaryTests.cpp)
+lumin_configure_test(lumin_render_module_boundary_tests)
+target_compile_definitions(lumin_render_module_boundary_tests PRIVATE LUMIN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+lumin_register_test(lumin_render_module_boundary_tests RenderModuleBoundaries LABELS render architecture contract)
 
 add_executable(lumin_atmosphere_architecture_tests AtmosphereArchitectureTests.cpp)
 lumin_configure_test(lumin_atmosphere_architecture_tests)

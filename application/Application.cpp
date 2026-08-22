@@ -6,6 +6,7 @@
 #include "render/editor/Editor.hpp"
 #include "render/editor/ImGuiFrontend.hpp"
 #include "render/editor/RenderSettingsPanelAdapter.hpp"
+#include "render/pipelines/DefaultRenderPipelines.hpp"
 #include "render/platform/RenderDocAttachment.hpp"
 #include "render/platform/Window.hpp"
 #include "render/platform/vulkan/VulkanContext.hpp"
@@ -90,7 +91,8 @@ namespace lumin::core {
             viewportExtent = render::core::RenderExtent{initialExtent.width, initialExtent.height};
             renderer = std::make_unique<render::Renderer>(std::move(vulkanBootstrap),
                                                           render::world::RenderWorldExtractor::extract(level),
-                                                          shaderDirectory, ui->fontAtlas());
+                                                          shaderDirectory, ui->fontAtlas(),
+                                                          render::pipelines::makeDefaultRenderPipelineSessionFactory());
             const std::filesystem::path engineSettingsPath = preferenceFilePath("engine-settings.json");
             const config::EngineSettingsLoadResult loadedSettings =
                 config::loadEngineSettings(engineSettingsPath, preferenceFilePath("recent-projects.txt"));
@@ -141,7 +143,7 @@ namespace lumin::core {
             }
 
             rendererStatusCache = renderer->status();
-            std::cout << "Level renderer ready: models=" << rendererStatusCache.modelCount
+            std::cout << "Renderer ready: models=" << rendererStatusCache.modelCount
                       << " mdiDraws=" << rendererStatusCache.mdiDrawCount
                       << " gbuffer=position+normalRoughness+albedoMetallic+motion csm=4 ssao=on taa=on\n";
 

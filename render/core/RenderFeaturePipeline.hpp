@@ -13,6 +13,12 @@
 #include <span>
 #include <vector>
 
+namespace lumin::render {
+    class GpuResourceManager;
+    class PipelineFactory;
+    class ShaderLibrary;
+}
+
 namespace lumin::render::core {
 
     /**
@@ -28,6 +34,15 @@ namespace lumin::render::core {
     public:
         /// 渲染线程独占的 NvRHI 设备；无 GPU 的纯逻辑 Feature 可以不使用该指针。
         nvrhi::IDevice* device = nullptr;
+
+        /// 无业务语义的 buffer/texture 创建与初始化上传服务；Feature 不得保存该非拥有指针。
+        GpuResourceManager* resources = nullptr;
+
+        /// 从统一 build-tree 目录加载 shader 模块的服务；Feature 不得保存该非拥有指针。
+        ShaderLibrary* shaders = nullptr;
+
+        /// 统一校验并创建 graphics/compute/ray-tracing pipeline 的服务；Feature 不得保存该非拥有指针。
+        PipelineFactory* pipelines = nullptr;
 
         /// 当前设备经过后端探测后发布的不可变能力集合。
         RenderDeviceCapabilities capabilities;

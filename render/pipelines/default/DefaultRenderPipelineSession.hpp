@@ -1,6 +1,5 @@
 #pragma once
 
-#include "render/LevelRenderer.hpp"
 #include "render/ModelRenderer.hpp"
 #include "render/atmosphere/AtmosphereLutGpu.hpp"
 #include "render/atmosphere/AtmosphereLutScheduler.hpp"
@@ -13,6 +12,10 @@
 #include "render/presentation/PresentationRenderer.hpp"
 #include "render/resources/FrameGraph.hpp"
 #include "render/resources/FullscreenPipelineFactory.hpp"
+#include "render/resources/PipelineFactory.hpp"
+#include "render/resources/ShaderLibrary.hpp"
+#include "render/resources/VulkanResources.hpp"
+#include "render/runtime/RenderPipelineSession.hpp"
 #include "render/world/RenderWorld.hpp"
 
 #include <array>
@@ -30,19 +33,22 @@
 #include "render/gpu/GpuSceneResources.hpp"
 #endif
 
-namespace lumin::render {
+namespace lumin::render::pipelines {
 
-    struct LevelRenderer::Impl final {
+    /** 内置 Raster/Hybrid recipe 的具体 Pipeline session；只由默认 session factory 创建。 */
+    class DefaultRenderPipelineSession final : public runtime::IRenderPipelineSession {
     public:
         /// 迁移期 Runtime 与 VulkanContext 共用的并行帧槽数量。
         static constexpr std::uint32_t frameSlotCount = 2;
 
-        Impl(VulkanContext& context, world::RenderWorldSnapshotPtr initialWorld, std::filesystem::path shaderDirectory,
-             core::UiFontAtlas uiFontAtlas, std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination);
-        ~Impl();
+        DefaultRenderPipelineSession(
+            VulkanContext& context, world::RenderWorldSnapshotPtr initialWorld, std::filesystem::path shaderDirectory,
+            core::UiFontAtlas uiFontAtlas,
+            std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination = {});
+        ~DefaultRenderPipelineSession() override;
 
-        Impl(const Impl&) = delete;
-        Impl& operator=(const Impl&) = delete;
+        DefaultRenderPipelineSession(const DefaultRenderPipelineSession&) = delete;
+        DefaultRenderPipelineSession& operator=(const DefaultRenderPipelineSession&) = delete;
 
         struct FeatureConfigurationState {
             GlobalIlluminationMode globalIlluminationMode = GlobalIlluminationMode::RayTracing;
@@ -94,18 +100,20 @@ namespace lumin::render {
 #endif
         };
 
-        [[nodiscard]] bool drawFrame(core::RenderFramePacket packet);
-        void waitIdle() const;
+        [[nodiscard]] bool drawFrame(core::RenderFramePacket packet) override;
+        void waitIdle() const override;
+        [[nodiscard]] runtime::RenderPipelineSessionStatus status() const override;
         [[nodiscard]] std::uint32_t modelCount() const noexcept;
         [[nodiscard]] std::uint32_t mdiDrawCount() const noexcept;
         [[nodiscard]] gi::BackendInfo globalIlluminationBackendInfo() const noexcept;
         [[nodiscard]] const std::string& diagnostic() const noexcept;
-        [[nodiscard]] ImGuiViewportImage viewportImage() const noexcept;
 
     private:
         void createRenderResources();
         void createRenderFeaturePipeline(
-            pipelines::DefaultRenderPipelineKind requestedPath = pipelines::DefaultRenderPipelineKind::Hybrid);
+            DefaultRenderPipelineKind requestedPath = DefaultRenderPipelineKind::Hybrid);
+        [[nodiscard]] core::RenderFeatureRegistry
+        createFeatureRegistry(const DefaultRenderPipelineDefinition& definition, DefaultRenderPipelineKind path);
         void synchronizeRenderConfiguration(const RenderSettings& settings);
         void createModelRenderer();
         void createDirectLightingBindingLayout();
@@ -164,6 +172,9 @@ namespace lumin::render {
         core::UiFontAtlas uiFontAtlas_;
         RasterFeatureResources rasterResources_;
         PostFxResources postFxResources_;
+        GpuResourceManager resourceFactory_;
+        ShaderLibrary shaderLibrary_;
+        PipelineFactory pipelineFactory_;
         FullscreenPipelineFactory fullscreenPipelineFactory_;
         nvrhi::GraphicsPipelineHandle skyPipeline_;
         nvrhi::GraphicsPipelineHandle directLightingPipeline_;
@@ -204,9 +215,9 @@ namespace lumin::render {
         std::array<bool, frameSlotCount> frameResourcesInitialized_{};
         bool atmosphereForceRebuild_ = true;
         bool requestedSharcEnabled_ = true;
-        pipelines::DefaultRenderPipelineKind activePipelineKind_ = pipelines::DefaultRenderPipelineKind::Raster;
+        DefaultRenderPipelineKind activePipelineKind_ = DefaultRenderPipelineKind::Raster;
         std::unique_ptr<core::RenderPipelineInstance> renderPipeline_;
         std::string diagnostic_;
     };
 
-} // namespace lumin::render
+} // namespace lumin::render::pipelines

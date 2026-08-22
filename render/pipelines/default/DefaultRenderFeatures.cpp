@@ -1,5 +1,5 @@
 #include "render/level/FeatureFrameData.hpp"
-#include "render/level/LevelRendererImpl.hpp"
+#include "render/pipelines/default/DefaultRenderPipelineSession.hpp"
 
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
 #include "render/gi/raytracing/HybridLightingComposite.hpp"
@@ -47,7 +47,8 @@ namespace lumin::render {
 #endif
     } // namespace
 
-    void LevelRenderer::Impl::commitAtmosphereFeature(const core::RenderFrameIdentity& identity) noexcept {
+    void pipelines::DefaultRenderPipelineSession::commitAtmosphereFeature(
+        const core::RenderFrameIdentity& identity) noexcept {
         if (!pendingAtmosphereSequence_) {
             return;
         }
@@ -61,7 +62,8 @@ namespace lumin::render {
         atmosphereForceRebuild_ = false;
     }
 
-    void LevelRenderer::Impl::commitHybridSurfaceFeature(const core::RenderFrameIdentity& identity) noexcept {
+    void pipelines::DefaultRenderPipelineSession::commitHybridSurfaceFeature(
+        const core::RenderFrameIdentity& identity) noexcept {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridGi_ == nullptr || !hybridGi_->pendingSequence) {
             return;
@@ -83,7 +85,8 @@ namespace lumin::render {
 #endif
     }
 
-    void LevelRenderer::Impl::commitGlobalIlluminationFeature(const core::RenderFrameIdentity& identity) noexcept {
+    void pipelines::DefaultRenderPipelineSession::commitGlobalIlluminationFeature(
+        const core::RenderFrameIdentity& identity) noexcept {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridGi_ == nullptr || !hybridGi_->pendingSequence) {
             return;
@@ -103,7 +106,8 @@ namespace lumin::render {
 #endif
     }
 
-    void LevelRenderer::Impl::commitGiDenoiserFeature(const core::RenderFrameIdentity& identity) noexcept {
+    void pipelines::DefaultRenderPipelineSession::commitGiDenoiserFeature(
+        const core::RenderFrameIdentity& identity) noexcept {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridGi_ == nullptr || !hybridGi_->pendingSequence) {
             return;
@@ -126,7 +130,7 @@ namespace lumin::render {
 #endif
     }
 
-    void LevelRenderer::Impl::discardAtmosphereFeature() noexcept {
+    void pipelines::DefaultRenderPipelineSession::discardAtmosphereFeature() noexcept {
         if (atmosphereLutGpu_ != nullptr) {
             atmosphereLutGpu_->discardPendingFrame();
         }
@@ -139,7 +143,7 @@ namespace lumin::render {
         pendingAtmosphereSequence_.reset();
     }
 
-    void LevelRenderer::Impl::discardHybridSurfaceFeature() noexcept {
+    void pipelines::DefaultRenderPipelineSession::discardHybridSurfaceFeature() noexcept {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridGi_ == nullptr) {
             return;
@@ -160,7 +164,7 @@ namespace lumin::render {
 #endif
     }
 
-    void LevelRenderer::Impl::discardGlobalIlluminationFeature() noexcept {
+    void pipelines::DefaultRenderPipelineSession::discardGlobalIlluminationFeature() noexcept {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridGi_ == nullptr) {
             return;
@@ -175,7 +179,7 @@ namespace lumin::render {
 #endif
     }
 
-    void LevelRenderer::Impl::discardGiDenoiserFeature() noexcept {
+    void pipelines::DefaultRenderPipelineSession::discardGiDenoiserFeature() noexcept {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridGi_ == nullptr) {
             return;
@@ -190,7 +194,7 @@ namespace lumin::render {
 #endif
     }
 
-    void LevelRenderer::Impl::addShadowFeaturePasses(core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addShadowFeaturePasses(core::RenderFeatureFrameContext& context) {
         const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
         const ShadowSettings& settings = sceneData.settings.get<ShadowSettings>(pipelines::feature_ids::shadow());
         core::ShadowData& shadows = context.blackboard().get<core::ShadowData>();
@@ -222,7 +226,7 @@ namespace lumin::render {
         }
     }
 
-    void LevelRenderer::Impl::addGBufferFeaturePasses(core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addGBufferFeaturePasses(core::RenderFeatureFrameContext& context) {
         const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
         core::RasterSurfaceData& surface = context.blackboard().get<core::RasterSurfaceData>();
         const RasterPassTargets& targets = context.blackboard().get<RasterPassTargets>();
@@ -279,7 +283,8 @@ namespace lumin::render {
             });
     }
 
-    void LevelRenderer::Impl::addHybridSurfaceFeaturePasses(core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addHybridSurfaceFeaturePasses(
+        core::RenderFeatureFrameContext& context) {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
         core::RtSurfaceData& surfaceData = context.blackboard().get<core::RtSurfaceData>();
@@ -457,7 +462,8 @@ namespace lumin::render {
 #endif
     }
 
-    void LevelRenderer::Impl::addAtmosphereLutFeaturePasses(core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addAtmosphereLutFeaturePasses(
+        core::RenderFeatureFrameContext& context) {
         const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
         AtmospherePassData& passData = context.blackboard().get<AtmospherePassData>();
         const AtmosphereRenderSettings& settings =
@@ -466,7 +472,7 @@ namespace lumin::render {
             throw std::logic_error("Atmosphere LUT GPU resources are not initialized.");
         }
         if (pendingAtmosphereSequence_) {
-            throw std::logic_error("LevelRenderer already owns a pending atmosphere LUT frame.");
+            throw std::logic_error("Default pipeline session already owns a pending atmosphere LUT frame.");
         }
 
         scene::SceneEnvironment environment = sceneData.world->environment();
@@ -510,7 +516,8 @@ namespace lumin::render {
         });
     }
 
-    void LevelRenderer::Impl::addGlobalIlluminationFeaturePasses(core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addGlobalIlluminationFeaturePasses(
+        core::RenderFeatureFrameContext& context) {
         const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
         core::IndirectLightingData& indirect = context.blackboard().get<core::IndirectLightingData>();
         HybridPassData& data = context.blackboard().get<HybridPassData>();
@@ -688,7 +695,8 @@ namespace lumin::render {
 #endif
     }
 
-    void LevelRenderer::Impl::addGiDenoiserFeaturePasses(core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addGiDenoiserFeaturePasses(
+        core::RenderFeatureFrameContext& context) {
         HybridPassData& data = context.blackboard().get<HybridPassData>();
         if (!data.active) {
             // Raster recipe 已把 legacy GI 写入 DenoisedLightingData::combined，不需要任何 RT/NRD 输入。
@@ -846,7 +854,8 @@ namespace lumin::render {
 #endif
     }
 
-    void LevelRenderer::Impl::addSkyCompositeFeaturePasses(core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addSkyCompositeFeaturePasses(
+        core::RenderFeatureFrameContext& context) {
         HybridPassData& hybridData = context.blackboard().get<HybridPassData>();
         core::SceneHdrData& sceneHdr = context.blackboard().get<core::SceneHdrData>();
         const core::DenoisedLightingData& indirect = context.blackboard().get<core::DenoisedLightingData>();
@@ -919,7 +928,8 @@ namespace lumin::render {
             });
     }
 
-    void LevelRenderer::Impl::addDirectLightingFeaturePasses(core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addDirectLightingFeaturePasses(
+        core::RenderFeatureFrameContext& context) {
         const HybridPassData& hybridData = context.blackboard().get<HybridPassData>();
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridData.active) {
@@ -956,7 +966,8 @@ namespace lumin::render {
             });
     }
 
-    void LevelRenderer::Impl::addTemporalAaFeaturePasses(core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addTemporalAaFeaturePasses(
+        core::RenderFeatureFrameContext& context) {
         const core::SceneHdrData& sceneHdr = context.blackboard().get<core::SceneHdrData>();
         core::TemporalOutputData& temporal = context.blackboard().get<core::TemporalOutputData>();
         PostProcessPassData& postProcess = context.blackboard().get<PostProcessPassData>();
@@ -1006,7 +1017,8 @@ namespace lumin::render {
             nullptr);
     }
 
-    void LevelRenderer::Impl::addToneMappingFeaturePasses(core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addToneMappingFeaturePasses(
+        core::RenderFeatureFrameContext& context) {
         const core::TemporalOutputData& temporal = context.blackboard().get<core::TemporalOutputData>();
         core::ViewportOutputData& viewport = context.blackboard().get<core::ViewportOutputData>();
         const PostProcessPassData& postProcess = context.blackboard().get<PostProcessPassData>();
@@ -1025,7 +1037,8 @@ namespace lumin::render {
             });
     }
 
-    void LevelRenderer::Impl::addUiPresentFeaturePasses(core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addUiPresentFeaturePasses(
+        core::RenderFeatureFrameContext& context) {
         const core::ViewportOutputData& viewport = context.blackboard().get<core::ViewportOutputData>();
         const core::PresentationInputData& input = context.blackboard().get<core::PresentationInputData>();
         FrameGraph& graph = context.frameGraph();
@@ -1048,7 +1061,8 @@ namespace lumin::render {
         context.blackboard().set(core::PresentData{.viewport = viewport.color, .swapchain = input.swapchain});
     }
 
-    void LevelRenderer::Impl::recordShadowPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
+    void pipelines::DefaultRenderPipelineSession::recordShadowPass(
+        nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
                                                std::uint32_t frameIndex, std::uint32_t cascadeIndex,
                                                const glm::mat4& lightViewProjection) {
         if (modelRenderer_ != nullptr) {
@@ -1057,7 +1071,8 @@ namespace lumin::render {
         }
     }
 
-    void LevelRenderer::Impl::recordGBufferPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
+    void pipelines::DefaultRenderPipelineSession::recordGBufferPass(
+        nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
                                                 std::uint32_t frameIndex, const glm::mat4& viewProjection,
                                                 const glm::mat4& previousViewProjection) {
         const RasterFeatureFrameResources& frame = rasterResources_.frame(frameIndex);
@@ -1067,7 +1082,8 @@ namespace lumin::render {
         }
     }
 
-    void LevelRenderer::Impl::recordFullscreenPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
+    void pipelines::DefaultRenderPipelineSession::recordFullscreenPass(
+        nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
                                                    const nvrhi::GraphicsPipelineHandle& pipeline,
                                                    std::uint32_t frameIndex,
                                                    const nvrhi::BindingSetHandle& additionalBindingSet) {
@@ -1086,7 +1102,7 @@ namespace lumin::render {
         commandList.draw(nvrhi::DrawArguments().setVertexCount(3));
     }
 
-    void LevelRenderer::Impl::recordDirectLightingPass(nvrhi::ICommandList& commandList,
+    void pipelines::DefaultRenderPipelineSession::recordDirectLightingPass(nvrhi::ICommandList& commandList,
                                                        nvrhi::IFramebuffer& framebuffer, std::uint32_t frameIndex) {
         if (frameIndex >= directLightingBindingSets_.size() || !directLightingBindingSets_[frameIndex]) {
             throw std::logic_error("Direct-lighting material bindings are unavailable for the frame slot.");
@@ -1102,7 +1118,8 @@ namespace lumin::render {
         commandList.draw(nvrhi::DrawArguments().setVertexCount(3));
     }
 
-    void LevelRenderer::Impl::recordHistoryCopy(nvrhi::ICommandList& commandList, std::uint32_t frameIndex) {
+    void pipelines::DefaultRenderPipelineSession::recordHistoryCopy(nvrhi::ICommandList& commandList,
+                                                                    std::uint32_t frameIndex) {
         const PostFxFrameResources& frame = postFxResources_.frame(frameIndex);
         commandList.copyTexture(frame.history.texture, nvrhi::TextureSlice{}, frame.taaResolved.texture,
                                 nvrhi::TextureSlice{});

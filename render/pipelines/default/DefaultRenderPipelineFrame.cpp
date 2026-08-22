@@ -1,5 +1,5 @@
 #include "render/level/FeatureFrameData.hpp"
-#include "render/level/LevelRendererImpl.hpp"
+#include "render/pipelines/default/DefaultRenderPipelineSession.hpp"
 
 #include "render/platform/vulkan/VulkanContext.hpp"
 #include "render/resources/FrameGraphResourceImporter.hpp"
@@ -150,18 +150,19 @@ namespace lumin::render {
         nvrhi::FramebufferHandle createFramebuffer(nvrhi::IDevice& device, const nvrhi::FramebufferDesc& desc) {
             nvrhi::FramebufferHandle framebuffer = device.createFramebuffer(desc);
             if (!framebuffer) {
-                throw std::runtime_error("Failed to create an NvRHI LevelRenderer framebuffer.");
+                throw std::runtime_error("Failed to create a default pipeline NvRHI framebuffer.");
             }
             return framebuffer;
         }
     } // namespace
 
-    LevelRenderer::Impl::RecordedFrameState
-    LevelRenderer::Impl::recordCommandList(nvrhi::ICommandList& commandList, const core::RenderFrameIdentity& identity,
+    pipelines::DefaultRenderPipelineSession::RecordedFrameState
+    pipelines::DefaultRenderPipelineSession::recordCommandList(
+        nvrhi::ICommandList& commandList, const core::RenderFrameIdentity& identity,
                                            const core::RenderFramePacket& packet, const RenderSettings& settings,
                                            world::SceneChangeMask sceneChanges, const core::FrameChangeSet& changes) {
         if (!identity.isValid()) {
-            throw std::invalid_argument("LevelRenderer requires a valid render frame identity.");
+            throw std::invalid_argument("Default pipeline session requires a valid render frame identity.");
         }
         const std::uint32_t frameIndex = identity.frameSlot.value();
         const std::uint32_t imageIndex = identity.swapImage.value();
@@ -185,7 +186,7 @@ namespace lumin::render {
         const glm::mat4 viewProjection = projection * view;
         const world::RenderWorldSnapshotPtr renderWorld = packet.world;
         if (renderWorld == nullptr) {
-            throw std::logic_error("LevelRenderer cannot record without a render-world snapshot.");
+            throw std::logic_error("Default pipeline session cannot record without a render-world snapshot.");
         }
 
         const scene::DirectionalLight& sun = renderWorld->environment().sun;

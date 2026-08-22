@@ -232,7 +232,7 @@ namespace {
             application.find("make_unique<render::VulkanSurfaceBootstrap>") == std::string::npos ||
             application.find("make_unique<render::VulkanContext>") != std::string::npos ||
             rendererRuntime.find("make_unique<VulkanContext>(std::move(*bootstrap))") == std::string::npos ||
-            rendererRuntime.find("renderer.reset();\n                    context.reset();") == std::string::npos) {
+            rendererRuntime.find("session.reset();\n                    context.reset();") == std::string::npos) {
             throw std::runtime_error(
                 "Main thread must transfer a surface bootstrap before the Renderer thread creates and destroys VulkanContext");
         }

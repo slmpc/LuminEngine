@@ -1,6 +1,5 @@
 #include "render/Renderer.hpp"
 
-#include "render/LevelRenderer.hpp"
 #include "render/platform/vulkan/VulkanContext.hpp"
 #include "render/runtime/RenderMailbox.hpp"
 
@@ -41,12 +40,13 @@ namespace lumin::render {
     struct Renderer::Impl final {
         Impl(std::unique_ptr<VulkanSurfaceBootstrap> bootstrapValue, world::RenderWorldSnapshotPtr initialWorldValue,
              std::filesystem::path shaderDirectoryValue, core::UiFontAtlas uiFontAtlasValue,
-             std::unique_ptr<gi::GlobalIlluminationBackend> globalIlluminationValue)
+             std::unique_ptr<runtime::IRenderPipelineSessionFactory> pipelineFactoryValue)
             : bootstrap(std::move(bootstrapValue)), initialWorld(std::move(initialWorldValue)),
               shaderDirectory(std::move(shaderDirectoryValue)), uiFontAtlas(std::move(uiFontAtlasValue)),
-              globalIllumination(std::move(globalIlluminationValue)) {
-            if (bootstrap == nullptr || initialWorld == nullptr) {
-                throw std::invalid_argument("Renderer requires a Vulkan surface bootstrap and initial render-world snapshot.");
+              pipelineFactory(std::move(pipelineFactoryValue)) {
+            if (bootstrap == nullptr || initialWorld == nullptr || pipelineFactory == nullptr) {
+                throw std::invalid_argument(
+                    "Renderer requires a Vulkan surface bootstrap, initial render-world snapshot and pipeline factory.");
             }
             worker = std::thread([this] {
                 run();
@@ -68,17 +68,17 @@ namespace lumin::render {
             stopNoThrow();
         }
 
-        void publishRuntimeDetails(const LevelRenderer& renderer) {
-            const gi::BackendInfo backend = renderer.globalIlluminationBackendInfo();
-            const ImGuiViewportImage viewport = renderer.viewportImage();
+        void publishRuntimeDetails(const runtime::IRenderPipelineSession& session) {
+            const runtime::RenderPipelineSessionStatus details = session.status();
             std::lock_guard lock{statusMutex};
-            currentStatus.modelCount = renderer.modelCount();
-            currentStatus.mdiDrawCount = renderer.mdiDrawCount();
-            currentStatus.globalIlluminationBackend = backend.name;
-            currentStatus.globalIlluminationTemporal = backend.temporal;
-            currentStatus.hardwareRayTracing = backend.hardwareRayTracing;
-            currentStatus.viewport = RendererViewportStatus{viewport.textureId, viewport.width, viewport.height};
-            currentStatus.diagnostic = renderer.diagnostic();
+            currentStatus.modelCount = details.modelCount;
+            currentStatus.mdiDrawCount = details.mdiDrawCount;
+            currentStatus.globalIlluminationBackend = details.globalIlluminationBackend;
+            currentStatus.globalIlluminationTemporal = details.globalIlluminationTemporal;
+            currentStatus.hardwareRayTracing = details.hardwareRayTracing;
+            currentStatus.viewport = RendererViewportStatus{details.viewportTextureId, details.viewportWidth,
+                                                             details.viewportHeight};
+            currentStatus.diagnostic = details.diagnostic;
         }
 
         void publishState(RendererState state, std::string diagnostic = {}) {
@@ -93,16 +93,23 @@ namespace lumin::render {
         }
 
         void run() noexcept {
-            std::unique_ptr<LevelRenderer> renderer;
+            std::unique_ptr<runtime::IRenderPipelineSession> session;
             std::optional<runtime::RenderMailboxControl> activeControl;
             try {
                 // 主线程只完成 instance/surface bootstrap；设备、NvRHI、交换链及其销毁全部归本线程。
                 context = std::make_unique<VulkanContext>(std::move(*bootstrap));
                 bootstrap.reset();
-                renderer =
-                    std::make_unique<LevelRenderer>(*context, std::move(initialWorld), std::move(shaderDirectory),
-                                                    std::move(uiFontAtlas), std::move(globalIllumination));
-                publishRuntimeDetails(*renderer);
+                session = pipelineFactory->create(runtime::RenderPipelineSessionCreateContext{
+                    .vulkan = context.get(),
+                    .initialWorld = std::move(initialWorld),
+                    .shaderDirectory = std::move(shaderDirectory),
+                    .uiFontAtlas = std::move(uiFontAtlas),
+                });
+                if (session == nullptr) {
+                    throw std::runtime_error("Render pipeline session factory returned null.");
+                }
+                pipelineFactory.reset();
+                publishRuntimeDetails(*session);
                 publishState(RendererState::Ready);
 
                 while (std::optional<runtime::RenderMailboxWork> work = mailbox.waitNext()) {
@@ -111,8 +118,8 @@ namespace lumin::render {
                         const bool minimized = frame->packet.surface.minimized ||
                                                frame->packet.surface.windowExtent.width == 0 ||
                                                frame->packet.surface.windowExtent.height == 0;
-                        const bool submitted = !minimized && renderer->drawFrame(std::move(frame->packet));
-                        publishRuntimeDetails(*renderer);
+                        const bool submitted = !minimized && session->drawFrame(std::move(frame->packet));
+                        publishRuntimeDetails(*session);
                         {
                             std::lock_guard lock{statusMutex};
                             ++currentStatus.completedPacketCount;
@@ -130,15 +137,15 @@ namespace lumin::render {
 
                     activeControl = std::get<runtime::RenderMailboxControl>(std::move(*work));
                     if (activeControl->kind == runtime::RenderControlKind::Flush) {
-                        renderer->waitIdle();
+                        session->waitIdle();
                         mailbox.completeControl(*activeControl);
                         activeControl.reset();
                         continue;
                     }
 
                     publishState(RendererState::Stopping);
-                    renderer->waitIdle();
-                    renderer.reset();
+                    session->waitIdle();
+                    session.reset();
                     context.reset();
                     publishState(RendererState::Stopped);
                     mailbox.completeControl(*activeControl);
@@ -165,7 +172,7 @@ namespace lumin::render {
                     }
                 }
                 mailbox.fail(failure);
-                renderer.reset();
+                session.reset();
                 context.reset();
             }
         }
@@ -243,7 +250,7 @@ namespace lumin::render {
         world::RenderWorldSnapshotPtr initialWorld;
         std::filesystem::path shaderDirectory;
         core::UiFontAtlas uiFontAtlas;
-        std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination;
+        std::unique_ptr<runtime::IRenderPipelineSessionFactory> pipelineFactory;
         runtime::RenderMailbox mailbox;
         mutable std::mutex statusMutex;
         std::condition_variable statusChanged;
@@ -256,9 +263,9 @@ namespace lumin::render {
 
     Renderer::Renderer(std::unique_ptr<VulkanSurfaceBootstrap> bootstrap, world::RenderWorldSnapshotPtr initialWorld,
                        std::filesystem::path shaderDirectory, core::UiFontAtlas uiFontAtlas,
-                       std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
+                       std::unique_ptr<runtime::IRenderPipelineSessionFactory> pipelineFactory)
         : impl_(std::make_unique<Impl>(std::move(bootstrap), std::move(initialWorld), std::move(shaderDirectory),
-                                       std::move(uiFontAtlas), std::move(globalIllumination))) {
+                                       std::move(uiFontAtlas), std::move(pipelineFactory))) {
     }
 
     Renderer::~Renderer() = default;

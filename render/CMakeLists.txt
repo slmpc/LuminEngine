@@ -81,7 +81,6 @@ target_link_libraries(lumin_render_gpu_scene PUBLIC Lumin::RenderCore Lumin::Ren
 add_library(lumin_render_raster STATIC
     features/raster/RasterFeatureResources.cpp
     ModelRenderer.cpp
-    ObjRenderer.cpp
 )
 add_library(Lumin::RasterFeatures ALIAS lumin_render_raster)
 lumin_configure_render_library(lumin_render_raster)
@@ -124,10 +123,19 @@ lumin_render_target_uses_shaders(lumin_render_gi)
 
 add_library(lumin_render_pipelines STATIC
     pipelines/DefaultRenderPipelines.cpp
+    pipelines/default/DefaultFeatureRegistry.cpp
+    pipelines/default/DefaultRenderFeatures.cpp
+    pipelines/default/DefaultRenderPipelineFrame.cpp
+    pipelines/default/DefaultRenderPipelineSession.cpp
+    pipelines/default/DefaultRenderResources.cpp
 )
 add_library(Lumin::RenderPipelines ALIAS lumin_render_pipelines)
 lumin_configure_render_library(lumin_render_pipelines)
-target_link_libraries(lumin_render_pipelines PUBLIC Lumin::RenderCore Lumin::RenderRhi)
+target_link_libraries(lumin_render_pipelines
+    PUBLIC Lumin::RenderCore Lumin::RenderRhi
+    PRIVATE Lumin::VulkanBackend Lumin::RenderFeatures
+)
+lumin_render_target_uses_shaders(lumin_render_pipelines)
 
 add_library(lumin_render_presentation STATIC
     presentation/PresentationRenderer.cpp
@@ -150,10 +158,6 @@ target_link_libraries(lumin_render_features INTERFACE
 )
 
 add_library(lumin_render_runtime STATIC
-    LevelRenderer.cpp
-    level/LevelRendererFeatures.cpp
-    level/LevelRendererFrame.cpp
-    level/LevelRendererResources.cpp
     runtime/RenderMailbox.cpp
     runtime/Renderer.cpp
 )
@@ -161,9 +165,7 @@ add_library(Lumin::RenderRuntime ALIAS lumin_render_runtime)
 lumin_configure_render_library(lumin_render_runtime)
 target_link_libraries(lumin_render_runtime
     PUBLIC Lumin::RenderCore Lumin::RenderRhi Lumin::VulkanBackend
-    PRIVATE Lumin::RenderFeatures Lumin::RenderPipelines
 )
-lumin_render_target_uses_shaders(lumin_render_runtime)
 
 add_library(lumin_editor_module STATIC
     editor/Editor.cpp

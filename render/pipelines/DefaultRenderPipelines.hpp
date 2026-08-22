@@ -5,8 +5,13 @@
 #include "render/core/RenderSettingsStore.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
+
+namespace lumin::render::runtime {
+    class IRenderPipelineSessionFactory;
+}
 
 namespace lumin::render::pipelines {
 
@@ -80,5 +85,12 @@ namespace lumin::render::pipelines {
      * @throws std::invalid_argument 任一 schema 类型不匹配时抛出。
      */
     [[nodiscard]] RenderSettings readDefaultRenderSettings(const core::RenderSettingsSnapshot& snapshot);
+
+    /**
+     * @brief 创建注册全部内置 Raster/Hybrid Feature 模块的 session factory。
+     * @return 完全拥有且可移动到异步 `Renderer` 的工厂。
+     */
+    [[nodiscard]] std::unique_ptr<runtime::IRenderPipelineSessionFactory>
+    makeDefaultRenderPipelineSessionFactory();
 
 } // namespace lumin::render::pipelines

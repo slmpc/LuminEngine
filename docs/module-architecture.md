@@ -50,9 +50,11 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
   所有权域拆分的 Feature 实现。
 - `Lumin::RenderPresentation`：交换链 framebuffer 与 UI NvRHI renderer；只消费主线程深拷贝的 `UiDrawPacket`，不依赖
   ImGui、SDL 或 Editor。
-- `Lumin::RenderPipelines`：Raster/Hybrid recipe、typed producer/consumer 契约和默认模块稳定标识。
-- `Lumin::RenderRuntime`：异步 `Renderer` 门面、latest-wins mailbox、有序控制队列、状态快照和同步
-  `LevelRenderer` 帧事务实现。只有专用渲染线程访问移交后的 Vulkan/NvRHI 对象。
+- `Lumin::RenderPipelines`：Raster/Hybrid recipe、typed producer/consumer 契约、默认模块显式注册和
+  `DefaultRenderPipelineSession` 帧事务组合。
+- `Lumin::RenderRuntime`：异步 `Renderer` 门面、latest-wins mailbox、有序控制队列、状态快照和抽象
+  `IRenderPipelineSession` 生命周期；不链接或包含任何具体 Feature/recipe。只有专用渲染线程访问移交后的 Vulkan/NvRHI
+  对象。
 - `Lumin::Editor`：独立 Editor UI target，不再与 Render 单体库共享产物。
 
 物理目录继续按依赖边界划分：

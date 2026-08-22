@@ -1,5 +1,5 @@
 #include "render/level/FeatureFrameData.hpp"
-#include "render/level/LevelRendererImpl.hpp"
+#include "render/pipelines/default/DefaultRenderPipelineSession.hpp"
 
 #include "render/gi/legacy/LegacyBackend.hpp"
 #include "render/gpu/GpuScene.hpp"
@@ -15,7 +15,6 @@
 #include <array>
 #include <cmath>
 #include <exception>
-#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -28,104 +27,18 @@
 #include <glm/trigonometric.hpp>
 
 namespace lumin::render {
-    namespace {
-
-        struct BoundRenderFeatureCallbacks {
-            using AddPasses = std::function<void(core::RenderFeatureFrameContext&)>;
-            using FrameEvent = std::function<void(const core::RenderFrameIdentity&)>;
-
-            BoundRenderFeatureCallbacks(AddPasses addPassesCallback, FrameEvent submittedCallback = {},
-                                        FrameEvent discardedCallback = {})
-                : addPasses(std::move(addPassesCallback)), submitted(std::move(submittedCallback)),
-                  discarded(std::move(discardedCallback)) {
-            }
-
-            AddPasses addPasses;
-            FrameEvent submitted;
-            FrameEvent discarded;
-        };
-
-        // 迁移期 Feature 对象直接绑定单一职责回调；注册点显式列出模块，不再通过枚举和中央 switch 分派。
-        class BoundRenderFeature final : public core::IRenderFeature {
-        public:
-            BoundRenderFeature(core::FeatureDescriptor descriptor, BoundRenderFeatureCallbacks callbacks)
-                : descriptor_(std::move(descriptor)), callbacks_(std::move(callbacks)) {
-            }
-
-            [[nodiscard]] const core::FeatureDescriptor& descriptor() const noexcept override {
-                return descriptor_;
-            }
-
-            void addPasses(core::RenderFeatureFrameContext& context) override {
-                callbacks_.addPasses(context);
-            }
-
-            void onFrameSubmitted(const core::RenderFrameIdentity& identity) noexcept override {
-                if (callbacks_.submitted) {
-                    callbacks_.submitted(identity);
-                }
-            }
-
-            void onFrameDiscarded(const core::RenderFrameIdentity& identity) noexcept override {
-                if (callbacks_.discarded) {
-                    callbacks_.discarded(identity);
-                }
-            }
-
-        private:
-            core::FeatureDescriptor descriptor_;
-            BoundRenderFeatureCallbacks callbacks_;
-        };
-
-    } // namespace
-
-    LevelRenderer::LevelRenderer(VulkanContext& context, world::RenderWorldSnapshotPtr initialWorld,
-                                 std::filesystem::path shaderDirectory, core::UiFontAtlas uiFontAtlas,
-                                 std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
-        : impl_(std::make_unique<Impl>(context, std::move(initialWorld), std::move(shaderDirectory),
-                                       std::move(uiFontAtlas), std::move(globalIllumination))) {
-    }
-
-    LevelRenderer::~LevelRenderer() = default;
-
-    bool LevelRenderer::drawFrame(core::RenderFramePacket packet) {
-        return impl_->drawFrame(std::move(packet));
-    }
-
-    void LevelRenderer::waitIdle() const {
-        impl_->waitIdle();
-    }
-
-    std::uint32_t LevelRenderer::modelCount() const noexcept {
-        return impl_->modelCount();
-    }
-
-    std::uint32_t LevelRenderer::mdiDrawCount() const noexcept {
-        return impl_->mdiDrawCount();
-    }
-
-    gi::BackendInfo LevelRenderer::globalIlluminationBackendInfo() const noexcept {
-        return impl_->globalIlluminationBackendInfo();
-    }
-
-    const std::string& LevelRenderer::diagnostic() const noexcept {
-        return impl_->diagnostic();
-    }
-
-    ImGuiViewportImage LevelRenderer::viewportImage() const noexcept {
-        return impl_->viewportImage();
-    }
-
-    LevelRenderer::Impl::Impl(VulkanContext& context, world::RenderWorldSnapshotPtr initialWorld,
-                              std::filesystem::path shaderDirectory, core::UiFontAtlas uiFontAtlas,
-                              std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
+    pipelines::DefaultRenderPipelineSession::DefaultRenderPipelineSession(
+        VulkanContext& context, world::RenderWorldSnapshotPtr initialWorld, std::filesystem::path shaderDirectory,
+        core::UiFontAtlas uiFontAtlas, std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
         : context_(context), shaderDirectory_(std::move(shaderDirectory)), uiFontAtlas_(std::move(uiFontAtlas)),
           rasterResources_(*context.rhiDevice().Get(), frameSlotCount),
           postFxResources_(*context.rhiDevice().Get(), frameSlotCount),
+          resourceFactory_(*context.rhiDevice().Get()), shaderLibrary_(*context.rhiDevice().Get(), shaderDirectory_),
+          pipelineFactory_(*context.rhiDevice().Get()),
           fullscreenPipelineFactory_(*context.rhiDevice().Get(), shaderDirectory_),
           globalIllumination_(std::move(globalIllumination)), currentWorld_(std::move(initialWorld)) {
         if (currentWorld_ == nullptr) {
-            throw std::invalid_argument("LevelRenderer requires a non-empty initial render-world snapshot.");
+            throw std::invalid_argument("Default pipeline session requires a non-empty initial render-world snapshot.");
         }
         if (globalIllumination_ == nullptr) {
             globalIllumination_ = gi::makeLegacyBackend(shaderDirectory_);
@@ -141,15 +54,15 @@ namespace lumin::render {
         swapchainGeneration_ = context_.swapchainGeneration();
     }
 
-    LevelRenderer::Impl::~Impl() {
+    pipelines::DefaultRenderPipelineSession::~DefaultRenderPipelineSession() {
         waitIdle();
         presentation_.shutdown();
         destroyRenderResources();
     }
 
-    bool LevelRenderer::Impl::drawFrame(core::RenderFramePacket packet) {
+    bool pipelines::DefaultRenderPipelineSession::drawFrame(core::RenderFramePacket packet) {
         if (!packet.isValid()) {
-            throw std::invalid_argument("LevelRenderer received an invalid render frame packet.");
+            throw std::invalid_argument("Default pipeline session received an invalid render frame packet.");
         }
         const RenderSettings settings = pipelines::readDefaultRenderSettings(packet.settings);
         if (committedSettings_.has_value()) {
@@ -188,7 +101,7 @@ namespace lumin::render {
         }
 
         if (nextRenderSequence_ == core::RenderSequence::invalidValue) {
-            throw std::overflow_error("LevelRenderer exhausted the logical render sequence range.");
+            throw std::overflow_error("Default pipeline session exhausted the logical render sequence range.");
         }
 
         std::optional<VulkanFrame> frame;
@@ -252,11 +165,12 @@ namespace lumin::render {
         return true;
     }
 
-    void LevelRenderer::Impl::waitIdle() const {
+    void pipelines::DefaultRenderPipelineSession::waitIdle() const {
         context_.waitIdle();
     }
 
-    void LevelRenderer::Impl::requestViewportExtent(std::uint32_t width, std::uint32_t height) noexcept {
+    void pipelines::DefaultRenderPipelineSession::requestViewportExtent(std::uint32_t width,
+                                                                        std::uint32_t height) noexcept {
         if (width == 0 || height == 0) {
             return;
         }
@@ -273,19 +187,15 @@ namespace lumin::render {
         }
     }
 
-    ImGuiViewportImage LevelRenderer::Impl::viewportImage() const noexcept {
-        return {PresentationRenderer::viewportTextureId(), viewportOutput_.width, viewportOutput_.height};
-    }
-
-    std::uint32_t LevelRenderer::Impl::modelCount() const noexcept {
+    std::uint32_t pipelines::DefaultRenderPipelineSession::modelCount() const noexcept {
         return modelRenderer_ == nullptr ? 0 : modelRenderer_->drawCount();
     }
 
-    std::uint32_t LevelRenderer::Impl::mdiDrawCount() const noexcept {
+    std::uint32_t pipelines::DefaultRenderPipelineSession::mdiDrawCount() const noexcept {
         return modelCount();
     }
 
-    gi::BackendInfo LevelRenderer::Impl::globalIlluminationBackendInfo() const noexcept {
+    gi::BackendInfo pipelines::DefaultRenderPipelineSession::globalIlluminationBackendInfo() const noexcept {
         if (lastSubmittedFrameUsedHybridGi_) {
             if (committedFeatureConfiguration_.sharcEnabled && committedFeatureConfiguration_.nrdEnabled) {
                 return gi::BackendInfo{"Ray Tracing + SHARC + NRD", true, true};
@@ -301,11 +211,27 @@ namespace lumin::render {
         return globalIllumination_->info();
     }
 
-    const std::string& LevelRenderer::Impl::diagnostic() const noexcept {
+    const std::string& pipelines::DefaultRenderPipelineSession::diagnostic() const noexcept {
         return diagnostic_;
     }
 
-    void LevelRenderer::Impl::createRenderFeaturePipeline(pipelines::DefaultRenderPipelineKind requestedPath) {
+    runtime::RenderPipelineSessionStatus pipelines::DefaultRenderPipelineSession::status() const {
+        const gi::BackendInfo backend = globalIlluminationBackendInfo();
+        return runtime::RenderPipelineSessionStatus{
+            .modelCount = modelCount(),
+            .mdiDrawCount = mdiDrawCount(),
+            .globalIlluminationBackend = std::string{backend.name},
+            .globalIlluminationTemporal = backend.temporal,
+            .hardwareRayTracing = backend.hardwareRayTracing,
+            .viewportTextureId = PresentationRenderer::viewportTextureId(),
+            .viewportWidth = viewportOutput_.width,
+            .viewportHeight = viewportOutput_.height,
+            .diagnostic = diagnostic_,
+        };
+    }
+
+    void pipelines::DefaultRenderPipelineSession::createRenderFeaturePipeline(
+        pipelines::DefaultRenderPipelineKind requestedPath) {
         core::RenderDeviceCapabilities capabilities;
         capabilities.supported = {core::RenderCapability::Graphics, core::RenderCapability::Compute,
                                   core::RenderCapability::DynamicRendering};
@@ -330,112 +256,26 @@ namespace lumin::render {
         static_cast<void>(requestedPath);
 #endif
         const pipelines::DefaultRenderPipelineDefinition definition = pipelines::makeDefaultRenderPipeline(path);
-        core::RenderFeatureRegistry registry;
-        const auto registerFeature = [&registry, &definition](const core::FeatureId& id,
-                                                              BoundRenderFeatureCallbacks callbacks) {
-            core::FeatureDescriptor descriptor = definition.descriptor(id);
-            core::FeatureDescriptor factoryDescriptor = descriptor;
-            registry.registerFeature(std::move(descriptor),
-                                     [descriptor = std::move(factoryDescriptor),
-                                      callbacks = std::move(callbacks)](const core::FeatureCreateContext&) mutable {
-                                         return std::make_unique<BoundRenderFeature>(descriptor, callbacks);
-                                     });
-        };
-
-        using namespace pipelines::feature_ids;
-        registerFeature(pipelines::feature_ids::atmosphere(), {[this](core::RenderFeatureFrameContext& context) {
-                                                                   addAtmosphereLutFeaturePasses(context);
-                                                               },
-                                                               [this](const core::RenderFrameIdentity& identity) {
-                                                                   commitAtmosphereFeature(identity);
-                                                               },
-                                                               [this](const core::RenderFrameIdentity&) {
-                                                                   discardAtmosphereFeature();
-                                                               }});
-        if (path == pipelines::DefaultRenderPipelineKind::Raster) {
-            registerFeature(shadow(), {[this](core::RenderFeatureFrameContext& context) {
-                                addShadowFeaturePasses(context);
-                            }});
-            registerFeature(rasterSurface(), {[this](core::RenderFeatureFrameContext& context) {
-                                                  addGBufferFeaturePasses(context);
-                                              },
-                                              [this](const core::RenderFrameIdentity&) {
-                                                  if (modelRenderer_ != nullptr) {
-                                                      modelRenderer_->commitSubmittedFrame();
-                                                  }
-                                              },
-                                              [this](const core::RenderFrameIdentity&) {
-                                                  if (modelRenderer_ != nullptr) {
-                                                      modelRenderer_->discardPendingFrame();
-                                                  }
-                                              }});
-        } else {
-            registerFeature(hybridSurface(), {[this](core::RenderFeatureFrameContext& context) {
-                                                  addHybridSurfaceFeaturePasses(context);
-                                              },
-                                              [this](const core::RenderFrameIdentity& identity) {
-                                                  commitHybridSurfaceFeature(identity);
-                                                  if (modelRenderer_ != nullptr) {
-                                                      modelRenderer_->commitSubmittedFrame();
-                                                  }
-                                              },
-                                              [this](const core::RenderFrameIdentity&) {
-                                                  discardHybridSurfaceFeature();
-                                                  if (modelRenderer_ != nullptr) {
-                                                      modelRenderer_->discardPendingFrame();
-                                                  }
-                                              }});
-        }
-        registerFeature(globalIllumination(), {[this](core::RenderFeatureFrameContext& context) {
-                                                   addGlobalIlluminationFeaturePasses(context);
-                                               },
-                                               [this](const core::RenderFrameIdentity& identity) {
-                                                   commitGlobalIlluminationFeature(identity);
-                                               },
-                                               [this](const core::RenderFrameIdentity&) {
-                                                   discardGlobalIlluminationFeature();
-                                               }});
-        registerFeature(denoising(), {[this](core::RenderFeatureFrameContext& context) {
-                                          addGiDenoiserFeaturePasses(context);
-                                      },
-                                      [this](const core::RenderFrameIdentity& identity) {
-                                          commitGiDenoiserFeature(identity);
-                                      },
-                                      [this](const core::RenderFrameIdentity&) {
-                                          discardGiDenoiserFeature();
-                                      }});
-        registerFeature(lightingComposite(), {[this](core::RenderFeatureFrameContext& context) {
-                            addSkyCompositeFeaturePasses(context);
-                            addDirectLightingFeaturePasses(context);
-                        }});
-        registerFeature(temporalAa(), {[this](core::RenderFeatureFrameContext& context) {
-                                           addTemporalAaFeaturePasses(context);
-                                       },
-                                       [this](const core::RenderFrameIdentity& identity) {
-                                           postFxResources_.markHistoryValid(identity.frameSlot.value());
-                                       }});
-        registerFeature(toneMapping(), {[this](core::RenderFeatureFrameContext& context) {
-                            addToneMappingFeaturePasses(context);
-                        }});
-        registerFeature(presentation(), {[this](core::RenderFeatureFrameContext& context) {
-                                             addUiPresentFeaturePasses(context);
-                                         },
-                                         [this](const core::RenderFrameIdentity&) {
-                                             viewportOutputInitialized_ = true;
-                                         }});
+        core::RenderFeatureRegistry registry = createFeatureRegistry(definition, path);
 
         const core::ResolvedRenderPipeline resolved =
             core::RenderPipelineRecipeResolver::resolve(registry, definition.recipe(), capabilities);
         auto candidate = std::make_unique<core::RenderPipelineInstance>(
             registry, resolved,
             core::FeatureCreateContext{
-                .device = context_.rhiDevice(), .capabilities = capabilities, .frameSlotCount = frameSlotCount});
+                .device = context_.rhiDevice(),
+                .resources = &resourceFactory_,
+                .shaders = &shaderLibrary_,
+                .pipelines = &pipelineFactory_,
+                .capabilities = capabilities,
+                .frameSlotCount = frameSlotCount,
+            });
         candidate->onRenderExtentChanged(renderExtent_);
         activePipelineKind_ = path;
         renderPipeline_ = std::move(candidate);
     }
 
-    void LevelRenderer::Impl::synchronizeRenderConfiguration(const RenderSettings& settings) {
+    void pipelines::DefaultRenderPipelineSession::synchronizeRenderConfiguration(const RenderSettings& settings) {
         bool useRayTracing = false;
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridGi_ != nullptr && hybridGi_->sharcEnabled != requestedSharcEnabled_) {
@@ -483,8 +323,8 @@ namespace lumin::render {
         }
     }
 
-    LevelRenderer::Impl::FeatureConfigurationState
-    LevelRenderer::Impl::featureConfiguration(const RenderSettings& settings) noexcept {
+    pipelines::DefaultRenderPipelineSession::FeatureConfigurationState
+    pipelines::DefaultRenderPipelineSession::featureConfiguration(const RenderSettings& settings) noexcept {
         return FeatureConfigurationState{
             .globalIlluminationMode = settings.globalIllumination.mode,
             .directLightingEnabled = settings.directLighting.enabled,
@@ -504,8 +344,8 @@ namespace lumin::render {
         };
     }
 
-    bool LevelRenderer::Impl::shouldUseHybridGi(const GlobalIlluminationSettings& settings,
-                                                const world::RenderWorldSnapshot& renderWorld) const noexcept {
+    bool pipelines::DefaultRenderPipelineSession::shouldUseHybridGi(
+        const GlobalIlluminationSettings& settings, const world::RenderWorldSnapshot& renderWorld) const noexcept {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridGi_ == nullptr || renderPipeline_ == nullptr ||
             activePipelineKind_ != pipelines::DefaultRenderPipelineKind::Hybrid ||
@@ -520,5 +360,28 @@ namespace lumin::render {
         return false;
 #endif
     }
+
+    namespace pipelines {
+        namespace {
+
+            class DefaultRenderPipelineSessionFactory final : public runtime::IRenderPipelineSessionFactory {
+            public:
+                [[nodiscard]] std::unique_ptr<runtime::IRenderPipelineSession>
+                create(runtime::RenderPipelineSessionCreateContext context) const override {
+                    if (context.vulkan == nullptr || context.initialWorld == nullptr) {
+                        throw std::invalid_argument("Default pipeline session requires Vulkan and world inputs.");
+                    }
+                    return std::make_unique<DefaultRenderPipelineSession>(
+                        *context.vulkan, std::move(context.initialWorld), std::move(context.shaderDirectory),
+                        std::move(context.uiFontAtlas));
+                }
+            };
+
+        } // namespace
+
+        std::unique_ptr<runtime::IRenderPipelineSessionFactory> makeDefaultRenderPipelineSessionFactory() {
+            return std::make_unique<DefaultRenderPipelineSessionFactory>();
+        }
+    } // namespace pipelines
 
 } // namespace lumin::render

@@ -3,7 +3,6 @@
 #include "render/editor/EditorStyle.hpp"
 
 #include "assets/ObjLoader.hpp"
-#include "render/LevelRenderer.hpp"
 #include "render/editor/ImGuiContent.hpp"
 #include "render/editor/ImGuiFrontend.hpp"
 #include "render/editor/RenderSettingsPanelAdapter.hpp"
