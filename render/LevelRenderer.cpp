@@ -1,16 +1,16 @@
-#include "render/level/LevelRendererImpl.hpp"
 #include "render/level/LevelRenderFrameData.hpp"
+#include "render/level/LevelRendererImpl.hpp"
 
-#include "render/platform/vulkan/VulkanContext.hpp"
-#include "render/gi/SsaoBackend.hpp"
+#include "render/gi/legacy/LegacyBackend.hpp"
 #include "render/gpu/GpuScene.hpp"
 #include "render/platform/Window.hpp"
+#include "render/platform/vulkan/VulkanContext.hpp"
 #include "scene/Camera.hpp"
 #include "scene/Level.hpp"
 
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-#include "render/gi/HybridLightingComposite.hpp"
-#include "render/gi/RayTracedDirectLighting.hpp"
+#include "render/gi/raytracing/HybridLightingComposite.hpp"
+#include "render/gi/raytracing/RayTracedDirectLighting.hpp"
 #include "render/gpu/GpuSceneResources.hpp"
 #endif
 
@@ -81,13 +81,13 @@ namespace lumin::render {
     }
 
     LevelRenderer::Impl::Impl(platform::Window& window, VulkanContext& context, const scene::Level& level,
-                                 std::filesystem::path shaderDirectory,
-                                 std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
+                              std::filesystem::path shaderDirectory,
+                              std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
         : window_(window), context_(context), level_(level), shaderDirectory_(std::move(shaderDirectory)),
           textures_(context), pipelines_(context, shaderDirectory_),
           globalIllumination_(std::move(globalIllumination)) {
         if (globalIllumination_ == nullptr) {
-            globalIllumination_ = gi::makeSsaoBackend(shaderDirectory_);
+            globalIllumination_ = gi::makeLegacyBackend(shaderDirectory_);
         }
         renderExtent_ = core::RenderExtent{context_.swapchainWidth(), context_.swapchainHeight()};
         requestedRenderExtent_ = renderExtent_;
@@ -315,8 +315,7 @@ namespace lumin::render {
         renderPipeline_ = std::make_unique<DeferredRenderPipeline>(std::move(features), capabilities, path);
     }
 
-    void LevelRenderer::Impl::addFeaturePasses(LevelRenderFeatureKind kind,
-                                                core::RenderFeatureFrameContext& context) {
+    void LevelRenderer::Impl::addFeaturePasses(LevelRenderFeatureKind kind, core::RenderFeatureFrameContext& context) {
         switch (kind) {
         case LevelRenderFeatureKind::Shadow:
             addShadowFeaturePasses(context);
@@ -387,8 +386,7 @@ namespace lumin::render {
         }
     }
 
-    void LevelRenderer::Impl::discardFeature(LevelRenderFeatureKind kind,
-                                             const core::RenderFrameIdentity&) noexcept {
+    void LevelRenderer::Impl::discardFeature(LevelRenderFeatureKind kind, const core::RenderFrameIdentity&) noexcept {
         switch (kind) {
         case LevelRenderFeatureKind::GBuffer:
         case LevelRenderFeatureKind::HybridSurface:
@@ -451,6 +449,10 @@ namespace lumin::render {
             .shadowSplitLambda = settings.shadows.splitLambda,
             .shadowMaxDistance = settings.shadows.maxDistance,
             .ssaoEnabled = settings.globalIllumination.ssaoEnabled,
+            .ambientOcclusionMode = settings.globalIllumination.ambientOcclusionMode,
+            .ambientOcclusionRadius = settings.globalIllumination.ambientOcclusionRadius,
+            .ambientOcclusionStrength = settings.globalIllumination.ambientOcclusionStrength,
+            .ambientOcclusionBias = settings.globalIllumination.ambientOcclusionBias,
             .sharcEnabled = settings.globalIllumination.sharcEnabled,
             .nrdEnabled = settings.globalIllumination.nrdEnabled,
             .temporalAaEnabled = settings.temporalAa.enabled,
@@ -460,7 +462,7 @@ namespace lumin::render {
     }
 
     bool LevelRenderer::Impl::shouldUseHybridGi(const RenderSettings& settings,
-                                          const world::RenderWorldSnapshot& renderWorld) const noexcept {
+                                                const world::RenderWorldSnapshot& renderWorld) const noexcept {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridGi_ == nullptr || renderPipeline_ == nullptr ||
             renderPipeline_->path() != DeferredRenderPath::Hybrid ||

@@ -42,7 +42,8 @@ deferred/Blinn-Phong、RT DI/GI、SHARC、NRD、大气 LUT、ImGui renderer 和 
   不包含编辑器窗口逻辑。
 - `render/editor/` 保存 `Editor`、`ImGuiContent`、`ImGuiLayer` 和 `ImGuiManager`。该目录负责 UI 帧、
   ImGui 输入捕获和交换链绘制，渲染资源通过 `resources` 的公共 API 注入。
-- `render/level/`、`render/features/`、`render/gi/`、`render/atmosphere/` 和 `render/gpu/` 保存场景渲染功能，
+- `render/level/`、`render/features/`、`render/gi/`、`render/atmosphere/` 和 `render/gpu/` 保存场景渲染功能；
+  `render/gi/legacy/` 保存 raster fallback，`render/gi/raytracing/` 保存 RTDI、RTGI、SHARC、NRD 与 composite，
   通过 `resources` 声明和使用资源，不直接操作原生 Vulkan 状态。
 
 `Lumin::Render` 是唯一真实的渲染静态库。`Lumin::Rendering`、`Lumin::RenderCore`、`Lumin::Editor`、
@@ -68,7 +69,8 @@ deferred/Blinn-Phong、RT DI/GI、SHARC、NRD、大气 LUT、ImGui renderer 和 
 
 ## Shader 配置
 
-每个 `.slang` 都有同名 `.json`，例如 `rt_di.slang`/`rt_di.json`。JSON 记录该源文件的入口、stage、输出、
+每个 shader 入口 `.slang` 都有同名 `.json`，例如 `RtDi.slang`/`RtDi.json`。shader 源文件、companion JSON 与
+生成产物的 stem 统一使用大驼峰。JSON 记录该源文件的入口、stage、输出、
 reflection、depfile、capability、binding 和 `requires` feature。公共 ABI 与默认 compiler 选项放在
 `shaders/shader-abi.json`。
 

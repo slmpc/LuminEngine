@@ -1,4 +1,4 @@
-#include "render/gi/RayTracedGi.hpp"
+#include "render/gi/raytracing/RayTracedGi.hpp"
 
 #include <cstdio>
 #include <stdexcept>

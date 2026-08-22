@@ -1,10 +1,11 @@
 #pragma once
 
-#include "render/resources/FrameGraph.hpp"
-#include "render/resources/TextureManager.hpp"
+#include "render/RenderSettings.hpp"
 #include "render/atmosphere/AtmosphereLutGpu.hpp"
 #include "render/gi/GlobalIllumination.hpp"
 #include "render/gpu/GpuScene.hpp"
+#include "render/resources/FrameGraph.hpp"
+#include "render/resources/TextureManager.hpp"
 #include "render/world/RenderWorld.hpp"
 
 #include <array>
@@ -24,12 +25,12 @@ namespace lumin::scene {
 
 #if defined(LUMIN_HAS_NRD) && LUMIN_HAS_NRD && defined(LUMIN_HAS_SHARC) && LUMIN_HAS_SHARC
 #define LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI 1
-#include "render/gi/GiComposite.hpp"
-#include "render/gi/NrdDenoiser.hpp"
-#include "render/gi/RayTracedDirectLighting.hpp"
-#include "render/gi/RayTracedGi.hpp"
-#include "render/gi/RtSurfaceSignals.hpp"
-#include "render/gi/SharcRadianceCache.hpp"
+#include "render/gi/raytracing/GiComposite.hpp"
+#include "render/gi/raytracing/NrdDenoiser.hpp"
+#include "render/gi/raytracing/RayTracedDirectLighting.hpp"
+#include "render/gi/raytracing/RayTracedGi.hpp"
+#include "render/gi/raytracing/RtSurfaceSignals.hpp"
+#include "render/gi/raytracing/SharcRadianceCache.hpp"
 #else
 #define LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI 0
 #endif

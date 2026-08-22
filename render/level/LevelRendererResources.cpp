@@ -1,12 +1,12 @@
-#include "render/level/LevelRendererImpl.hpp"
 #include "render/level/LevelRenderFrameData.hpp"
+#include "render/level/LevelRendererImpl.hpp"
 
 #include "render/platform/vulkan/VulkanContext.hpp"
 #include "scene/Level.hpp"
 
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-#include "render/gi/HybridLightingComposite.hpp"
-#include "render/gi/RayTracedDirectLighting.hpp"
+#include "render/gi/raytracing/HybridLightingComposite.hpp"
+#include "render/gi/raytracing/RayTracedDirectLighting.hpp"
 #include "render/gpu/GpuSceneResources.hpp"
 #endif
 
@@ -344,7 +344,5 @@ namespace lumin::render {
         imgui_.setViewportTexture(viewportOutput_.texture);
         swapchainGeneration_ = context_.swapchainGeneration();
     }
-
-
 
 } // namespace lumin::render

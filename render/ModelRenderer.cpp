@@ -1,13 +1,13 @@
 #include "render/ModelRenderer.hpp"
 
-#include "render/resources/DescriptorIndexingLimits.hpp"
 #include "assets/ImageLoader.hpp"
-#include "render/resources/PipelineFactory.hpp"
-#include "render/resources/ShaderLibrary.hpp"
-#include "render/platform/vulkan/VulkanContext.hpp"
-#include "render/resources/VulkanResources.hpp"
 #include "render/gpu/GpuMaterial.hpp"
 #include "render/gpu/GpuScene.hpp"
+#include "render/platform/vulkan/VulkanContext.hpp"
+#include "render/resources/DescriptorIndexingLimits.hpp"
+#include "render/resources/PipelineFactory.hpp"
+#include "render/resources/ShaderLibrary.hpp"
+#include "render/resources/VulkanResources.hpp"
 #include "render/world/RenderWorld.hpp"
 #include "scene/Camera.hpp"
 
@@ -499,9 +499,9 @@ namespace lumin::render {
         void createPipelines(std::span<const nvrhi::Format> colorFormats, nvrhi::Format depthFormat,
                              nvrhi::Format shadowDepthFormat) {
             const nvrhi::ShaderHandle gbufferVertex =
-                shaders.loadModule("gbuffer.vert.spv", nvrhi::ShaderType::Vertex, "vertexMain");
+                shaders.loadModule("GBuffer.vert.spv", nvrhi::ShaderType::Vertex, "vertexMain");
             const nvrhi::ShaderHandle gbufferFragment =
-                shaders.loadModule("gbuffer.frag.spv", nvrhi::ShaderType::Pixel, "fragmentMain");
+                shaders.loadModule("GBuffer.frag.spv", nvrhi::ShaderType::Pixel, "fragmentMain");
             const auto attributes = vertexAttributes();
             gbufferInputLayout = device.createInputLayout(attributes.data(),
                                                           static_cast<std::uint32_t>(attributes.size()), gbufferVertex);
@@ -520,7 +520,7 @@ namespace lumin::render {
             gbufferPipeline = pipelineFactory.createGraphicsPipeline(gbufferDesc);
 
             const nvrhi::ShaderHandle shadowVertex =
-                shaders.loadModule("shadow.vert.spv", nvrhi::ShaderType::Vertex, "vertexMain");
+                shaders.loadModule("Shadow.vert.spv", nvrhi::ShaderType::Vertex, "vertexMain");
             const std::array<nvrhi::VertexAttributeDesc, 1> shadowAttributes = {attributes[0]};
             shadowInputLayout = device.createInputLayout(
                 shadowAttributes.data(), static_cast<std::uint32_t>(shadowAttributes.size()), shadowVertex);

@@ -41,10 +41,10 @@ namespace lumin::render {
         };
 
         try {
-            createFullscreen("sky", lightingFormat, sky_, skyLayouts);
-            createFullscreen("deferred", lightingFormat, deferredLighting_, deferredLayouts);
-            createFullscreen("taa", lightingFormat, taa_, fullscreenLayouts);
-            createFullscreen("postprocess", swapchainFormat, tonemap_, fullscreenLayouts);
+            createFullscreen("Sky", lightingFormat, sky_, skyLayouts);
+            createFullscreen("Deferred", lightingFormat, deferredLighting_, deferredLayouts);
+            createFullscreen("Taa", lightingFormat, taa_, fullscreenLayouts);
+            createFullscreen("PostProcess", swapchainFormat, tonemap_, fullscreenLayouts);
         } catch (...) {
             destroy();
             throw;

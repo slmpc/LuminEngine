@@ -8,7 +8,7 @@ Lumin Engine 是一个使用 C++23、SDL3、Slang 和动态渲染构建的紧凑
 - 可生成法线并支持高度查询的程序化高度场地形。
 - 包含位置、法线与粗糙度、反照率与金属度、运动矢量的 G-buffer 延迟渲染器。
 - 支持 sRGB base color、切线空间 normal 和 roughness 贴图，以及 GGX/Cook-Torrance PBR 光照。
-- 可切换的 Legacy（四级联方向光阴影与 SSAO）和 Ray Tracing（可选 SHARC/NRD）渲染路径，以及程序化天空盒。
+- 可切换的 Legacy（四级联方向光阴影与 SSAO/HBAO/GTAO）和 Ray Tracing（可选 SHARC/NRD）渲染路径，以及程序化天空盒。
 - 使用 Halton 抖动，并结合上一帧相机与模型运动矢量的 TAA。
 - ACES 色调映射，以及用于编辑场景、渲染设置和 Lua 脚本的原生停靠式编辑器。
 
@@ -95,7 +95,7 @@ cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 按住中键会隐藏并捕获鼠标，通过相对移动旋转视角；同时使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。松开中键会恢复
 普通鼠标模式。左键可拾取场景物体并通过 Move/Rotate/Scale Gizmo 编辑变换，`W`、`E`、`R` 可切换模式；右键打开
 物体上下文菜单和 `Details`。编辑器面板可选择 Actor 或模型、修改变换与材质，并在 Render 面板通过下拉框选择
-`Legacy` 或 `Ray Tracing`。Legacy 提供 SSAO、CSM、级联分割权重与最大阴影距离设置；Ray Tracing 提供 SHARC 与
+`Legacy` 或 `Ray Tracing`。Legacy 提供 SSAO/HBAO/GTAO、AO 半径/强度/偏置、CSM、级联分割权重与最大阴影距离设置；Ray Tracing 提供 SHARC 与
 NRD 开关；TAA 是两条路径共用的选项。面板还可调整相机、曝光和太阳方向，并在 Lua 控制台执行表达式
 （例如 `return 6 * 7`）。当编辑器正在接收键盘、
 鼠标或文本输入时，应用会抑制 `Escape` 和相机控制，但不会暂停 `Game::tick`、`Level::tick` 或 Lua 生命周期。
@@ -123,7 +123,7 @@ NRD 开关；TAA 是两条路径共用的选项。面板还可调整相机、曝
 
 示例材质位于 `assets/materials/aerial_asphalt_01`。base color 按 sRGB 解码，OpenGL normal
 贴图在采样时修正 Y 方向，roughness 写入 G-buffer 的法线附件 alpha，metallic 写入反照率附件 alpha。
-该材质没有 metallic 或 AO 贴图，因此使用 `metallic=0`；Legacy 路径可由 SSAO 提供环境遮蔽。缺少 `vt` 的 OBJ 会在加载时
+该材质没有 metallic 或 AO 贴图，因此使用 `metallic=0`；Legacy 路径可由 SSAO、HBAO 或 GTAO 提供环境遮蔽。缺少 `vt` 的 OBJ 会在加载时
 生成柱面 UV。当前材质路径不执行几何位移或视差映射。
 
 材质贴图不纳入版本控制。需要使用示例材质时，请使用 Python 3 下载清单中的全部材质：

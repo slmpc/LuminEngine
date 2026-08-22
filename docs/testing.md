@@ -14,7 +14,7 @@ Lumin Engine 将纯 CPU 契约测试与真实 Vulkan 硬件测试分开注册。
 | `sharc` | SHARC capability、adapter、cache 历史或运行时 smoke test。 |
 | `nrd` | NRD adapter、资源翻译、历史或运行时 smoke test。 |
 | `hardware` | 需要本机 Vulkan 设备的测试；设备不满足前置条件时允许跳过。 |
-| `fallback` | 验证 `AUTO`/`OFF` 不创建 RT 资源并回退到 raster/SSAO 的测试。 |
+| `fallback` | 验证 `AUTO`/`OFF` 不创建 RT 资源并回退到 raster/屏幕空间 AO 的测试。 |
 | `smoke` | 对真实运行环境执行的最小端到端检查。 |
 
 常用命令：
@@ -48,7 +48,7 @@ ctest --test-dir out/build/debug -LE hardware --output-on-failure
 - 普通 CPU 测试默认超时为 30 秒；较长的集成测试应在注册时显式覆盖。
 
 SHARC 与 NRD 测试应先运行 adapter 的纯 CPU 资源/dispatch 翻译测试，再运行带 `hardware` 的端到端 smoke。
-设备不支持 RT 时，fallback 测试仍必须执行并证明 SSAO/raster 路径可用、RT extension 与 AS/SBT 资源均未创建。
+设备不支持 RT 时，fallback 测试仍必须执行并证明 SSAO/HBAO/GTAO raster 路径可用、RT extension 与 AS/SBT 资源均未创建。
 
 构建期 feature gate 还应使用独立目录验证，避免已有 cache 掩盖依赖图错误：
 

@@ -314,20 +314,20 @@ namespace {
 
         const std::string fullscreenPosition =
             "output.position = float4(triangleUv.x * 2.0 - 1.0, 1.0 - triangleUv.y * 2.0, 0.0, 1.0);";
-        for (const std::string& path : {"shaders/deferred.slang", "shaders/ssao.slang", "shaders/sky.slang",
-                                        "shaders/taa.slang", "shaders/postprocess.slang"}) {
+        for (const std::string& path : {"shaders/Deferred.slang", "shaders/ao/AoCommon.slang", "shaders/Sky.slang",
+                                        "shaders/Taa.slang", "shaders/PostProcess.slang"}) {
             require(readSource(path).find(fullscreenPosition) != std::string::npos,
                     path + " must map logical top UV to positive clip-space Y.");
         }
 
-        const std::string gbuffer = readSource("shaders/gbuffer.slang");
+        const std::string gbuffer = readSource("shaders/GBuffer.slang");
         require(gbuffer.find("return float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);") != std::string::npos,
                 "G-buffer motion must convert positive NDC Y toward smaller screen V.");
-        const std::string sky = readSource("shaders/sky.slang");
+        const std::string sky = readSource("shaders/Sky.slang");
         require(sky.find("float2 clipPosition = float2(input.uv.x * 2.0 - 1.0, 1.0 - input.uv.y * 2.0);") !=
                     std::string::npos,
                 "Sky inverse projection must reconstruct the NvRHI clip-space Y convention.");
-        const std::string deferred = readSource("shaders/deferred.slang");
+        const std::string deferred = readSource("shaders/Deferred.slang");
         require(deferred.find("float2 shadowUv = float2(shadowNdc.x * 0.5 + 0.5, 0.5 - shadowNdc.y * 0.5);") !=
                     std::string::npos,
                 "Deferred shadows must convert positive light NDC Y toward smaller shadow V.");
@@ -335,12 +335,12 @@ namespace {
     }
 
     void verifyHybridMotionContract() {
-        const std::string rtDirect = readSource("shaders/rt_di.slang");
+        const std::string rtDirect = readSource("shaders/RtDi.slang");
         require(rtDirect.find("float2 currentUv = (float2(pixel) + 0.5) / float2(extent);") != std::string::npos &&
                     rtDirect.find("float2 currentUv = (float2(pixel) + 0.5) / float2(extent) +") == std::string::npos,
                 "RTDI current UV must use the jittered dispatch sample exactly once.");
 
-        const std::string rtGi = readSource("shaders/rt_gi.slang");
+        const std::string rtGi = readSource("shaders/RtGi.slang");
         require(rtGi.find("denoiserMotion[pixel] = motion + frame.renderSize.zw;") != std::string::npos,
                 "RTGI must remove projection jitter before handing motion to NRD.");
         std::cout << "HYBRID_MOTION=RTDI-jitter-once;NRD=non-jittered-previous-minus-current\n";
@@ -351,7 +351,7 @@ namespace {
         require(gpuScene.find("float3 luminOrientShadingNormal") != std::string::npos,
                 "GPU Scene shaders must provide one shared double-sided normal orientation helper.");
 
-        for (const std::string& path : {"shaders/rt_di.slang", "shaders/rt_gi.slang", "shaders/sharc_update.slang"}) {
+        for (const std::string& path : {"shaders/RtDi.slang", "shaders/RtGi.slang", "shaders/SharcUpdate.slang"}) {
             const std::string source = readSource(path);
             require(source.find("RAY_FLAG_CULL_BACK_FACING_TRIANGLES") == std::string::npos,
                     path + " must not cull triangles that the raster G-buffer renders.");
@@ -365,11 +365,10 @@ namespace {
 
 int main() {
     try {
-        const std::string level = readSource("render/LevelRenderer.cpp") +
-                                  readSource("render/level/LevelRendererFrame.cpp") +
-                                  readSource("render/level/LevelRendererResources.cpp") +
-                                  readSource("render/level/LevelRendererFeatures.cpp") +
-                                  readSource("render/features/LevelRenderFeature.cpp");
+        const std::string level =
+            readSource("render/LevelRenderer.cpp") + readSource("render/level/LevelRendererFrame.cpp") +
+            readSource("render/level/LevelRendererResources.cpp") +
+            readSource("render/level/LevelRendererFeatures.cpp") + readSource("render/features/LevelRenderFeature.cpp");
         const std::string context = readSource("render/platform/vulkan/VulkanContext.cpp");
         const std::string deferredPipeline = readSource("render/DeferredRenderPipeline.cpp");
         const std::string deferredHeader = readSource("render/DeferredRenderPipeline.hpp");

@@ -6,9 +6,9 @@
       "name": "atmosphere.multi-scattering",
       "entry": "multiScatteringMain",
       "stage": "compute",
-      "output": "atmosphere.multi-scattering.comp.spv",
-      "reflection": "reflection/atmosphere.multi-scattering.comp.json",
-      "depfile": "deps/atmosphere.multi-scattering.comp.d",
+      "output": "MultiScatteringLut.comp.spv",
+      "reflection": "reflection/MultiScatteringLut.comp.json",
+      "depfile": "deps/MultiScatteringLut.comp.d",
       "bindings": [
         {
           "name": "atmosphere",

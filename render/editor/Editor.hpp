@@ -106,6 +106,10 @@ namespace lumin::editor {
         void setShadowsEnabled(bool enabled) noexcept;
         void setGlobalIlluminationMode(render::GlobalIlluminationMode mode) noexcept;
         void setSsaoEnabled(bool enabled) noexcept;
+        void setAmbientOcclusionMode(render::AmbientOcclusionMode mode) noexcept;
+        void setAmbientOcclusionRadius(float radius) noexcept;
+        void setAmbientOcclusionStrength(float strength) noexcept;
+        void setAmbientOcclusionBias(float bias) noexcept;
         void setSharcEnabled(bool enabled) noexcept;
         void setNrdEnabled(bool enabled) noexcept;
         void setCsmSplitLambda(float splitLambda) noexcept;

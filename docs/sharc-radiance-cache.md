@@ -85,13 +85,13 @@ manifest 的 include path 需要加入：
 
 | 源文件 | entry | stage | 建议输出 |
 |---|---|---|---|
-| `sharc_update.slang` | `sharcUpdateRayGenerationMain` | raygeneration | `sharc_update.rgen.spv` |
-| `sharc_update.slang` | `sharcUpdateRadianceMissMain` | miss | `sharc_update.radiance.rmiss.spv` |
-| `sharc_update.slang` | `sharcUpdateShadowMissMain` | miss | `sharc_update.shadow.rmiss.spv` |
-| `sharc_update.slang` | `sharcUpdateClosestHitMain` | closesthit | `sharc_update.rchit.spv` |
-| `sharc_resolve.slang` | `sharcResolveMain` | compute | `sharc_resolve.comp.spv` |
-| `rt_gi_sharc.slang` | `closestHitMain` | closesthit | `rt_gi.sharc.rchit.spv` |
+| `SharcUpdate.slang` | `sharcUpdateRayGenerationMain` | raygeneration | `SharcUpdate.rgen.spv` |
+| `SharcUpdate.slang` | `sharcUpdateRadianceMissMain` | miss | `SharcUpdate.radiance.rmiss.spv` |
+| `SharcUpdate.slang` | `sharcUpdateShadowMissMain` | miss | `SharcUpdate.shadow.rmiss.spv` |
+| `SharcUpdate.slang` | `sharcUpdateClosestHitMain` | closesthit | `SharcUpdate.rchit.spv` |
+| `SharcResolve.slang` | `sharcResolveMain` | compute | `SharcResolve.comp.spv` |
+| `RtGiSharc.slang` | `closestHitMain` | closesthit | `RtGiSharc.rchit.spv` |
 
-`rt_gi_sharc.slang` 是只定义 `LUMIN_ENABLE_SHARC=1` 后包含主 RT GI 源码的薄 wrapper，因此无需给 manifest
+`RtGiSharc.slang` 是只定义 `LUMIN_ENABLE_SHARC=1` 后包含主 RT GI 源码的薄 wrapper，因此无需给 manifest
 增加 per-entry define 功能。全部 RT entry 使用项目现有 `spvRayTracingKHR` capability 集；resolve 使用普通
 `spirv_1_5` compute 配置。`slangc` 的 depfile 会跟踪 vendor headers、NRD header 和公共 Slang include。

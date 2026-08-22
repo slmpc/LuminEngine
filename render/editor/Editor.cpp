@@ -23,6 +23,42 @@
 namespace lumin::editor {
     namespace {
 
+        project::ProjectAmbientOcclusionMode toProjectAmbientOcclusionMode(render::AmbientOcclusionMode mode) noexcept {
+            switch (mode) {
+            case render::AmbientOcclusionMode::Hbao:
+                return project::ProjectAmbientOcclusionMode::Hbao;
+            case render::AmbientOcclusionMode::Gtao:
+                return project::ProjectAmbientOcclusionMode::Gtao;
+            case render::AmbientOcclusionMode::Ssao:
+            default:
+                return project::ProjectAmbientOcclusionMode::Ssao;
+            }
+        }
+
+        render::AmbientOcclusionMode toRenderAmbientOcclusionMode(project::ProjectAmbientOcclusionMode mode) noexcept {
+            switch (mode) {
+            case project::ProjectAmbientOcclusionMode::Hbao:
+                return render::AmbientOcclusionMode::Hbao;
+            case project::ProjectAmbientOcclusionMode::Gtao:
+                return render::AmbientOcclusionMode::Gtao;
+            case project::ProjectAmbientOcclusionMode::Ssao:
+            default:
+                return render::AmbientOcclusionMode::Ssao;
+            }
+        }
+
+        const char* ambientOcclusionModeName(render::AmbientOcclusionMode mode) noexcept {
+            switch (mode) {
+            case render::AmbientOcclusionMode::Hbao:
+                return "HBAO";
+            case render::AmbientOcclusionMode::Gtao:
+                return "GTAO";
+            case render::AmbientOcclusionMode::Ssao:
+            default:
+                return "SSAO";
+            }
+        }
+
         const char* severityName(scripting::ScriptSeverity severity) {
             switch (severity) {
             case scripting::ScriptSeverity::Info:
@@ -342,6 +378,11 @@ namespace lumin::editor {
                     .shadows = settings.shadows.enabled,
                     .rayTracing = settings.globalIllumination.mode == render::GlobalIlluminationMode::RayTracing,
                     .ssao = settings.globalIllumination.ssaoEnabled,
+                    .ambientOcclusionMode =
+                        toProjectAmbientOcclusionMode(settings.globalIllumination.ambientOcclusionMode),
+                    .ambientOcclusionRadius = settings.globalIllumination.ambientOcclusionRadius,
+                    .ambientOcclusionStrength = settings.globalIllumination.ambientOcclusionStrength,
+                    .ambientOcclusionBias = settings.globalIllumination.ambientOcclusionBias,
                     .sharc = settings.globalIllumination.sharcEnabled,
                     .nrd = settings.globalIllumination.nrdEnabled,
                     .taa = settings.temporalAa.enabled,
@@ -360,6 +401,10 @@ namespace lumin::editor {
             settings.globalIllumination.mode =
                 value.rayTracing ? render::GlobalIlluminationMode::RayTracing : render::GlobalIlluminationMode::Legacy;
             settings.globalIllumination.ssaoEnabled = value.ssao;
+            settings.globalIllumination.ambientOcclusionMode = toRenderAmbientOcclusionMode(value.ambientOcclusionMode);
+            settings.globalIllumination.ambientOcclusionRadius = std::max(value.ambientOcclusionRadius, 0.05f);
+            settings.globalIllumination.ambientOcclusionStrength = std::max(value.ambientOcclusionStrength, 0.0f);
+            settings.globalIllumination.ambientOcclusionBias = std::clamp(value.ambientOcclusionBias, 0.0f, 0.5f);
             settings.globalIllumination.sharcEnabled = value.sharc;
             settings.globalIllumination.nrdEnabled = value.nrd;
             settings.temporalAa.enabled = value.taa;
@@ -1581,7 +1626,36 @@ namespace lumin::editor {
             }
 
             if (settings.globalIllumination.mode == render::GlobalIlluminationMode::Legacy) {
-                ImGui::Checkbox("SSAO", &settings.globalIllumination.ssaoEnabled);
+                ImGui::Checkbox("Ambient occlusion", &settings.globalIllumination.ssaoEnabled);
+                if (settings.globalIllumination.ssaoEnabled) {
+                    propertyLabel("Algorithm");
+                    if (ImGui::BeginCombo("##ambientOcclusionMode",
+                                          ambientOcclusionModeName(settings.globalIllumination.ambientOcclusionMode))) {
+                        for (const auto [mode, name] : {
+                                 std::pair{render::AmbientOcclusionMode::Ssao, "SSAO"},
+                                 std::pair{render::AmbientOcclusionMode::Hbao, "HBAO"},
+                                 std::pair{render::AmbientOcclusionMode::Gtao, "GTAO"},
+                             }) {
+                            const bool selected = settings.globalIllumination.ambientOcclusionMode == mode;
+                            if (ImGui::Selectable(name, selected)) {
+                                settings.globalIllumination.ambientOcclusionMode = mode;
+                            }
+                            if (selected) {
+                                ImGui::SetItemDefaultFocus();
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    propertyLabel("Radius");
+                    ImGui::SliderFloat("##ambientOcclusionRadius", &settings.globalIllumination.ambientOcclusionRadius,
+                                       0.05f, 5.0f, "%.2f");
+                    propertyLabel("Strength");
+                    ImGui::SliderFloat("##ambientOcclusionStrength",
+                                       &settings.globalIllumination.ambientOcclusionStrength, 0.0f, 4.0f, "%.2f");
+                    propertyLabel("Bias");
+                    ImGui::SliderFloat("##ambientOcclusionBias", &settings.globalIllumination.ambientOcclusionBias,
+                                       0.0f, 0.5f, "%.3f");
+                }
                 ImGui::Checkbox("CSM", &settings.shadows.enabled);
                 if (settings.shadows.enabled) {
                     propertyLabel("Split lambda");
@@ -1883,6 +1957,22 @@ namespace lumin::editor {
 
     void Editor::setSsaoEnabled(bool enabled) noexcept {
         impl_->settings.globalIllumination.ssaoEnabled = enabled;
+    }
+
+    void Editor::setAmbientOcclusionMode(render::AmbientOcclusionMode mode) noexcept {
+        impl_->settings.globalIllumination.ambientOcclusionMode = mode;
+    }
+
+    void Editor::setAmbientOcclusionRadius(float radius) noexcept {
+        impl_->settings.globalIllumination.ambientOcclusionRadius = std::max(radius, 0.05f);
+    }
+
+    void Editor::setAmbientOcclusionStrength(float strength) noexcept {
+        impl_->settings.globalIllumination.ambientOcclusionStrength = std::max(strength, 0.0f);
+    }
+
+    void Editor::setAmbientOcclusionBias(float bias) noexcept {
+        impl_->settings.globalIllumination.ambientOcclusionBias = std::clamp(bias, 0.0f, 0.5f);
     }
 
     void Editor::setSharcEnabled(bool enabled) noexcept {

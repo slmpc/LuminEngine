@@ -195,7 +195,7 @@ namespace {
                     layer.find("outputIsSrgb_ = config.outputIsSrgb") != std::string::npos &&
                     layer.find("outputIsSrgb_ ? 1.0f : 0.0f") != std::string::npos,
                 "ImGui must pass the swapchain transfer function to its fragment shader.");
-        const std::string shader = readText("shaders/imgui.slang");
+        const std::string shader = readText("shaders/ImGui.slang");
         require(shader.find("constants.outputConfig.x > 0.5") != std::string::npos &&
                     shader.find("vertexColor.rgb <= 0.04045") != std::string::npos,
                 "ImGui vertex colors must be linearized exactly once for an sRGB attachment.");

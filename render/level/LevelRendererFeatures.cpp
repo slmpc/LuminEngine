@@ -1,8 +1,8 @@
-#include "render/level/LevelRendererImpl.hpp"
 #include "render/level/LevelRenderFrameData.hpp"
+#include "render/level/LevelRendererImpl.hpp"
 
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-#include "render/gi/HybridLightingComposite.hpp"
+#include "render/gi/raytracing/HybridLightingComposite.hpp"
 #include "render/gpu/GpuSceneResources.hpp"
 #endif
 #include "scene/Camera.hpp"
@@ -67,9 +67,8 @@ namespace lumin::render {
             return;
         }
         HybridGiState& runtime = *hybridGi_;
-        if (*runtime.pendingSequence != identity.sequence || !runtime.pendingScenePlan ||
-            !runtime.pendingSceneUpdate || runtime.directLighting == nullptr ||
-            !runtime.directLighting->hasPendingFrame() ||
+        if (*runtime.pendingSequence != identity.sequence || !runtime.pendingScenePlan || !runtime.pendingSceneUpdate ||
+            runtime.directLighting == nullptr || !runtime.directLighting->hasPendingFrame() ||
             runtime.pendingSceneUpdate->frameSlot() != identity.frameSlot) {
             std::terminate();
         }
@@ -902,8 +901,8 @@ namespace lumin::render {
     }
 
     void LevelRenderer::Impl::recordShadowPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
-                                         std::uint32_t frameIndex, std::uint32_t cascadeIndex,
-                                         const glm::mat4& lightViewProjection) {
+                                               std::uint32_t frameIndex, std::uint32_t cascadeIndex,
+                                               const glm::mat4& lightViewProjection) {
         if (modelRenderer_ != nullptr) {
             modelRenderer_->recordShadow(commandList, framebuffer, shadowMapResolution, shadowMapResolution, frameIndex,
                                          cascadeIndex, lightViewProjection);
@@ -911,8 +910,8 @@ namespace lumin::render {
     }
 
     void LevelRenderer::Impl::recordGBufferPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
-                                          std::uint32_t frameIndex, const glm::mat4& viewProjection,
-                                          const glm::mat4& previousViewProjection) {
+                                                std::uint32_t frameIndex, const glm::mat4& viewProjection,
+                                                const glm::mat4& previousViewProjection) {
         const TextureFrameResources& frame = textures_.frame(frameIndex);
         if (modelRenderer_ != nullptr) {
             modelRenderer_->recordGBuffer(commandList, framebuffer, frame.position.width, frame.position.height,
@@ -921,8 +920,9 @@ namespace lumin::render {
     }
 
     void LevelRenderer::Impl::recordFullscreenPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
-                                             const nvrhi::GraphicsPipelineHandle& pipeline, std::uint32_t frameIndex,
-                                             const nvrhi::BindingSetHandle& additionalBindingSet) {
+                                                   const nvrhi::GraphicsPipelineHandle& pipeline,
+                                                   std::uint32_t frameIndex,
+                                                   const nvrhi::BindingSetHandle& additionalBindingSet) {
         const std::uint32_t width = renderExtent_.width;
         const std::uint32_t height = renderExtent_.height;
         nvrhi::GraphicsState state;
@@ -939,8 +939,7 @@ namespace lumin::render {
     }
 
     void LevelRenderer::Impl::recordDirectLightingPass(nvrhi::ICommandList& commandList,
-                                                       nvrhi::IFramebuffer& framebuffer,
-                                                       std::uint32_t frameIndex) {
+                                                       nvrhi::IFramebuffer& framebuffer, std::uint32_t frameIndex) {
         if (frameIndex >= directLightingBindingSets_.size() || !directLightingBindingSets_[frameIndex]) {
             throw std::logic_error("Direct-lighting material bindings are unavailable for the frame slot.");
         }
@@ -960,7 +959,5 @@ namespace lumin::render {
         commandList.copyTexture(frame.history.texture, nvrhi::TextureSlice{}, frame.taaResolved.texture,
                                 nvrhi::TextureSlice{});
     }
-
-
 
 } // namespace lumin::render

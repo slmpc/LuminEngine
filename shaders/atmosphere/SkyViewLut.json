@@ -6,9 +6,9 @@
       "name": "atmosphere.sky-view",
       "entry": "skyViewMain",
       "stage": "compute",
-      "output": "atmosphere.sky-view.comp.spv",
-      "reflection": "reflection/atmosphere.sky-view.comp.json",
-      "depfile": "deps/atmosphere.sky-view.comp.d",
+      "output": "SkyViewLut.comp.spv",
+      "reflection": "reflection/SkyViewLut.comp.json",
+      "depfile": "deps/SkyViewLut.comp.d",
       "bindings": [
         {
           "name": "atmosphere",

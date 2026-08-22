@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "source": "ao/AmbientOcclusion.slang",
+  "entries": [
+    {
+      "name": "ambientOcclusion.vertex",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "AmbientOcclusion.vert.spv",
+      "reflection": "reflection/AmbientOcclusion.vert.json",
+      "depfile": "deps/AmbientOcclusion.vert.d",
+      "bindings": [
+        {
+          "name": "positionTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "normalTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 1
+        },
+        {
+          "name": "renderSampler",
+          "kind": "sampler",
+          "set": 0,
+          "binding": 2
+        },
+        {
+          "name": "frame",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 3
+        }
+      ],
+      "abiStructs": [
+        "PostProcessUniforms"
+      ]
+    },
+    {
+      "name": "ambientOcclusion.fragment",
+      "entry": "fragmentMain",
+      "stage": "fragment",
+      "output": "AmbientOcclusion.frag.spv",
+      "reflection": "reflection/AmbientOcclusion.frag.json",
+      "depfile": "deps/AmbientOcclusion.frag.d",
+      "bindings": [
+        {
+          "name": "positionTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "normalTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 1
+        },
+        {
+          "name": "renderSampler",
+          "kind": "sampler",
+          "set": 0,
+          "binding": 2
+        },
+        {
+          "name": "frame",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 3
+        }
+      ],
+      "abiStructs": [
+        "PostProcessUniforms"
+      ]
+    }
+  ]
+}

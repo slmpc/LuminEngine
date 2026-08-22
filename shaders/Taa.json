@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "source": "Taa.slang",
+  "entries": [
+    {
+      "name": "taa.vertex",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "Taa.vert.spv",
+      "reflection": "reflection/Taa.vert.json",
+      "depfile": "deps/Taa.vert.d",
+      "bindings": [
+        {
+          "name": "motionTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 3
+        },
+        {
+          "name": "lightingTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 5
+        },
+        {
+          "name": "historyTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 6
+        },
+        {
+          "name": "renderSampler",
+          "kind": "sampler",
+          "set": 0,
+          "binding": 12
+        },
+        {
+          "name": "frame",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 13
+        }
+      ],
+      "abiStructs": [
+        "PostProcessUniforms"
+      ]
+    },
+    {
+      "name": "taa.fragment",
+      "entry": "fragmentMain",
+      "stage": "fragment",
+      "output": "Taa.frag.spv",
+      "reflection": "reflection/Taa.frag.json",
+      "depfile": "deps/Taa.frag.d",
+      "bindings": [
+        {
+          "name": "motionTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 3
+        },
+        {
+          "name": "lightingTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 5
+        },
+        {
+          "name": "historyTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 6
+        },
+        {
+          "name": "renderSampler",
+          "kind": "sampler",
+          "set": 0,
+          "binding": 12
+        },
+        {
+          "name": "frame",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 13
+        }
+      ],
+      "abiStructs": [
+        "PostProcessUniforms"
+      ]
+    }
+  ]
+}

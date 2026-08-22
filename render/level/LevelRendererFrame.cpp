@@ -1,5 +1,5 @@
-#include "render/level/LevelRendererImpl.hpp"
 #include "render/level/LevelRenderFrameData.hpp"
+#include "render/level/LevelRendererImpl.hpp"
 
 #include "render/platform/vulkan/VulkanContext.hpp"
 #include "scene/Camera.hpp"
@@ -137,8 +137,8 @@ namespace lumin::render {
 
     LevelRenderer::Impl::RecordedFrameState
     LevelRenderer::Impl::recordCommandList(nvrhi::ICommandList& commandList, const core::RenderFrameIdentity& identity,
-                                     const scene::Camera& camera, const RenderSettings& settings,
-                                     world::SceneChangeMask sceneChanges, const core::FrameChangeSet& changes) {
+                                           const scene::Camera& camera, const RenderSettings& settings,
+                                           world::SceneChangeMask sceneChanges, const core::FrameChangeSet& changes) {
         if (!identity.isValid()) {
             throw std::invalid_argument("LevelRenderer requires a valid render frame identity.");
         }
@@ -207,6 +207,11 @@ namespace lumin::render {
                                                 settings.temporalAa.enabled ? 1.0f : 0.0f};
         data.uniforms.tonemapOptions.x = settings.toneMapping.exposure;
         data.uniforms.tonemapOptions.y = context_.swapchainIsSrgb() ? 1.0f : 0.0f;
+        data.uniforms.ambientOcclusionOptions =
+            glm::vec4{static_cast<float>(settings.globalIllumination.ambientOcclusionMode),
+                      std::max(settings.globalIllumination.ambientOcclusionRadius, 0.05f),
+                      std::max(settings.globalIllumination.ambientOcclusionStrength, 0.0f),
+                      std::clamp(settings.globalIllumination.ambientOcclusionBias, 0.0f, 0.5f)};
 
         frameGraph_.reset();
         const nvrhi::ResourceStates frameInitialState = frameResourcesInitialized_[frameIndex]
@@ -349,7 +354,4 @@ namespace lumin::render {
                                   usedHybridGlobalIllumination};
     }
 
-
-
 } // namespace lumin::render
-

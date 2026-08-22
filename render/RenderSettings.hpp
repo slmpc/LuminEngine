@@ -21,10 +21,21 @@ namespace lumin::render {
         RayTracing,
     };
 
+    enum class AmbientOcclusionMode {
+        Ssao,
+        Hbao,
+        Gtao,
+    };
+
     /** Legacy 与 Ray Tracing 两条路径的 GI Feature 开关。 */
     struct GlobalIlluminationSettings {
         GlobalIlluminationMode mode = GlobalIlluminationMode::RayTracing;
+        /// Legacy screen-space ambient occlusion master switch. The name is retained for project/API compatibility.
         bool ssaoEnabled = true;
+        AmbientOcclusionMode ambientOcclusionMode = AmbientOcclusionMode::Ssao;
+        float ambientOcclusionRadius = 1.0f;
+        float ambientOcclusionStrength = 1.0f;
+        float ambientOcclusionBias = 0.08f;
         bool sharcEnabled = true;
         bool nrdEnabled = true;
     };

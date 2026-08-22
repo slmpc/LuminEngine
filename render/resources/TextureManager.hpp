@@ -32,6 +32,8 @@ namespace lumin::render {
         glm::vec4 renderSize{1.0f};
         glm::vec4 renderOptions{0.0f};
         glm::vec4 tonemapOptions{1.0f, 0.0f, 0.0f, 0.0f};
+        // x = AmbientOcclusionMode, y = world radius, z = strength, w = geometric bias
+        glm::vec4 ambientOcclusionOptions{0.0f, 1.0f, 1.0f, 0.08f};
     };
 
     static_assert(sizeof(PostProcessUniforms) % 16 == 0);

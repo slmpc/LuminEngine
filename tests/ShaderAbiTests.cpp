@@ -1,10 +1,10 @@
 #include "render/ModelRenderer.hpp"
-#include "render/resources/TextureManager.hpp"
-#include "render/gi/GiComposite.hpp"
-#include "render/gi/RayTracedGi.hpp"
-#include "render/gi/SharcRadianceCache.hpp"
+#include "render/gi/raytracing/GiComposite.hpp"
+#include "render/gi/raytracing/RayTracedGi.hpp"
+#include "render/gi/raytracing/SharcRadianceCache.hpp"
 #include "render/gpu/GpuMaterial.hpp"
 #include "render/gpu/GpuSceneResources.hpp"
+#include "render/resources/TextureManager.hpp"
 
 #include <cstddef>
 #include <cstdio>
@@ -17,7 +17,7 @@ namespace {
 
     // CPU 结构必须逐字段匹配 shaders/include/PostProcessUniforms.slang 的反射布局。
     static_assert(std::is_standard_layout_v<PostProcessUniforms>);
-    static_assert(sizeof(PostProcessUniforms) == 496);
+    static_assert(sizeof(PostProcessUniforms) == 512);
     static_assert(alignof(PostProcessUniforms) == 16);
     static_assert(offsetof(PostProcessUniforms, inverseViewProjection) == 0);
     static_assert(offsetof(PostProcessUniforms, viewProjection) == 64);
@@ -29,6 +29,7 @@ namespace {
     static_assert(offsetof(PostProcessUniforms, renderSize) == 448);
     static_assert(offsetof(PostProcessUniforms, renderOptions) == 464);
     static_assert(offsetof(PostProcessUniforms, tonemapOptions) == 480);
+    static_assert(offsetof(PostProcessUniforms, ambientOcclusionOptions) == 496);
 
     static_assert(sizeof(ObjectData) == 240 && alignof(ObjectData) == 16);
     static_assert(offsetof(ObjectData, model) == 0 && offsetof(ObjectData, previousModel) == 64 &&
@@ -65,8 +66,7 @@ namespace {
                   offsetof(SharcGpuConstants, sunRadiance) == 48 &&
                   offsetof(SharcGpuConstants, traceParameters) == 64 &&
                   offsetof(SharcGpuConstants, cacheParameters) == 80 &&
-                  offsetof(SharcGpuConstants, renderParameters) == 96 &&
-                  offsetof(SharcGpuConstants, reserved) == 112);
+                  offsetof(SharcGpuConstants, renderParameters) == 96 && offsetof(SharcGpuConstants, reserved) == 112);
     static_assert(lumin::render::gi::SharcBufferStrides::accumulation == 16 &&
                   lumin::render::gi::SharcBufferStrides::resolved == 16);
 

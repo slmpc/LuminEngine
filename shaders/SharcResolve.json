@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "source": "SharcResolve.slang",
+  "entries": [
+    {
+      "name": "sharc-resolve.compute",
+      "entry": "sharcResolveMain",
+      "stage": "compute",
+      "output": "SharcResolve.comp.spv",
+      "reflection": "reflection/SharcResolve.comp.json",
+      "depfile": "deps/SharcResolve.comp.d",
+      "requires": [
+        "rayTracing",
+        "sharc"
+      ],
+      "includeDirectories": [
+        "../thirdparty/sharc/include"
+      ],
+      "bindings": [
+        {
+          "name": "sharcHashEntries",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "sharcAccumulation",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 1
+        },
+        {
+          "name": "sharcResolved",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 2
+        },
+        {
+          "name": "sharcLocks",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 3
+        },
+        {
+          "name": "sharcStatistics",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 4
+        },
+        {
+          "name": "sharcFrame",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 5
+        }
+      ],
+      "abiStructs": [
+        "SharcGpuConstants",
+        "SharcAccumulationData",
+        "SharcPackedData"
+      ]
+    }
+  ]
+}

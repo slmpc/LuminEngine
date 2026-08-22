@@ -49,13 +49,13 @@ namespace lumin::render::atmosphere {
         [[nodiscard]] AtmosphereLutShaderInfo shaderInfo(AtmosphereLut lut) {
             switch (lut) {
             case AtmosphereLut::Transmittance:
-                return {"atmosphere.transmittance.comp.spv", "transmittanceMain"};
+                return {"TransmittanceLut.comp.spv", "transmittanceMain"};
             case AtmosphereLut::MultiScattering:
-                return {"atmosphere.multi-scattering.comp.spv", "multiScatteringMain"};
+                return {"MultiScatteringLut.comp.spv", "multiScatteringMain"};
             case AtmosphereLut::SkyView:
-                return {"atmosphere.sky-view.comp.spv", "skyViewMain"};
+                return {"SkyViewLut.comp.spv", "skyViewMain"};
             case AtmosphereLut::AerialPerspective:
-                return {"atmosphere.aerial-perspective.comp.spv", "aerialPerspectiveMain"};
+                return {"AerialPerspectiveLut.comp.spv", "aerialPerspectiveMain"};
             case AtmosphereLut::Count:
                 break;
             }

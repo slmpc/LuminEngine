@@ -1,4 +1,4 @@
-#include "render/gi/NrdDenoiser.hpp"
+#include "render/gi/raytracing/NrdDenoiser.hpp"
 
 #include <NRD.h>
 

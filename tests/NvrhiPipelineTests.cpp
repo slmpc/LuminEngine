@@ -43,8 +43,8 @@ namespace {
     });
 
     static_assert(requires(lumin::render::PipelineManager& manager, nvrhi::BindingLayoutHandle fullscreenLayout,
-                           nvrhi::BindingLayoutHandle materialLayout,
-                           nvrhi::BindingLayoutHandle atmosphereLayout, nvrhi::Format format) {
+                           nvrhi::BindingLayoutHandle materialLayout, nvrhi::BindingLayoutHandle atmosphereLayout,
+                           nvrhi::Format format) {
         manager.create(fullscreenLayout, materialLayout, atmosphereLayout, format, format);
         { manager.sky() } -> std::same_as<const nvrhi::GraphicsPipelineHandle&>;
         { manager.deferredLighting() } -> std::same_as<const nvrhi::GraphicsPipelineHandle&>;
@@ -119,10 +119,10 @@ namespace {
 
 int main() {
     try {
-        requireEntryPoint("gbuffer.vert.spv", "vertexMain");
-        requireEntryPoint("gbuffer.frag.spv", "fragmentMain");
-        requireEntryPoint("imgui.vert.spv", "vertexMain");
-        requireEntryPoint("imgui.frag.spv", "fragmentMain");
+        requireEntryPoint("GBuffer.vert.spv", "vertexMain");
+        requireEntryPoint("GBuffer.frag.spv", "fragmentMain");
+        requireEntryPoint("ImGui.vert.spv", "vertexMain");
+        requireEntryPoint("ImGui.frag.spv", "fragmentMain");
         testFullscreenPipelineDescriptorIsWindingIndependent();
         return 0;
     } catch (const std::exception& error) {

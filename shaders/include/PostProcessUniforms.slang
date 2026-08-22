@@ -13,6 +13,7 @@ struct PostProcessUniforms {
     float4 renderSize;
     float4 renderOptions;
     float4 tonemapOptions;
+    float4 ambientOcclusionOptions; // x = algorithm, y = world radius, z = strength, w = geometric bias
 };
 
 #endif

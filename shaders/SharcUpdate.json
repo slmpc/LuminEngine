@@ -1,0 +1,706 @@
+{
+  "schemaVersion": 1,
+  "source": "SharcUpdate.slang",
+  "entries": [
+    {
+      "name": "sharc-update.ray-generation",
+      "entry": "sharcUpdateRayGenerationMain",
+      "stage": "raygeneration",
+      "output": "SharcUpdate.rgen.spv",
+      "reflection": "reflection/SharcUpdate.rgen.json",
+      "depfile": "deps/SharcUpdate.rgen.d",
+      "requires": [
+        "rayTracing",
+        "sharc"
+      ],
+      "includeDirectories": [
+        "../thirdparty/sharc/include"
+      ],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        {
+          "name": "sceneTlas",
+          "kind": "accelerationStructure",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "positionTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 1
+        },
+        {
+          "name": "normalRoughnessTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 2
+        },
+        {
+          "name": "albedoMetallicTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 3
+        },
+        {
+          "name": "vertexBuffers",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 4
+        },
+        {
+          "name": "indexBuffers",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 5
+        },
+        {
+          "name": "instances",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 6
+        },
+        {
+          "name": "materials",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 7
+        },
+        {
+          "name": "sharcHashEntries",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 8
+        },
+        {
+          "name": "sharcAccumulation",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 9
+        },
+        {
+          "name": "sharcResolved",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 10
+        },
+        {
+          "name": "sharcLocks",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 11
+        },
+        {
+          "name": "sharcStatistics",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 12
+        },
+        {
+          "name": "sharcFrame",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 13
+        },
+        {
+          "name": "atmosphere",
+          "kind": "constantBuffer",
+          "set": 2,
+          "binding": 0
+        },
+        {
+          "name": "atmosphereTransmittanceLut",
+          "kind": "sampledImage",
+          "set": 2,
+          "binding": 1
+        },
+        {
+          "name": "atmosphereMultiScatteringLut",
+          "kind": "sampledImage",
+          "set": 2,
+          "binding": 2
+        },
+        {
+          "name": "atmosphereSkyViewLut",
+          "kind": "sampledImage",
+          "set": 2,
+          "binding": 3
+        },
+        {
+          "name": "atmosphereAerialPerspectiveLut",
+          "kind": "sampledImage3D",
+          "set": 2,
+          "binding": 4
+        },
+        {
+          "name": "atmosphereSampler",
+          "kind": "sampler",
+          "set": 2,
+          "binding": 5
+        },
+        {
+          "binding": 14,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "baseColorTextures"
+        },
+        {
+          "binding": 15,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "normalRoughnessTextures"
+        },
+        {
+          "binding": 16,
+          "set": 0,
+          "kind": "sampler",
+          "name": "materialSampler"
+        }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "AtmosphereGpuConstants",
+        "SharcGpuConstants",
+        "SharcAccumulationData",
+        "SharcPackedData"
+      ]
+    },
+    {
+      "name": "sharc-update.radiance-miss",
+      "entry": "sharcUpdateRadianceMissMain",
+      "stage": "miss",
+      "output": "SharcUpdate.radiance.rmiss.spv",
+      "reflection": "reflection/SharcUpdate.radiance.rmiss.json",
+      "depfile": "deps/SharcUpdate.radiance.rmiss.d",
+      "requires": [
+        "rayTracing",
+        "sharc"
+      ],
+      "includeDirectories": [
+        "../thirdparty/sharc/include"
+      ],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        {
+          "name": "sceneTlas",
+          "kind": "accelerationStructure",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "positionTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 1
+        },
+        {
+          "name": "normalRoughnessTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 2
+        },
+        {
+          "name": "albedoMetallicTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 3
+        },
+        {
+          "name": "vertexBuffers",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 4
+        },
+        {
+          "name": "indexBuffers",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 5
+        },
+        {
+          "name": "instances",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 6
+        },
+        {
+          "name": "materials",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 7
+        },
+        {
+          "name": "sharcHashEntries",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 8
+        },
+        {
+          "name": "sharcAccumulation",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 9
+        },
+        {
+          "name": "sharcResolved",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 10
+        },
+        {
+          "name": "sharcLocks",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 11
+        },
+        {
+          "name": "sharcStatistics",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 12
+        },
+        {
+          "name": "sharcFrame",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 13
+        },
+        {
+          "name": "atmosphere",
+          "kind": "constantBuffer",
+          "set": 2,
+          "binding": 0
+        },
+        {
+          "name": "atmosphereTransmittanceLut",
+          "kind": "sampledImage",
+          "set": 2,
+          "binding": 1
+        },
+        {
+          "name": "atmosphereMultiScatteringLut",
+          "kind": "sampledImage",
+          "set": 2,
+          "binding": 2
+        },
+        {
+          "name": "atmosphereSkyViewLut",
+          "kind": "sampledImage",
+          "set": 2,
+          "binding": 3
+        },
+        {
+          "name": "atmosphereAerialPerspectiveLut",
+          "kind": "sampledImage3D",
+          "set": 2,
+          "binding": 4
+        },
+        {
+          "name": "atmosphereSampler",
+          "kind": "sampler",
+          "set": 2,
+          "binding": 5
+        },
+        {
+          "binding": 14,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "baseColorTextures"
+        },
+        {
+          "binding": 15,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "normalRoughnessTextures"
+        },
+        {
+          "binding": 16,
+          "set": 0,
+          "kind": "sampler",
+          "name": "materialSampler"
+        }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "AtmosphereGpuConstants",
+        "SharcGpuConstants",
+        "SharcAccumulationData",
+        "SharcPackedData"
+      ]
+    },
+    {
+      "name": "sharc-update.shadow-miss",
+      "entry": "sharcUpdateShadowMissMain",
+      "stage": "miss",
+      "output": "SharcUpdate.shadow.rmiss.spv",
+      "reflection": "reflection/SharcUpdate.shadow.rmiss.json",
+      "depfile": "deps/SharcUpdate.shadow.rmiss.d",
+      "requires": [
+        "rayTracing",
+        "sharc"
+      ],
+      "includeDirectories": [
+        "../thirdparty/sharc/include"
+      ],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        {
+          "name": "sceneTlas",
+          "kind": "accelerationStructure",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "positionTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 1
+        },
+        {
+          "name": "normalRoughnessTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 2
+        },
+        {
+          "name": "albedoMetallicTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 3
+        },
+        {
+          "name": "vertexBuffers",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 4
+        },
+        {
+          "name": "indexBuffers",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 5
+        },
+        {
+          "name": "instances",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 6
+        },
+        {
+          "name": "materials",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 7
+        },
+        {
+          "name": "sharcHashEntries",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 8
+        },
+        {
+          "name": "sharcAccumulation",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 9
+        },
+        {
+          "name": "sharcResolved",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 10
+        },
+        {
+          "name": "sharcLocks",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 11
+        },
+        {
+          "name": "sharcStatistics",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 12
+        },
+        {
+          "name": "sharcFrame",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 13
+        },
+        {
+          "name": "atmosphere",
+          "kind": "constantBuffer",
+          "set": 2,
+          "binding": 0
+        },
+        {
+          "name": "atmosphereTransmittanceLut",
+          "kind": "sampledImage",
+          "set": 2,
+          "binding": 1
+        },
+        {
+          "name": "atmosphereMultiScatteringLut",
+          "kind": "sampledImage",
+          "set": 2,
+          "binding": 2
+        },
+        {
+          "name": "atmosphereSkyViewLut",
+          "kind": "sampledImage",
+          "set": 2,
+          "binding": 3
+        },
+        {
+          "name": "atmosphereAerialPerspectiveLut",
+          "kind": "sampledImage3D",
+          "set": 2,
+          "binding": 4
+        },
+        {
+          "name": "atmosphereSampler",
+          "kind": "sampler",
+          "set": 2,
+          "binding": 5
+        },
+        {
+          "binding": 14,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "baseColorTextures"
+        },
+        {
+          "binding": 15,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "normalRoughnessTextures"
+        },
+        {
+          "binding": 16,
+          "set": 0,
+          "kind": "sampler",
+          "name": "materialSampler"
+        }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "AtmosphereGpuConstants",
+        "SharcGpuConstants",
+        "SharcAccumulationData",
+        "SharcPackedData"
+      ]
+    },
+    {
+      "name": "sharc-update.closest-hit",
+      "entry": "sharcUpdateClosestHitMain",
+      "stage": "closesthit",
+      "output": "SharcUpdate.rchit.spv",
+      "reflection": "reflection/SharcUpdate.rchit.json",
+      "depfile": "deps/SharcUpdate.rchit.d",
+      "requires": [
+        "rayTracing",
+        "sharc"
+      ],
+      "includeDirectories": [
+        "../thirdparty/sharc/include"
+      ],
+      "capabilities": [
+        "spvRayTracingKHR",
+        "SPV_KHR_non_semantic_info",
+        "SPV_GOOGLE_user_type",
+        "spvDerivativeControl",
+        "spvImageQuery",
+        "spvImageGatherExtended",
+        "spvSparseResidency",
+        "spvMinLod",
+        "spvFragmentFullyCoveredEXT"
+      ],
+      "bindings": [
+        {
+          "name": "sceneTlas",
+          "kind": "accelerationStructure",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "positionTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 1
+        },
+        {
+          "name": "normalRoughnessTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 2
+        },
+        {
+          "name": "albedoMetallicTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 3
+        },
+        {
+          "name": "vertexBuffers",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 4
+        },
+        {
+          "name": "indexBuffers",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 5
+        },
+        {
+          "name": "instances",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 6
+        },
+        {
+          "name": "materials",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 7
+        },
+        {
+          "name": "sharcHashEntries",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 8
+        },
+        {
+          "name": "sharcAccumulation",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 9
+        },
+        {
+          "name": "sharcResolved",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 10
+        },
+        {
+          "name": "sharcLocks",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 11
+        },
+        {
+          "name": "sharcStatistics",
+          "kind": "structuredBuffer",
+          "set": 0,
+          "binding": 12
+        },
+        {
+          "name": "sharcFrame",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 13
+        },
+        {
+          "name": "atmosphere",
+          "kind": "constantBuffer",
+          "set": 2,
+          "binding": 0
+        },
+        {
+          "name": "atmosphereTransmittanceLut",
+          "kind": "sampledImage",
+          "set": 2,
+          "binding": 1
+        },
+        {
+          "name": "atmosphereMultiScatteringLut",
+          "kind": "sampledImage",
+          "set": 2,
+          "binding": 2
+        },
+        {
+          "name": "atmosphereSkyViewLut",
+          "kind": "sampledImage",
+          "set": 2,
+          "binding": 3
+        },
+        {
+          "name": "atmosphereAerialPerspectiveLut",
+          "kind": "sampledImage3D",
+          "set": 2,
+          "binding": 4
+        },
+        {
+          "name": "atmosphereSampler",
+          "kind": "sampler",
+          "set": 2,
+          "binding": 5
+        },
+        {
+          "binding": 14,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "baseColorTextures"
+        },
+        {
+          "binding": 15,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "normalRoughnessTextures"
+        },
+        {
+          "binding": 16,
+          "set": 0,
+          "kind": "sampler",
+          "name": "materialSampler"
+        }
+      ],
+      "abiStructs": [
+        "GpuPackedVertex",
+        "GpuInstanceData",
+        "GpuMaterialData",
+        "AtmosphereGpuConstants",
+        "SharcGpuConstants",
+        "SharcAccumulationData",
+        "SharcPackedData"
+      ]
+    }
+  ]
+}

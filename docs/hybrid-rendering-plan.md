@@ -110,18 +110,18 @@ render/
 shaders/
   include/                    # GPU Scene、材质、相机、NRD 和大气公共 ABI
   raytracing/
-    rt_direct.slang
-    rt_indirect.slang
+    RtDirect.slang
+    RtIndirect.slang
   gi/
-    sharc_update.slang
-    sharc_resolve.slang
+    SharcUpdate.slang
+    SharcResolve.slang
   atmosphere/
     *.slang                   # 四张 LUT
     CloudNoise.slang
     CloudShadow.slang
     VolumetricClouds.slang
   composite/
-    hybrid_composite.slang
+    HybridComposite.slang
 ```
 
 迁移完成后删除或改名当前仍表达 G-buffer 输入的 `RayTracedGiFrameInputs`、`RayTracedGiFrameGraphInputs` 和
@@ -220,7 +220,7 @@ G-buffer，也不得由 raster pass 生成。
 
 ### 8.1 Ray pipeline
 
-`rt_direct.slang` 包含：
+`RtDirect.slang` 包含：
 
 - `rayGenerationMain`：生成带当前 TAA jitter 的 camera primary ray。
 - `primaryMissMain`：写 miss mask，并从共享 Sky-view LUT 计算背景方向所需的 sky radiance 元数据。
@@ -293,7 +293,7 @@ RT shader write accumulation/lock/statistics
 
 ## 10. RT Indirect Lighting
 
-`rt_indirect.slang` 读取 `RtSurfaceSignals`，不再读取 position/normal/albedo/motion G-buffer。第一版每个有效 primary
+`RtIndirect.slang` 读取 `RtSurfaceSignals`，不再读取 position/normal/albedo/motion G-buffer。第一版每个有效 primary
 surface 发射一个 cosine-weighted diffuse ray 和一个按 roughness 采样的 GGX specular ray：
 
 - diffuse 输出 `diffuseRadianceHitDistance`，格式 `RGBA16_FLOAT`。

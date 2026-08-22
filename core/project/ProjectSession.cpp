@@ -25,6 +25,29 @@ namespace lumin::project {
         constexpr std::uint64_t fnvOffset = 14695981039346656037ULL;
         constexpr std::uint64_t fnvPrime = 1099511628211ULL;
 
+        [[nodiscard]] ProjectAmbientOcclusionMode parseAmbientOcclusionMode(const Json& settings) {
+            const std::string mode = settings.value("ambientOcclusionMode", std::string{"ssao"});
+            if (mode == "hbao") {
+                return ProjectAmbientOcclusionMode::Hbao;
+            }
+            if (mode == "gtao") {
+                return ProjectAmbientOcclusionMode::Gtao;
+            }
+            return ProjectAmbientOcclusionMode::Ssao;
+        }
+
+        [[nodiscard]] const char* ambientOcclusionModeName(ProjectAmbientOcclusionMode mode) noexcept {
+            switch (mode) {
+            case ProjectAmbientOcclusionMode::Hbao:
+                return "hbao";
+            case ProjectAmbientOcclusionMode::Gtao:
+                return "gtao";
+            case ProjectAmbientOcclusionMode::Ssao:
+            default:
+                return "ssao";
+            }
+        }
+
         struct DiscoveredAsset {
             std::filesystem::path relativePath;
             AssetType type = AssetType::Mesh;
@@ -518,6 +541,10 @@ namespace lumin::project {
                 renderSettings_.shadows = settings->value("shadows", true);
                 renderSettings_.rayTracing = settings->value("rayTracing", true);
                 renderSettings_.ssao = settings->value("ssao", true);
+                renderSettings_.ambientOcclusionMode = parseAmbientOcclusionMode(*settings);
+                renderSettings_.ambientOcclusionRadius = settings->value("ambientOcclusionRadius", 1.0f);
+                renderSettings_.ambientOcclusionStrength = settings->value("ambientOcclusionStrength", 1.0f);
+                renderSettings_.ambientOcclusionBias = settings->value("ambientOcclusionBias", 0.08f);
                 renderSettings_.sharc = settings->value("sharc", true);
                 renderSettings_.nrd = settings->value("nrd", true);
                 renderSettings_.taa = settings->value("taa", true);
@@ -633,6 +660,10 @@ namespace lumin::project {
                          {"shadows", renderSettings_.shadows},
                          {"rayTracing", renderSettings_.rayTracing},
                          {"ssao", renderSettings_.ssao},
+                         {"ambientOcclusionMode", ambientOcclusionModeName(renderSettings_.ambientOcclusionMode)},
+                         {"ambientOcclusionRadius", renderSettings_.ambientOcclusionRadius},
+                         {"ambientOcclusionStrength", renderSettings_.ambientOcclusionStrength},
+                         {"ambientOcclusionBias", renderSettings_.ambientOcclusionBias},
                          {"sharc", renderSettings_.sharc},
                          {"nrd", renderSettings_.nrd},
                          {"taa", renderSettings_.taa},

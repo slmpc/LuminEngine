@@ -40,7 +40,7 @@ set(_lumin_render_sources
     ${PROJECT_SOURCE_DIR}/render/gpu/GpuScene.cpp
     ${PROJECT_SOURCE_DIR}/render/gpu/GpuSceneResources.cpp
     ${PROJECT_SOURCE_DIR}/render/world/RenderWorld.cpp
-    ${PROJECT_SOURCE_DIR}/render/gi/SsaoBackend.cpp
+    ${PROJECT_SOURCE_DIR}/render/gi/legacy/LegacyBackend.cpp
     ${PROJECT_SOURCE_DIR}/render/editor/Editor.cpp
     ${PROJECT_SOURCE_DIR}/render/editor/EditorStyle.cpp
     ${PROJECT_SOURCE_DIR}/render/editor/ViewportPicking.cpp
@@ -48,15 +48,15 @@ set(_lumin_render_sources
 
 if(LUMIN_NRD_AVAILABLE)
     list(APPEND _lumin_render_sources
-        ${PROJECT_SOURCE_DIR}/render/gi/GiComposite.cpp
-        ${PROJECT_SOURCE_DIR}/render/gi/HybridLightingComposite.cpp
-        ${PROJECT_SOURCE_DIR}/render/gi/NrdDenoiser.cpp
-        ${PROJECT_SOURCE_DIR}/render/gi/RayTracedDirectLighting.cpp
-        ${PROJECT_SOURCE_DIR}/render/gi/RayTracedGi.cpp
+        ${PROJECT_SOURCE_DIR}/render/gi/raytracing/GiComposite.cpp
+        ${PROJECT_SOURCE_DIR}/render/gi/raytracing/HybridLightingComposite.cpp
+        ${PROJECT_SOURCE_DIR}/render/gi/raytracing/NrdDenoiser.cpp
+        ${PROJECT_SOURCE_DIR}/render/gi/raytracing/RayTracedDirectLighting.cpp
+        ${PROJECT_SOURCE_DIR}/render/gi/raytracing/RayTracedGi.cpp
     )
 endif()
 if(LUMIN_SHARC_AVAILABLE)
-    list(APPEND _lumin_render_sources ${PROJECT_SOURCE_DIR}/render/gi/SharcRadianceCache.cpp)
+    list(APPEND _lumin_render_sources ${PROJECT_SOURCE_DIR}/render/gi/raytracing/SharcRadianceCache.cpp)
 endif()
 
 add_library(lumin_render STATIC ${_lumin_render_sources})

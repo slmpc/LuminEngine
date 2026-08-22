@@ -1,4 +1,4 @@
-#include "render/gi/GiComposite.hpp"
+#include "render/gi/raytracing/GiComposite.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -322,7 +322,7 @@ namespace {
 
     void testShaderWritesNeutralBackgroundAndReplacementAlpha() {
         const std::filesystem::path shaderPath =
-            std::filesystem::path(__FILE__).parent_path().parent_path() / "shaders/gi_composite.slang";
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "shaders/GiComposite.slang";
         std::ifstream shader(shaderPath, std::ios::binary);
         const std::string source{std::istreambuf_iterator<char>(shader), std::istreambuf_iterator<char>()};
         require(source.find("#include \"NRD.hlsli\"") != std::string::npos &&

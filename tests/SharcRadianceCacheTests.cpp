@@ -1,4 +1,4 @@
-#include "render/gi/SharcRadianceCache.hpp"
+#include "render/gi/raytracing/SharcRadianceCache.hpp"
 
 #include <cmath>
 #include <cstdio>

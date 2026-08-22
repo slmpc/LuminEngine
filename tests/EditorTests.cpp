@@ -333,6 +333,10 @@ namespace {
         editor.setShadowsEnabled(false);
         editor.setGlobalIlluminationMode(lumin::render::GlobalIlluminationMode::Legacy);
         editor.setSsaoEnabled(false);
+        editor.setAmbientOcclusionMode(lumin::render::AmbientOcclusionMode::Hbao);
+        editor.setAmbientOcclusionRadius(-1.0f);
+        editor.setAmbientOcclusionStrength(-1.0f);
+        editor.setAmbientOcclusionBias(2.0f);
         editor.setSharcEnabled(false);
         editor.setNrdEnabled(false);
         editor.setCsmSplitLambda(1.5f);
@@ -344,8 +348,13 @@ namespace {
                 "Camera controls must mutate the borrowed camera.");
         require(!settings.directLighting.enabled && !settings.shadows.enabled &&
                     settings.globalIllumination.mode == lumin::render::GlobalIlluminationMode::Legacy &&
-                    !settings.globalIllumination.ssaoEnabled && !settings.globalIllumination.sharcEnabled &&
-                    !settings.globalIllumination.nrdEnabled && nearlyEqual(settings.shadows.splitLambda, 1.0f) &&
+                    !settings.globalIllumination.ssaoEnabled &&
+                    settings.globalIllumination.ambientOcclusionMode == lumin::render::AmbientOcclusionMode::Hbao &&
+                    nearlyEqual(settings.globalIllumination.ambientOcclusionRadius, 0.05f) &&
+                    nearlyEqual(settings.globalIllumination.ambientOcclusionStrength, 0.0f) &&
+                    nearlyEqual(settings.globalIllumination.ambientOcclusionBias, 0.5f) &&
+                    !settings.globalIllumination.sharcEnabled && !settings.globalIllumination.nrdEnabled &&
+                    nearlyEqual(settings.shadows.splitLambda, 1.0f) &&
                     nearlyEqual(settings.shadows.maxDistance, 1.0f) && !settings.temporalAa.enabled &&
                     nearlyEqual(settings.toneMapping.exposure, 2.25f) &&
                     level.environment().sun.direction == glm::vec3(0.0f, -1.0f, 0.0f) && camera.cutEpoch() == 1,

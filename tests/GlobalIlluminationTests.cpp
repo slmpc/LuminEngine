@@ -1,6 +1,6 @@
-#include "render/resources/PipelineFactory.hpp"
 #include "render/gi/GlobalIllumination.hpp"
-#include "render/gi/SsaoBackend.hpp"
+#include "render/gi/legacy/LegacyBackend.hpp"
+#include "render/resources/PipelineFactory.hpp"
 #include "render/world/RenderWorld.hpp"
 #include "scene/Level.hpp"
 
@@ -123,15 +123,16 @@ namespace {
                 "GI disabled must preserve full ambient visibility in the neutral output.");
     }
 
-    void testSsaoBackendInfo() {
-        const std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeSsaoBackend("unused");
+    void testLegacyBackendInfo() {
+        const std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend("unused");
         const BackendInfo info = backend->info();
-        require(info.name == "SSAO", "The default GI backend must identify itself as SSAO.");
-        require(!info.temporal, "The current SSAO backend must not claim temporal history.");
-        require(!info.hardwareRayTracing, "The current SSAO backend must not claim hardware ray tracing.");
+        require(info.name == "SSAO / HBAO / GTAO",
+                "The default GI backend must advertise every supported screen-space AO algorithm.");
+        require(!info.temporal, "The current screen-space AO backend must not claim temporal history.");
+        require(!info.hardwareRayTracing, "The current screen-space AO backend must not claim hardware ray tracing.");
     }
 
-    class FakeSsaoCommandList final : public lumin::render::gi::SsaoRecordProbe {
+    class FakeLegacyCommandList final : public lumin::render::gi::LegacyRecordProbe {
     public:
         void clearTextureFloat(nvrhi::ITexture* texture, nvrhi::TextureSubresourceSet,
                                const nvrhi::Color& color) override {
@@ -169,9 +170,9 @@ namespace {
             .setViewport(nvrhi::ViewportState().addViewportAndScissorRect(nvrhi::Viewport(64.0f, 32.0f)))
             .addBindingSet(bindingSet);
 
-        FakeSsaoCommandList commandList;
-        lumin::render::gi::detail::recordSsaoClear(commandList, output);
-        lumin::render::gi::detail::recordSsaoFullscreen(commandList, state);
+        FakeLegacyCommandList commandList;
+        lumin::render::gi::detail::recordLegacyClear(commandList, output);
+        lumin::render::gi::detail::recordLegacyFullscreen(commandList, state);
 
         require(commandList.events == std::vector<std::string>{"clear", "state", "draw"},
                 "SSAO must clear before binding graphics state and drawing.");
@@ -361,7 +362,7 @@ namespace {
         LiveHandles& live_;
     };
 
-    class FakeCreationDriver final : public lumin::render::gi::SsaoCreationDriver {
+    class FakeCreationDriver final : public lumin::render::gi::LegacyCreationDriver {
     public:
         [[nodiscard]] nvrhi::BufferHandle createUniform() override {
             if (failure == CreationFailure::Uniform) {
@@ -409,7 +410,7 @@ namespace {
         nvrhi::RasterCullMode pipelineCullMode = nvrhi::RasterCullMode::Back;
     };
 
-    void testSsaoCreationRollbackAndRetry() {
+    void testLegacyCreationRollbackAndRetry() {
         for (CreationFailure failure :
              std::array{CreationFailure::Uniform, CreationFailure::Binding, CreationFailure::Pipeline}) {
             FakeCreationDriver driver;
@@ -425,7 +426,7 @@ namespace {
             const nvrhi::SamplerHandle sampler = nvrhi::SamplerHandle::Create(new FakeSampler);
             const std::array<lumin::render::gi::FrameResources, 1> frames = {lumin::render::gi::FrameResources{
                 .position = position, .normalRoughness = normal, .uniformBuffer = nullptr, .output = output}};
-            std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeSsaoBackend("unused");
+            std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend("unused");
             const CreateInfo createInfo{.extent = {16, 16},
                                         .outputFormat = nvrhi::Format::RGBA16_FLOAT,
                                         .sampler = sampler,
@@ -458,7 +459,7 @@ namespace {
 
     void testSsaoProductionPass() {
         FakeCreationDriver driver;
-        FakeSsaoCommandList recorder;
+        FakeLegacyCommandList recorder;
         const nvrhi::TextureDesc textureDesc = nvrhi::TextureDesc()
                                                    .setWidth(16)
                                                    .setHeight(16)
@@ -470,7 +471,7 @@ namespace {
         const nvrhi::SamplerHandle sampler = nvrhi::SamplerHandle::Create(new FakeSampler);
         const std::array<lumin::render::gi::FrameResources, 1> frames = {lumin::render::gi::FrameResources{
             .position = position, .normalRoughness = normal, .uniformBuffer = nullptr, .output = output}};
-        std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeSsaoBackend("unused");
+        std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend("unused");
         backend->create(CreateInfo{.extent = {16, 16},
                                    .outputFormat = nvrhi::Format::RGBA16_FLOAT,
                                    .sampler = sampler,
@@ -576,7 +577,7 @@ namespace {
         FakeCreationDriver driver;
 
         const auto expectCreateInvalid = [](const CreateInfo& info) {
-            std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeSsaoBackend("unused");
+            std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend("unused");
             bool rejected = false;
             try {
                 backend->create(info);
@@ -615,7 +616,7 @@ namespace {
                                        .frames = incomplete,
                                        .creationDriver = &driver});
 
-        std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeSsaoBackend("unused");
+        std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend("unused");
         backend->create(CreateInfo{.extent = {16, 16},
                                    .outputFormat = nvrhi::Format::RGBA16_FLOAT,
                                    .sampler = sampler,
@@ -752,15 +753,26 @@ namespace {
 #else
         const std::filesystem::path sourceDirectory = ".";
 #endif
-        const std::string ssao = readSource(sourceDirectory / "shaders" / "ssao.slang");
-        require(ssao.find("frame.renderOptions.y < 0.5") != std::string::npos,
+        const std::filesystem::path aoDirectory = sourceDirectory / "shaders" / "ao";
+        const std::string entry = readSource(aoDirectory / "AmbientOcclusion.slang");
+        const std::string ssao = readSource(aoDirectory / "Ssao.slang");
+        const std::string hbao = readSource(aoDirectory / "Hbao.slang");
+        const std::string gtao = readSource(aoDirectory / "Gtao.slang");
+        require(entry.find("frame.renderOptions.y < 0.5") != std::string::npos,
                 "SSAO must retain the enabled-path guard.");
-        require(ssao.find("return float4(0.0, 0.0, 0.0, 1.0);") != std::string::npos,
+        require(entry.find("return float4(0.0, 0.0, 0.0, 1.0);") != std::string::npos,
                 "Disabled SSAO must emit the neutral packed GI output.");
-        require(ssao.find("return float4(0.0, 0.0, 0.0, ao);") != std::string::npos,
+        require(entry.find("return float4(0.0, 0.0, 0.0, ao);") != std::string::npos,
                 "Enabled SSAO must pack ambient visibility in GI alpha.");
+        require(entry.find("computeHbao") != std::string::npos && entry.find("computeGtao") != std::string::npos &&
+                    entry.find("frame.ambientOcclusionOptions.x") != std::string::npos &&
+                    ssao.find("computeSsao") != std::string::npos,
+                "The screen-space AO shader must expose selectable HBAO and GTAO implementations.");
+        require(hbao.find("const uint directionCount = 8") != std::string::npos &&
+                    gtao.find("const uint sliceCount = 6") != std::string::npos,
+                "HBAO must search directional horizons and GTAO must integrate horizon slices.");
 
-        const std::string deferred = readSource(sourceDirectory / "shaders" / "deferred.slang");
+        const std::string deferred = readSource(sourceDirectory / "shaders" / "Deferred.slang");
         require(deferred.find("Texture2D<float4> globalIlluminationTexture") != std::string::npos,
                 "Deferred lighting must consume the packed RGBA GI output.");
         require(deferred.find("legacyAmbient * globalIllumination.a + globalIllumination.rgb") != std::string::npos,
@@ -772,9 +784,9 @@ namespace {
 int main() {
     try {
         testDisabledNeutralOutputPolicy();
-        testSsaoBackendInfo();
+        testLegacyBackendInfo();
         testSsaoFullscreenRecorder();
-        testSsaoCreationRollbackAndRetry();
+        testLegacyCreationRollbackAndRetry();
         testSsaoProductionPass();
         testSsaoInvalidBoundaries();
         testFrameGraphOrdering();

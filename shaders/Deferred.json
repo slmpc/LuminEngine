@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "source": "Deferred.slang",
+  "entries": [
+    {
+      "name": "deferred.vertex",
+      "entry": "vertexMain",
+      "stage": "vertex",
+      "output": "Deferred.vert.spv",
+      "reflection": "reflection/Deferred.vert.json",
+      "depfile": "deps/Deferred.vert.d",
+      "bindings": [
+        {
+          "name": "positionTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "normalTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 1
+        },
+        {
+          "name": "albedoTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 2
+        },
+        {
+          "name": "globalIlluminationTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 4
+        },
+        {
+          "name": "shadowTexture0",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 8
+        },
+        {
+          "name": "shadowTexture1",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 9
+        },
+        {
+          "name": "shadowTexture2",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 10
+        },
+        {
+          "name": "shadowTexture3",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 11
+        },
+        {
+          "name": "renderSampler",
+          "kind": "sampler",
+          "set": 0,
+          "binding": 12
+        },
+        {
+          "name": "frame",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 13
+        },
+        {
+          "name": "materialIdTexture",
+          "kind": "sampledImage",
+          "set": 1,
+          "binding": 0
+        },
+        {
+          "name": "materials",
+          "kind": "structuredBuffer",
+          "set": 1,
+          "binding": 1
+        }
+      ],
+      "abiStructs": [
+        "PostProcessUniforms",
+        "GpuMaterialData"
+      ]
+    },
+    {
+      "name": "deferred.fragment",
+      "entry": "fragmentMain",
+      "stage": "fragment",
+      "output": "Deferred.frag.spv",
+      "reflection": "reflection/Deferred.frag.json",
+      "depfile": "deps/Deferred.frag.d",
+      "bindings": [
+        {
+          "name": "positionTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 0
+        },
+        {
+          "name": "normalTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 1
+        },
+        {
+          "name": "albedoTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 2
+        },
+        {
+          "name": "globalIlluminationTexture",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 4
+        },
+        {
+          "name": "shadowTexture0",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 8
+        },
+        {
+          "name": "shadowTexture1",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 9
+        },
+        {
+          "name": "shadowTexture2",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 10
+        },
+        {
+          "name": "shadowTexture3",
+          "kind": "sampledImage",
+          "set": 0,
+          "binding": 11
+        },
+        {
+          "name": "renderSampler",
+          "kind": "sampler",
+          "set": 0,
+          "binding": 12
+        },
+        {
+          "name": "frame",
+          "kind": "constantBuffer",
+          "set": 0,
+          "binding": 13
+        },
+        {
+          "name": "materialIdTexture",
+          "kind": "sampledImage",
+          "set": 1,
+          "binding": 0
+        },
+        {
+          "name": "materials",
+          "kind": "structuredBuffer",
+          "set": 1,
+          "binding": 1
+        }
+      ],
+      "abiStructs": [
+        "PostProcessUniforms",
+        "GpuMaterialData"
+      ]
+    }
+  ]
+}

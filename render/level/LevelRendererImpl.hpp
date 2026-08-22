@@ -1,16 +1,16 @@
 #pragma once
 
 #include "render/DeferredRenderPipeline.hpp"
-#include "render/resources/FrameGraph.hpp"
-#include "render/editor/ImGuiManager.hpp"
 #include "render/LevelRenderer.hpp"
-#include "render/level/LevelRenderFrameData.hpp"
 #include "render/ModelRenderer.hpp"
-#include "render/resources/PipelineManager.hpp"
-#include "render/resources/TextureManager.hpp"
 #include "render/atmosphere/AtmosphereLutGpu.hpp"
 #include "render/atmosphere/AtmosphereLutScheduler.hpp"
+#include "render/editor/ImGuiManager.hpp"
 #include "render/gi/GlobalIllumination.hpp"
+#include "render/level/LevelRenderFrameData.hpp"
+#include "render/resources/FrameGraph.hpp"
+#include "render/resources/PipelineManager.hpp"
+#include "render/resources/TextureManager.hpp"
 #include "render/world/RenderWorld.hpp"
 
 #include <array>
@@ -24,7 +24,7 @@
 #include <vulkan/vulkan.h>
 
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-#include "render/gi/HybridLightingComposite.hpp"
+#include "render/gi/raytracing/HybridLightingComposite.hpp"
 #include "render/gpu/GpuSceneResources.hpp"
 #endif
 
@@ -33,8 +33,7 @@ namespace lumin::render {
     struct LevelRenderer::Impl final : LevelRenderFeatureHost {
     public:
         Impl(platform::Window& window, VulkanContext& context, const scene::Level& level,
-             std::filesystem::path shaderDirectory,
-             std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination);
+             std::filesystem::path shaderDirectory, std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination);
         ~Impl();
 
         Impl(const Impl&) = delete;
@@ -47,6 +46,10 @@ namespace lumin::render {
             float shadowSplitLambda = 0.68f;
             float shadowMaxDistance = 200.0f;
             bool ssaoEnabled = true;
+            AmbientOcclusionMode ambientOcclusionMode = AmbientOcclusionMode::Ssao;
+            float ambientOcclusionRadius = 1.0f;
+            float ambientOcclusionStrength = 1.0f;
+            float ambientOcclusionBias = 0.08f;
             bool sharcEnabled = true;
             bool nrdEnabled = true;
             bool temporalAaEnabled = true;
@@ -98,10 +101,8 @@ namespace lumin::render {
         [[nodiscard]] ImGuiViewportImage viewportImage() const noexcept;
 
         void addFeaturePasses(LevelRenderFeatureKind kind, core::RenderFeatureFrameContext& context) override;
-        void submitFeature(LevelRenderFeatureKind kind,
-                           const core::RenderFrameIdentity& identity) noexcept override;
-        void discardFeature(LevelRenderFeatureKind kind,
-                            const core::RenderFrameIdentity& identity) noexcept override;
+        void submitFeature(LevelRenderFeatureKind kind, const core::RenderFrameIdentity& identity) noexcept override;
+        void discardFeature(LevelRenderFeatureKind kind, const core::RenderFrameIdentity& identity) noexcept override;
 
     private:
         void createRenderResources();

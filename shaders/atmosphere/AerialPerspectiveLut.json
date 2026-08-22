@@ -6,9 +6,9 @@
       "name": "atmosphere.aerial-perspective",
       "entry": "aerialPerspectiveMain",
       "stage": "compute",
-      "output": "atmosphere.aerial-perspective.comp.spv",
-      "reflection": "reflection/atmosphere.aerial-perspective.comp.json",
-      "depfile": "deps/atmosphere.aerial-perspective.comp.d",
+      "output": "AerialPerspectiveLut.comp.spv",
+      "reflection": "reflection/AerialPerspectiveLut.comp.json",
+      "depfile": "deps/AerialPerspectiveLut.comp.d",
       "bindings": [
         {
           "name": "atmosphere",

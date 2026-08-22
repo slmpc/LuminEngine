@@ -6,9 +6,9 @@
       "name": "atmosphere.transmittance",
       "entry": "transmittanceMain",
       "stage": "compute",
-      "output": "atmosphere.transmittance.comp.spv",
-      "reflection": "reflection/atmosphere.transmittance.comp.json",
-      "depfile": "deps/atmosphere.transmittance.comp.d",
+      "output": "TransmittanceLut.comp.spv",
+      "reflection": "reflection/TransmittanceLut.comp.json",
+      "depfile": "deps/TransmittanceLut.comp.d",
       "bindings": [
         {
           "name": "atmosphere",

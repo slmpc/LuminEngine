@@ -88,6 +88,11 @@ namespace {
         require(firstScript && secondScript && scripts.setEnabled(secondScript.script, false),
                 "Multiple Lua components must attach independently to one Actor.");
         require(scripts.reorder(secondScript.script, 0), "Script component order must be editable.");
+        project.setRenderSettings({.rayTracing = false,
+                                   .ambientOcclusionMode = lumin::project::ProjectAmbientOcclusionMode::Gtao,
+                                   .ambientOcclusionRadius = 2.5f,
+                                   .ambientOcclusionStrength = 1.4f,
+                                   .ambientOcclusionBias = 0.12f});
         project.markDirty();
         require(project.save(error), error.c_str());
 
@@ -112,6 +117,13 @@ namespace {
         const auto restoredScripts = scripts.scriptsForActor(restored->handle());
         require(restoredScripts.size() == 2 && !restoredScripts.front().enabled && restoredScripts.back().enabled,
                 "Script order and enabled state must round-trip.");
+        const auto& restoredRenderSettings = project.renderSettings();
+        require(!restoredRenderSettings.rayTracing &&
+                    restoredRenderSettings.ambientOcclusionMode == lumin::project::ProjectAmbientOcclusionMode::Gtao &&
+                    restoredRenderSettings.ambientOcclusionRadius == 2.5f &&
+                    restoredRenderSettings.ambientOcclusionStrength == 1.4f &&
+                    restoredRenderSettings.ambientOcclusionBias == 0.12f,
+                "Legacy AO algorithm and tuning parameters must round-trip through the scene file.");
 
         require(!project.removeAsset(meshId, error) && !error.empty(),
                 "Referenced mesh assets must be protected from deletion.");
@@ -284,6 +296,37 @@ namespace {
                 "A new empty project must reset scene, camera, environment, and project render settings.");
     }
 
+    void testLegacySsaoSettingsRemainCompatible() {
+        TemporaryDirectory temporary;
+        lumin::scene::Level level;
+        lumin::scene::Camera camera;
+        lumin::scripting::ScriptRuntime scripts({.scriptRoot = temporary.path});
+        lumin::project::ProjectSession project(level, camera, scripts);
+        std::string error;
+        require(project.create(temporary.path, "LegacyAo", error), error.c_str());
+
+        const auto projectFile = project.projectFile();
+        const auto scenePath = project.rootDirectory() / "Scenes/Main.lumin.scene";
+        nlohmann::json scene;
+        {
+            std::ifstream stream(scenePath, std::ios::binary);
+            stream >> scene;
+        }
+        scene["renderSettings"]["ssao"] = false;
+        scene["renderSettings"].erase("ambientOcclusionMode");
+        scene["renderSettings"].erase("ambientOcclusionRadius");
+        scene["renderSettings"].erase("ambientOcclusionStrength");
+        scene["renderSettings"].erase("ambientOcclusionBias");
+        writeText(scenePath, scene.dump(2));
+
+        require(project.open(projectFile, error), error.c_str());
+        const auto& settings = project.renderSettings();
+        require(!settings.ssao && settings.ambientOcclusionMode == lumin::project::ProjectAmbientOcclusionMode::Ssao &&
+                    settings.ambientOcclusionRadius == 1.0f && settings.ambientOcclusionStrength == 1.0f &&
+                    settings.ambientOcclusionBias == 0.08f,
+                "Projects with only the legacy ssao flag must load with SSAO defaults.");
+    }
+
 } // namespace
 
 int main() {
@@ -292,6 +335,7 @@ int main() {
         testFilesystemAssetIdentityAndMigration();
         testViewportPickingUsesNearestHit();
         testNewProjectResetsSceneState();
+        testLegacySsaoSettingsRemainCompatible();
         std::cout << "ProjectEditor PASS\n";
         return 0;
     } catch (const std::exception& exception) {

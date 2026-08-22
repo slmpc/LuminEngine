@@ -45,9 +45,9 @@ namespace lumin::render::gi {
     };
 
 #if defined(LUMIN_GI_TESTING)
-    class SsaoCreationDriver {
+    class LegacyCreationDriver {
     public:
-        virtual ~SsaoCreationDriver() = default;
+        virtual ~LegacyCreationDriver() = default;
 
         [[nodiscard]] virtual nvrhi::BufferHandle createUniform() = 0;
         [[nodiscard]] virtual nvrhi::BindingLayoutHandle createBindingLayout(const nvrhi::BindingLayoutDesc& desc) = 0;
@@ -58,9 +58,9 @@ namespace lumin::render::gi {
         createPipeline(const lumin::render::GraphicsPipelineDesc& desc) = 0;
     };
 
-    class SsaoRecordProbe {
+    class LegacyRecordProbe {
     public:
-        virtual ~SsaoRecordProbe() = default;
+        virtual ~LegacyRecordProbe() = default;
 
         virtual void clearTextureFloat(nvrhi::ITexture* texture, nvrhi::TextureSubresourceSet subresources,
                                        const nvrhi::Color& color) = 0;
@@ -76,8 +76,8 @@ namespace lumin::render::gi {
         nvrhi::SamplerHandle sampler;
         std::span<const FrameResources> frames;
 #if defined(LUMIN_GI_TESTING)
-        SsaoCreationDriver* creationDriver = nullptr;
-        SsaoRecordProbe* recordProbe = nullptr;
+        LegacyCreationDriver* creationDriver = nullptr;
+        LegacyRecordProbe* recordProbe = nullptr;
 #endif
     };
 
@@ -109,15 +109,14 @@ namespace lumin::render::gi {
 
     namespace detail {
 
-        template <typename CommandList>
-        void recordSsaoClear(CommandList& commandList, nvrhi::ITexture* output) {
+        template <typename CommandList> void recordLegacyClear(CommandList& commandList, nvrhi::ITexture* output) {
             commandList.clearTextureFloat(
                 output, nvrhi::AllSubresources,
                 nvrhi::Color(neutralOutput[0], neutralOutput[1], neutralOutput[2], neutralOutput[3]));
         }
 
         template <typename CommandList>
-        void recordSsaoFullscreen(CommandList& commandList, const nvrhi::GraphicsState& state) {
+        void recordLegacyFullscreen(CommandList& commandList, const nvrhi::GraphicsState& state) {
             commandList.setGraphicsState(state);
             commandList.draw(nvrhi::DrawArguments().setVertexCount(3));
         }

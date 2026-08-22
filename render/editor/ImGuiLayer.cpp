@@ -1,7 +1,7 @@
 #include "render/editor/ImGuiLayer.hpp"
 
-#include "render/resources/ShaderLibrary.hpp"
 #include "render/platform/Window.hpp"
+#include "render/resources/ShaderLibrary.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -83,8 +83,8 @@ namespace lumin::render {
 
     void ImGuiLayer::createRendererResources(const ImGuiLayerConfig& config) {
         ShaderLibrary shaders(*device_, shaderDirectory_);
-        vertexShader_ = shaders.loadModule("imgui.vert.spv", nvrhi::ShaderType::Vertex, "vertexMain");
-        fragmentShader_ = shaders.loadModule("imgui.frag.spv", nvrhi::ShaderType::Pixel, "fragmentMain");
+        vertexShader_ = shaders.loadModule("ImGui.vert.spv", nvrhi::ShaderType::Vertex, "vertexMain");
+        fragmentShader_ = shaders.loadModule("ImGui.frag.spv", nvrhi::ShaderType::Pixel, "fragmentMain");
 
         const nvrhi::VertexAttributeDesc attributes[] = {
             nvrhi::VertexAttributeDesc()

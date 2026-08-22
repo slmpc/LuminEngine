@@ -14,7 +14,7 @@
     "structs": [
       {
         "name": "PostProcessUniforms",
-        "size": 496,
+        "size": 512,
         "fields": [
           {
             "name": "inverseViewProjection",
@@ -64,6 +64,11 @@
           {
             "name": "tonemapOptions",
             "offset": 480,
+            "size": 16
+          },
+          {
+            "name": "ambientOcclusionOptions",
+            "offset": 496,
             "size": 16
           }
         ]

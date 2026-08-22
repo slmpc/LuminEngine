@@ -220,7 +220,7 @@ lumin_register_test(lumin_descriptor_indexing_tests DescriptorIndexing LABELS ra
 add_executable(lumin_gi_tests
     GlobalIlluminationTests.cpp
     "${PROJECT_SOURCE_DIR}/render/resources/FrameGraph.cpp"
-    "${PROJECT_SOURCE_DIR}/render/gi/SsaoBackend.cpp"
+    "${PROJECT_SOURCE_DIR}/render/gi/legacy/LegacyBackend.cpp"
     "${PROJECT_SOURCE_DIR}/render/resources/PipelineFactory.cpp"
     "${PROJECT_SOURCE_DIR}/render/resources/ShaderLibrary.cpp"
 )

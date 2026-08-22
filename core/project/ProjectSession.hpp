@@ -97,11 +97,21 @@ namespace lumin::project {
         std::filesystem::path defaultScene = "Scenes/Main.lumin.scene";
     };
 
+    enum class ProjectAmbientOcclusionMode {
+        Ssao,
+        Hbao,
+        Gtao,
+    };
+
     struct ProjectRenderSettings {
         bool directLighting = true;
         bool shadows = true;
         bool rayTracing = true;
         bool ssao = true;
+        ProjectAmbientOcclusionMode ambientOcclusionMode = ProjectAmbientOcclusionMode::Ssao;
+        float ambientOcclusionRadius = 1.0f;
+        float ambientOcclusionStrength = 1.0f;
+        float ambientOcclusionBias = 0.08f;
         bool sharc = true;
         bool nrd = true;
         bool taa = true;
