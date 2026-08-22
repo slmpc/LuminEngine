@@ -45,13 +45,8 @@ namespace lumin::editor {
     using ViewportImageProvider = std::function<render::ImGuiViewportImage()>;
     using DialogResultCallback = std::function<void(std::vector<std::filesystem::path>)>;
 
-    enum class EditorFileDialogKind {
-        Project,
-        Asset,
-    };
-
     struct EditorDialogServices {
-        std::function<void(EditorFileDialogKind, bool, DialogResultCallback)> openFiles;
+        std::function<void(DialogResultCallback)> openProject;
         std::function<void(DialogResultCallback)> openFolder;
         std::function<std::vector<std::filesystem::path>()> loadRecentProjects;
         std::function<void(const std::vector<std::filesystem::path>&)> saveRecentProjects;

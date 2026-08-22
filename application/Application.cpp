@@ -108,45 +108,39 @@ namespace lumin::core {
                     return renderer->viewportImage();
                 },
                 &project,
-                editor::EditorDialogServices{
-                    .openFiles =
-                        [this](editor::EditorFileDialogKind kind, bool many, editor::DialogResultCallback callback) {
-                            std::vector<platform::FileDialogFilter> filters;
-                            if (kind == editor::EditorFileDialogKind::Project) {
-                                filters.push_back({"Lumin Project", "luminproject"});
-                            } else {
-                                filters.push_back({"Supported Assets", "obj;png;jpg;jpeg;lua"});
-                            }
-                            window.showOpenFileDialog(std::move(filters), many, std::move(callback));
-                        },
-                    .openFolder =
-                        [this](editor::DialogResultCallback callback) {
-                            window.showOpenFolderDialog(std::move(callback));
-                        },
-                    .loadRecentProjects =
-                        [] {
-                            std::vector<std::filesystem::path> result;
-                            std::ifstream stream(recentProjectsPath());
-                            std::string line;
-                            while (std::getline(stream, line) && result.size() < 10) {
-                                if (!line.empty() && std::filesystem::exists(line)) {
-                                    result.emplace_back(line);
-                                }
-                            }
-                            return result;
-                        },
-                    .saveRecentProjects =
-                        [](const std::vector<std::filesystem::path>& projects) {
-                            const std::filesystem::path path = recentProjectsPath();
-                            if (path.empty()) {
-                                return;
-                            }
-                            std::filesystem::create_directories(path.parent_path());
-                            std::ofstream stream(path, std::ios::trunc);
-                            for (const auto& projectPath : projects) {
-                                stream << projectPath.generic_string() << '\n';
-                            }
-                        }});
+                editor::EditorDialogServices{.openProject =
+                                                 [this](editor::DialogResultCallback callback) {
+                                                     window.showOpenFileDialog({{"Lumin Project", "luminproject"}},
+                                                                               false, std::move(callback));
+                                                 },
+                                             .openFolder =
+                                                 [this](editor::DialogResultCallback callback) {
+                                                     window.showOpenFolderDialog(std::move(callback));
+                                                 },
+                                             .loadRecentProjects =
+                                                 [] {
+                                                     std::vector<std::filesystem::path> result;
+                                                     std::ifstream stream(recentProjectsPath());
+                                                     std::string line;
+                                                     while (std::getline(stream, line) && result.size() < 10) {
+                                                         if (!line.empty() && std::filesystem::exists(line)) {
+                                                             result.emplace_back(line);
+                                                         }
+                                                     }
+                                                     return result;
+                                                 },
+                                             .saveRecentProjects =
+                                                 [](const std::vector<std::filesystem::path>& projects) {
+                                                     const std::filesystem::path path = recentProjectsPath();
+                                                     if (path.empty()) {
+                                                         return;
+                                                     }
+                                                     std::filesystem::create_directories(path.parent_path());
+                                                     std::ofstream stream(path, std::ios::trunc);
+                                                     for (const auto& projectPath : projects) {
+                                                         stream << projectPath.generic_string() << '\n';
+                                                     }
+                                                 }});
 
             std::cout << "Level renderer ready: models=" << renderer->modelCount()
                       << " mdiDraws=" << renderer->mdiDrawCount()
@@ -182,8 +176,8 @@ namespace lumin::core {
                 }
                 const render::ImGuiCaptureState capture = renderer->imguiCaptureState();
                 const bool escapeDown = window.isKeyDown(platform::Key::Escape);
-                const game::InputRoutingDecision routing = game::routeInput(
-                    !viewportLookActive && capture.uiClaimsInput(), escapeDown);
+                const game::InputRoutingDecision routing =
+                    game::routeInput(!viewportLookActive && capture.uiClaimsInput(), escapeDown);
                 if (routing.exitOnEscape && !escapeHeld) {
                     editor->requestExit();
                 }

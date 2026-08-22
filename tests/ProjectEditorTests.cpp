@@ -1,8 +1,9 @@
 #include "project/ProjectSession.hpp"
 #include "render/editor/ViewportPicking.hpp"
 
-#include <chrono>
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -43,10 +44,6 @@ namespace {
 
     void testProjectAssetAndSceneRoundTrip() {
         TemporaryDirectory temporary;
-        const auto meshSource = temporary.path / "triangle.obj";
-        const auto scriptSource = temporary.path / "move.lua";
-        writeText(meshSource, "v -1 0 0\nv 1 0 0\nv 0 2 0\nf 1 2 3\n");
-        writeText(scriptSource, "return { on_tick = function(actor, level, dt) end }\n");
 
         lumin::scene::Level level;
         lumin::scene::Camera camera;
@@ -58,30 +55,36 @@ namespace {
                     std::filesystem::exists(project.rootDirectory() / "Scenes/Main.lumin.scene"),
                 "Project creation must write its manifest and default scene.");
 
-        const std::array<lumin::project::ImportRequest, 2> requests = {
-            lumin::project::ImportRequest{.source = meshSource, .destinationDirectory = {},
-                                          .conflict = lumin::project::ImportConflictPolicy::Rename},
-            lumin::project::ImportRequest{.source = scriptSource, .destinationDirectory = {},
-                                          .conflict = lumin::project::ImportConflictPolicy::Rename},
-        };
-        const auto imported = project.importAssets(requests);
-        if (imported.size() != 2 || !imported[0].succeeded() || !imported[1].succeeded()) {
-            throw std::runtime_error("OBJ/Lua import failed: " +
-                                     (imported.empty() ? std::string{"missing result"} : imported[0].error) + " | " +
-                                     (imported.size() < 2 ? std::string{"missing result"} : imported[1].error));
-        }
+        const auto meshPath = project.rootDirectory() / "Models/triangle.obj";
+        const auto scriptPath = project.rootDirectory() / "Gameplay/move.lua";
+        std::filesystem::create_directories(meshPath.parent_path());
+        std::filesystem::create_directories(scriptPath.parent_path());
+        writeText(meshPath, "v -1 0 0\nv 1 0 0\nv 0 2 0\nf 1 2 3\n");
+        writeText(scriptPath, "return { on_tick = function(actor, level, dt) end }\n");
+        writeText(project.rootDirectory() / "notes.txt", "Visible but not an engine asset.\n");
+        const auto discovered = project.synchronizeProjectFiles(true);
+        require(discovered.succeeded() && discovered.added == 2,
+                "Project files must be discovered without an import operation.");
+        const auto* meshAsset = project.assets().findByPath("Models/triangle.obj");
+        const auto* scriptAsset = project.assets().findByPath("Gameplay/move.lua");
+        require(meshAsset != nullptr && meshAsset->available && scriptAsset != nullptr && scriptAsset->available,
+                "Supported files anywhere under the project root must become available assets.");
+        const lumin::project::AssetId meshId = meshAsset->id;
+        require(std::ranges::any_of(project.projectEntries(),
+                                    [](const lumin::project::ProjectEntry& entry) {
+                                        return entry.relativePath == "notes.txt" && !entry.asset.has_value();
+                                    }),
+                "Unsupported project files must remain visible without becoming assets.");
 
-        const auto actorHandle = project.createActorFromMesh(imported[0].asset->id);
-        require(actorHandle.has_value(), "An imported mesh must instantiate a persistent Actor.");
+        const auto actorHandle = project.createActorFromMesh(meshId);
+        require(actorHandle.has_value(), "A discovered mesh must instantiate a persistent Actor.");
         lumin::scene::Actor* actor = level.actor(*actorHandle);
         actor->setName("Round Trip Actor");
         lumin::scene::Transform transform = actor->transform();
         transform.position = {2.0f, 3.0f, 4.0f};
         actor->setTransform(transform);
-        const auto firstScript = scripts.attach(level, *actorHandle,
-                                                project.rootDirectory() / imported[1].asset->relativePath);
-        const auto secondScript = scripts.attach(level, *actorHandle,
-                                                 project.rootDirectory() / imported[1].asset->relativePath);
+        const auto firstScript = scripts.attach(level, *actorHandle, scriptPath);
+        const auto secondScript = scripts.attach(level, *actorHandle, scriptPath);
         require(firstScript && secondScript && scripts.setEnabled(secondScript.script, false),
                 "Multiple Lua components must attach independently to one Actor.");
         require(scripts.reorder(secondScript.script, 0), "Script component order must be editable.");
@@ -110,20 +113,16 @@ namespace {
         require(restoredScripts.size() == 2 && !restoredScripts.front().enabled && restoredScripts.back().enabled,
                 "Script order and enabled state must round-trip.");
 
-        require(!project.removeAsset(imported[0].asset->id, error) && !error.empty(),
+        require(!project.removeAsset(meshId, error) && !error.empty(),
                 "Referenced mesh assets must be protected from deletion.");
 
-        const auto invalidScript = temporary.path / "invalid.lua";
+        const auto invalidScript = project.rootDirectory() / "invalid.lua";
         writeText(invalidScript, "return { on_tick = function( }\n");
-        const std::array<lumin::project::ImportRequest, 1> invalidRequests = {
-            lumin::project::ImportRequest{.source = invalidScript, .destinationDirectory = {},
-                                          .conflict = lumin::project::ImportConflictPolicy::Rename},
-        };
-        const std::size_t assetCount = project.assets().assets().size();
-        const auto invalidImport = project.importAssets(invalidRequests);
-        require(invalidImport.size() == 1 && !invalidImport.front().succeeded() &&
-                    project.assets().assets().size() == assetCount,
-                "Invalid Lua imports must roll back without changing the registry.");
+        const auto invalidDiscovery = project.synchronizeProjectFiles(true);
+        const auto* invalidAsset = project.assets().findByPath("invalid.lua");
+        require(invalidDiscovery.succeeded() && invalidAsset != nullptr && invalidAsset->available,
+                "Discovery must create metadata without eagerly validating asset contents.");
+        require(!scripts.validate(invalidScript), "Invalid Lua must still fail when it is actually loaded.");
 
         const auto maliciousProject = temporary.path / "malicious.luminproject";
         writeText(maliciousProject,
@@ -133,12 +132,91 @@ namespace {
                 "Path-escaping projects must be rejected before replacing the current scene.");
     }
 
+    void testFilesystemAssetIdentityAndMigration() {
+        TemporaryDirectory temporary;
+        lumin::scene::Level level;
+        lumin::scene::Camera camera;
+        lumin::scripting::ScriptRuntime scripts({.scriptRoot = temporary.path});
+        lumin::project::ProjectSession project(level, camera, scripts);
+        std::string error;
+        require(project.create(temporary.path, "Identity", error), error.c_str());
+
+        const std::string meshText = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+        const auto original = project.rootDirectory() / "Loose/source.obj";
+        std::filesystem::create_directories(original.parent_path());
+        writeText(original, meshText);
+        require(project.synchronizeProjectFiles(true).added == 1, "Initial project scan must register the mesh.");
+        const lumin::project::AssetId originalId = project.assets().findByPath("Loose/source.obj")->id;
+
+        writeText(original, meshText + "# modified\n");
+        const auto modified = project.synchronizeProjectFiles(true);
+        require(modified.modified == 1 && project.assets().findByPath("Loose/source.obj")->id == originalId,
+                "Editing an asset in place must preserve its ID.");
+
+        const auto movedPath = project.rootDirectory() / "Moved/renamed.obj";
+        std::filesystem::create_directories(movedPath.parent_path());
+        std::filesystem::rename(original, movedPath);
+        const auto moved = project.synchronizeProjectFiles(true);
+        require(moved.moved == 1 && project.assets().findByPath("Moved/renamed.obj")->id == originalId,
+                "A unique fingerprint move must preserve the asset ID.");
+
+        std::filesystem::remove(movedPath);
+        const auto missing = project.synchronizeProjectFiles(true);
+        require(missing.missing == 1 && !project.assets().find(originalId)->available,
+                "Externally deleted assets must remain as unavailable registry records.");
+        writeText(movedPath, meshText + "# modified\n");
+        static_cast<void>(project.synchronizeProjectFiles(true));
+        require(project.assets().findByPath("Moved/renamed.obj")->id == originalId,
+                "Restoring a missing asset at its path must recover the original ID.");
+
+        const std::string duplicateText = "v 0 0 0\nv 2 0 0\nv 0 2 0\nf 1 2 3\n";
+        const auto duplicateA = project.rootDirectory() / "Duplicates/a.obj";
+        const auto duplicateB = project.rootDirectory() / "Duplicates/b.obj";
+        std::filesystem::create_directories(duplicateA.parent_path());
+        writeText(duplicateA, duplicateText);
+        writeText(duplicateB, duplicateText);
+        static_cast<void>(project.synchronizeProjectFiles(true));
+        const lumin::project::AssetId duplicateAId = project.assets().findByPath("Duplicates/a.obj")->id;
+        const lumin::project::AssetId duplicateBId = project.assets().findByPath("Duplicates/b.obj")->id;
+        std::filesystem::remove(duplicateA);
+        std::filesystem::remove(duplicateB);
+        static_cast<void>(project.synchronizeProjectFiles(true));
+        const auto ambiguousPath = project.rootDirectory() / "Duplicates/ambiguous.obj";
+        writeText(ambiguousPath, duplicateText);
+        const auto ambiguous = project.synchronizeProjectFiles(true);
+        const auto* ambiguousAsset = project.assets().findByPath("Duplicates/ambiguous.obj");
+        require(ambiguousAsset != nullptr && ambiguousAsset->id != duplicateAId && ambiguousAsset->id != duplicateBId &&
+                    !ambiguous.diagnostics.empty(),
+                "Ambiguous fingerprint matches must allocate a new ID and report a diagnostic.");
+
+        require(project.save(error), error.c_str());
+        const auto projectFile = project.projectFile();
+        const auto registryPath = project.rootDirectory() / ".lumin/AssetRegistry.json";
+        nlohmann::json registry;
+        {
+            std::ifstream stream(registryPath);
+            stream >> registry;
+        }
+        registry["formatVersion"] = 1;
+        for (auto& asset : registry["assets"]) {
+            asset.erase("fingerprint");
+        }
+        writeText(registryPath, registry.dump(2));
+        project.close();
+        require(project.open(projectFile, error), error.c_str());
+        require(project.assets().findByPath("Moved/renamed.obj")->id == originalId,
+                "Opening a v1 registry must preserve IDs while upgrading fingerprints.");
+        {
+            std::ifstream stream(registryPath);
+            stream >> registry;
+        }
+        require(registry.value("formatVersion", 0) == 2, "A synchronized legacy registry must be written as v2.");
+    }
+
     lumin::assets::Mesh triangleAtDepth(float z) {
         lumin::assets::Mesh mesh;
         mesh.name = "pick-triangle";
-        mesh.vertices = {{{-2.0f, -2.0f, z}, {}, {}},
-                         {{2.0f, -2.0f, z}, {}, {}},
-                         {{0.0f, 2.0f, z}, {}, {}}};
+        mesh.vertices = {{{-2.0f, -2.0f, z}, {}, {}}, {{2.0f, -2.0f, z}, {}, {}}, {{0.0f, 2.0f, z}, {}, {}}};
         mesh.indices = {0, 1, 2};
         return mesh;
     }
@@ -170,6 +248,7 @@ namespace {
 int main() {
     try {
         testProjectAssetAndSceneRoundTrip();
+        testFilesystemAssetIdentityAndMigration();
         testViewportPickingUsesNearestHit();
         std::cout << "ProjectEditor PASS\n";
         return 0;

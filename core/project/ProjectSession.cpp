@@ -6,9 +6,14 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <fstream>
+#include <iomanip>
+#include <map>
 #include <random>
+#include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 
 #include <nlohmann/json.hpp>
 
@@ -16,6 +21,16 @@ namespace lumin::project {
     namespace {
         using Json = nlohmann::json;
         constexpr std::uint32_t formatVersion = 1;
+        constexpr std::uint32_t registryFormatVersion = 2;
+        constexpr std::uint64_t fnvOffset = 14695981039346656037ULL;
+        constexpr std::uint64_t fnvPrime = 1099511628211ULL;
+
+        struct DiscoveredAsset {
+            std::filesystem::path relativePath;
+            AssetType type = AssetType::Mesh;
+            AssetFingerprint fingerprint;
+            bool matched = false;
+        };
 
         Json vectorJson(const glm::vec3& value) {
             return Json::array({value.x, value.y, value.z});
@@ -53,6 +68,63 @@ namespace lumin::project {
             return std::nullopt;
         }
 
+        std::string hashString(std::uint64_t value) {
+            std::ostringstream stream;
+            stream << std::hex << std::setfill('0') << std::setw(16) << value;
+            return stream.str();
+        }
+
+        std::optional<std::uint64_t> parseHash(std::string_view value) {
+            std::uint64_t result = 0;
+            const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), result, 16);
+            if (error != std::errc{} || end != value.data() + value.size()) {
+                return std::nullopt;
+            }
+            return result;
+        }
+
+        std::string fingerprintKey(AssetType type, const AssetFingerprint& fingerprint) {
+            return std::to_string(static_cast<unsigned int>(type)) + ":" + std::to_string(fingerprint.fileSize) + ":" +
+                   hashString(fingerprint.contentHash);
+        }
+
+        AssetFingerprint fingerprintFile(const std::filesystem::path& path) {
+            std::ifstream stream(path, std::ios::binary);
+            if (!stream) {
+                throw std::runtime_error("Could not read asset file '" + path.generic_string() + "'.");
+            }
+            std::uint64_t hash = fnvOffset;
+            std::uintmax_t size = 0;
+            std::array<char, 64 * 1024> buffer{};
+            while (stream) {
+                stream.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+                const std::streamsize count = stream.gcount();
+                for (std::streamsize index = 0; index < count; ++index) {
+                    hash ^= static_cast<unsigned char>(buffer[static_cast<std::size_t>(index)]);
+                    hash *= fnvPrime;
+                }
+                size += static_cast<std::uintmax_t>(count);
+            }
+            if (stream.bad()) {
+                throw std::runtime_error("Failed while reading asset file '" + path.generic_string() + "'.");
+            }
+            return {.fileSize = size, .contentHash = hash, .valid = true};
+        }
+
+        bool isTransientProjectFile(const std::filesystem::path& path) {
+            const std::string extension = path.extension().string();
+            return extension == ".tmp" || extension == ".bak" || extension == ".importing";
+        }
+
+        bool isProtectedProjectEntry(const std::filesystem::path& relative, const ProjectManifest& manifest,
+                                     const std::filesystem::path& projectFile) {
+            if (!relative.empty() && *relative.begin() == std::filesystem::path{".lumin"}) {
+                return true;
+            }
+            return relative == manifest.defaultScene || relative.filename() == projectFile.filename() ||
+                   relative.extension() == ".luminproject" || relative.extension() == ".scene";
+        }
+
         bool hasInvalidProjectNameCharacter(char value) {
             constexpr std::string_view invalid = "<>:\"/\\|?*";
             return static_cast<unsigned char>(value) < 32 || invalid.find(value) != std::string_view::npos;
@@ -69,6 +141,20 @@ namespace lumin::project {
                 return false;
             }
             const auto canonicalPath = (canonicalParent / path.filename()).lexically_normal();
+            const auto relative = canonicalPath.lexically_relative(canonicalRoot);
+            return !relative.empty() && !relative.is_absolute() && *relative.begin() != "..";
+        }
+
+        bool existingPathInside(const std::filesystem::path& root, const std::filesystem::path& path) {
+            std::error_code error;
+            const auto canonicalRoot = std::filesystem::weakly_canonical(root, error);
+            if (error) {
+                return false;
+            }
+            const auto canonicalPath = std::filesystem::weakly_canonical(path, error);
+            if (error) {
+                return false;
+            }
             const auto relative = canonicalPath.lexically_relative(canonicalRoot);
             return !relative.empty() && !relative.is_absolute() && *relative.begin() != "..";
         }
@@ -188,26 +274,46 @@ namespace lumin::project {
         Json registryJson(const AssetRegistry& registry) {
             Json assets = Json::array();
             for (const AssetRecord& asset : registry.assets()) {
-                assets.push_back({{"id", asset.id.value},
-                                  {"type", typeName(asset.type)},
-                                  {"path", asset.relativePath.generic_string()},
-                                  {"name", asset.displayName}});
+                Json item{{"id", asset.id.value},
+                          {"type", typeName(asset.type)},
+                          {"path", asset.relativePath.generic_string()},
+                          {"name", asset.displayName}};
+                if (asset.fingerprint.valid) {
+                    item["fingerprint"] = {{"size", asset.fingerprint.fileSize},
+                                           {"hash", hashString(asset.fingerprint.contentHash)}};
+                }
+                assets.push_back(std::move(item));
             }
-            return {{"formatVersion", formatVersion}, {"assets", std::move(assets)}};
+            return {{"formatVersion", registryFormatVersion}, {"assets", std::move(assets)}};
         }
 
         AssetRegistry parseRegistry(const Json& value, const std::filesystem::path& root) {
-            if (value.value("formatVersion", 0U) != formatVersion || !value.contains("assets") ||
+            const std::uint32_t version = value.value("formatVersion", 0U);
+            if ((version != 1 && version != registryFormatVersion) || !value.contains("assets") ||
                 !value["assets"].is_array()) {
                 throw std::runtime_error("Unsupported or malformed asset registry.");
             }
             AssetRegistry registry;
             for (const Json& item : value["assets"]) {
                 const auto type = parseType(item.value("type", std::string{}));
+                AssetFingerprint fingerprint;
+                if (version >= registryFormatVersion) {
+                    const auto iterator = item.find("fingerprint");
+                    if (iterator != item.end() && iterator->is_object()) {
+                        const auto hash = parseHash(iterator->value("hash", std::string{}));
+                        if (hash.has_value()) {
+                            fingerprint = {.fileSize = iterator->value("size", std::uintmax_t{}),
+                                           .contentHash = *hash,
+                                           .valid = true};
+                        }
+                    }
+                }
                 AssetRecord record{{item.value("id", std::string{})},
                                    type.value_or(AssetType::Mesh),
                                    item.value("path", std::string{}),
-                                   item.value("name", std::string{})};
+                                   item.value("name", std::string{}),
+                                   fingerprint,
+                                   false};
                 if (!record.id.isValid() || !type.has_value()) {
                     throw std::runtime_error("Asset registry contains an invalid asset record.");
                 }
@@ -316,7 +422,7 @@ namespace lumin::project {
             std::filesystem::create_directories(nextRoot / ".lumin");
 
             level_.clear();
-            if (!scripts_.setScriptRoot(nextRoot / "Content/Scripts")) {
+            if (!scripts_.setScriptRoot(nextRoot)) {
                 throw std::runtime_error("Could not switch the script root while scripts are active.");
             }
             root_ = nextRoot;
@@ -324,9 +430,19 @@ namespace lumin::project {
             manifest_ = ProjectManifest{formatVersion, std::string{name}, "Content", "Scenes/Main.lumin.scene"};
             assets_.clear();
             loadedMeshes_.clear();
+            observedAssetFiles_.clear();
+            projectEntries_.clear();
             diagnostics_.clear();
+            registryNeedsUpgrade_ = false;
             dirty_ = true;
-            return save(error);
+            if (!save(error)) {
+                return false;
+            }
+            const AssetSyncResult sync = synchronizeProjectFiles();
+            if (!sync.succeeded()) {
+                throw std::runtime_error(sync.error);
+            }
+            return true;
         } catch (const std::exception& exception) {
             error = exception.what();
             return false;
@@ -348,8 +464,9 @@ namespace lumin::project {
             }
             static_cast<void>(checkedProjectPath(nextRoot, nextManifest.contentDirectory));
             const std::filesystem::path scenePath = checkedProjectPath(nextRoot, nextManifest.defaultScene);
-            const AssetRegistry nextRegistry =
-                parseRegistry(readJson(checkedProjectPath(nextRoot, ".lumin/AssetRegistry.json")), nextRoot);
+            const Json registryDocument = readJson(checkedProjectPath(nextRoot, ".lumin/AssetRegistry.json"));
+            const AssetRegistry nextRegistry = parseRegistry(registryDocument, nextRoot);
+            const bool nextRegistryNeedsUpgrade = registryDocument.value("formatVersion", 0U) < registryFormatVersion;
             const Json sceneJson = readJson(scenePath);
             if (sceneJson.value("formatVersion", 0U) != formatVersion || !sceneJson.contains("actors") ||
                 !sceneJson["actors"].is_array()) {
@@ -357,15 +474,23 @@ namespace lumin::project {
             }
 
             level_.clear();
-            if (!scripts_.setScriptRoot(nextRoot / nextManifest.contentDirectory / "Scripts")) {
+            if (!scripts_.setScriptRoot(nextRoot)) {
                 throw std::runtime_error("Could not switch the script root while scripts are active.");
             }
             root_ = nextRoot;
             projectFile_ = nextProjectFile;
             manifest_ = std::move(nextManifest);
             assets_ = nextRegistry;
+            registryNeedsUpgrade_ = nextRegistryNeedsUpgrade;
             loadedMeshes_.clear();
+            observedAssetFiles_.clear();
+            projectEntries_.clear();
             diagnostics_.clear();
+
+            const AssetSyncResult sync = synchronizeProjectFiles();
+            if (!sync.succeeded()) {
+                throw std::runtime_error(sync.error);
+            }
 
             if (const auto camera = sceneJson.find("camera"); camera != sceneJson.end() && camera->is_object()) {
                 camera_.setPosition(readVector(camera->value("position", Json{}), camera_.position()));
@@ -528,7 +653,10 @@ namespace lumin::project {
         root_.clear();
         assets_.clear();
         loadedMeshes_.clear();
+        observedAssetFiles_.clear();
+        projectEntries_.clear();
         diagnostics_.clear();
+        registryNeedsUpgrade_ = false;
         dirty_ = false;
     }
 
@@ -558,76 +686,216 @@ namespace lumin::project {
     const AssetRegistry& ProjectSession::assets() const noexcept {
         return assets_;
     }
+    const std::vector<ProjectEntry>& ProjectSession::projectEntries() const noexcept {
+        return projectEntries_;
+    }
     const std::vector<std::string>& ProjectSession::diagnostics() const noexcept {
         return diagnostics_;
     }
 
-    std::vector<ImportItemResult> ProjectSession::importAssets(std::span<const ImportRequest> requests) {
-        std::vector<ImportItemResult> results;
-        results.reserve(requests.size());
-        for (const ImportRequest& request : requests) {
-            ImportItemResult result{.source = request.source, .asset = std::nullopt, .error = {}};
-            std::filesystem::path temporary;
-            try {
-                if (!hasProject()) {
-                    throw std::runtime_error("No project is open.");
+    AssetSyncResult ProjectSession::synchronizeProjectFiles(bool forceHash) {
+        AssetSyncResult result;
+        if (!hasProject()) {
+            result.error = "No project is open.";
+            return result;
+        }
+
+        try {
+            std::vector<ProjectEntry> nextEntries;
+            std::vector<DiscoveredAsset> discovered;
+            std::unordered_map<std::string, ObservedAssetFile> nextObservedAssetFiles;
+            std::error_code iteratorError;
+            std::filesystem::recursive_directory_iterator iterator(
+                root_, std::filesystem::directory_options::skip_permission_denied, iteratorError);
+            const std::filesystem::recursive_directory_iterator end;
+            if (iteratorError) {
+                throw std::runtime_error("Could not enumerate the project directory: " + iteratorError.message());
+            }
+
+            while (iterator != end) {
+                const std::filesystem::directory_entry entry = *iterator;
+                std::error_code entryError;
+                const std::filesystem::path relative = entry.path().lexically_relative(root_).lexically_normal();
+                const bool symlink = entry.is_symlink(entryError);
+                const bool directory = !entryError && entry.is_directory(entryError);
+                if (directory && symlink) {
+                    iterator.disable_recursion_pending();
                 }
-                const auto type = assetTypeForPath(request.source);
-                if (!type.has_value()) {
-                    throw std::runtime_error("Unsupported asset extension.");
-                }
-                const std::filesystem::path defaultDirectory = *type == AssetType::Mesh      ? "Content/Meshes"
-                                                               : *type == AssetType::Texture ? "Content/Textures"
-                                                                                             : "Content/Scripts";
-                const std::filesystem::path directory =
-                    request.destinationDirectory.empty() ? defaultDirectory : request.destinationDirectory;
-                std::filesystem::path relative = directory / request.source.filename();
-                std::filesystem::path destination = checkedProjectPath(root_, relative);
-                if (std::filesystem::exists(destination)) {
-                    if (request.conflict == ImportConflictPolicy::Skip) {
-                        throw std::runtime_error("Destination already exists (skipped).");
-                    }
-                    if (request.conflict == ImportConflictPolicy::Rename) {
-                        for (std::size_t suffix = 1; std::filesystem::exists(destination); ++suffix) {
-                            relative = directory / (request.source.stem().string() + "_" + std::to_string(suffix) +
-                                                    request.source.extension().string());
-                            destination = checkedProjectPath(root_, relative);
+
+                if (entryError) {
+                    result.diagnostics.push_back("Could not inspect '" + relative.generic_string() +
+                                                 "': " + entryError.message());
+                } else if (!relative.empty() && !isTransientProjectFile(relative)) {
+                    const bool protectedEntry = isProtectedProjectEntry(relative, manifest_, projectFile_) || symlink;
+                    nextEntries.push_back({relative, directory ? ProjectEntryKind::Directory : ProjectEntryKind::File,
+                                           protectedEntry, std::nullopt});
+                    if (!directory && !protectedEntry) {
+                        const auto type = assetTypeForPath(relative);
+                        if (type.has_value() && entry.is_regular_file(entryError) && !entryError &&
+                            existingPathInside(root_, entry.path())) {
+                            try {
+                                const std::string key = relative.generic_string();
+                                const std::uintmax_t fileSize = entry.file_size(entryError);
+                                if (entryError) {
+                                    throw std::runtime_error("Could not inspect asset file '" + key +
+                                                             "': " + entryError.message());
+                                }
+                                const auto writeTime = entry.last_write_time(entryError);
+                                if (entryError) {
+                                    throw std::runtime_error("Could not inspect asset file '" + key +
+                                                             "': " + entryError.message());
+                                }
+                                AssetFingerprint fingerprint;
+                                const auto observed = observedAssetFiles_.find(key);
+                                if (!forceHash && observed != observedAssetFiles_.end() &&
+                                    observed->second.fileSize == fileSize && observed->second.writeTime == writeTime) {
+                                    fingerprint = observed->second.fingerprint;
+                                } else {
+                                    fingerprint = fingerprintFile(entry.path());
+                                }
+                                nextObservedAssetFiles.emplace(key,
+                                                               ObservedAssetFile{writeTime, fileSize, fingerprint});
+                                discovered.push_back({relative, *type, fingerprint, false});
+                            } catch (const std::exception& exception) {
+                                result.diagnostics.push_back(exception.what());
+                            }
                         }
                     }
                 }
-                std::filesystem::create_directories(destination.parent_path());
-                temporary = destination.string() + ".importing";
-                std::filesystem::copy_file(request.source, temporary,
-                                           std::filesystem::copy_options::overwrite_existing);
-                if (*type == AssetType::Mesh) {
-                    static_cast<void>(assets::ObjLoader::load(temporary));
-                } else if (*type == AssetType::Texture) {
-                    static_cast<void>(assets::ImageLoader::load(temporary));
-                } else {
-                    const scripting::ScriptResult validation = scripts_.validate(temporary);
-                    if (!validation) {
-                        throw std::runtime_error(validation.error.has_value() ? validation.error->message
-                                                                              : "Lua validation failed.");
-                    }
+
+                iterator.increment(iteratorError);
+                if (iteratorError) {
+                    result.diagnostics.push_back("Project scan skipped an entry: " + iteratorError.message());
+                    iteratorError.clear();
                 }
-                std::filesystem::copy_file(temporary, destination, std::filesystem::copy_options::overwrite_existing);
-                std::filesystem::remove(temporary);
-                const AssetRecord* existing = assets_.findByPath(relative);
-                AssetRecord record{existing != nullptr ? existing->id : generateAssetId(), *type, relative,
-                                   request.source.stem().string()};
-                assets_.addOrReplace(record);
-                result.asset = std::move(record);
-                dirty_ = true;
-            } catch (const std::exception& exception) {
-                if (!temporary.empty()) {
-                    std::error_code ignored;
-                    std::filesystem::remove(temporary, ignored);
-                }
-                result.error = exception.what();
             }
-            results.push_back(std::move(result));
+
+            const std::vector<AssetRecord> previousRecords = assets_.assets();
+            AssetRegistry candidate = assets_;
+            for (AssetRecord record : previousRecords) {
+                record.available = false;
+                candidate.addOrReplace(std::move(record));
+            }
+
+            const auto serializedRecordChanged = [](const AssetRecord& left, const AssetRecord& right) {
+                return left.id != right.id || left.type != right.type ||
+                       left.relativePath.lexically_normal() != right.relativePath.lexically_normal() ||
+                       left.displayName != right.displayName || left.fingerprint != right.fingerprint;
+            };
+            bool registryChanged = registryNeedsUpgrade_;
+
+            for (DiscoveredAsset& file : discovered) {
+                const AssetRecord* existing = candidate.findByPath(file.relativePath);
+                if (existing == nullptr) {
+                    continue;
+                }
+                AssetRecord updated = *existing;
+                const AssetRecord original = updated;
+                if (updated.fingerprint.valid && updated.fingerprint != file.fingerprint) {
+                    ++result.modified;
+                }
+                updated.type = file.type;
+                updated.displayName = file.relativePath.stem().string();
+                updated.fingerprint = file.fingerprint;
+                updated.available = true;
+                registryChanged |= serializedRecordChanged(original, updated);
+                candidate.addOrReplace(std::move(updated));
+                file.matched = true;
+            }
+
+            std::map<std::string, std::vector<AssetId>> missingByFingerprint;
+            for (const AssetRecord& record : candidate.assets()) {
+                if (!record.available && record.fingerprint.valid) {
+                    missingByFingerprint[fingerprintKey(record.type, record.fingerprint)].push_back(record.id);
+                }
+            }
+            std::map<std::string, std::vector<std::size_t>> newByFingerprint;
+            for (std::size_t index = 0; index < discovered.size(); ++index) {
+                if (!discovered[index].matched) {
+                    newByFingerprint[fingerprintKey(discovered[index].type, discovered[index].fingerprint)].push_back(
+                        index);
+                }
+            }
+
+            for (const auto& [key, newIndices] : newByFingerprint) {
+                const auto oldIterator = missingByFingerprint.find(key);
+                if (oldIterator == missingByFingerprint.end()) {
+                    continue;
+                }
+                const auto& oldIds = oldIterator->second;
+                if (oldIds.size() == 1 && newIndices.size() == 1) {
+                    DiscoveredAsset& file = discovered[newIndices.front()];
+                    const AssetRecord* existing = candidate.find(oldIds.front());
+                    if (existing != nullptr) {
+                        AssetRecord moved = *existing;
+                        moved.type = file.type;
+                        moved.relativePath = file.relativePath;
+                        moved.displayName = file.relativePath.stem().string();
+                        moved.fingerprint = file.fingerprint;
+                        moved.available = true;
+                        candidate.addOrReplace(std::move(moved));
+                        file.matched = true;
+                        registryChanged = true;
+                        ++result.moved;
+                    }
+                } else {
+                    result.diagnostics.push_back("Asset move could not be resolved uniquely for fingerprint " + key +
+                                                 ".");
+                }
+            }
+
+            for (DiscoveredAsset& file : discovered) {
+                if (file.matched) {
+                    continue;
+                }
+                candidate.addOrReplace({generateAssetId(), file.type, file.relativePath,
+                                        file.relativePath.stem().string(), file.fingerprint, true});
+                file.matched = true;
+                registryChanged = true;
+                ++result.added;
+            }
+
+            for (const AssetRecord& previous : previousRecords) {
+                const AssetRecord* current = candidate.find(previous.id);
+                if (previous.available && current != nullptr && !current->available) {
+                    ++result.missing;
+                }
+            }
+
+            for (ProjectEntry& entry : nextEntries) {
+                if (entry.kind != ProjectEntryKind::File) {
+                    continue;
+                }
+                const AssetRecord* asset = candidate.findByPath(entry.relativePath);
+                if (asset != nullptr && asset->available) {
+                    entry.asset = asset->id;
+                }
+            }
+            std::ranges::sort(nextEntries, [](const ProjectEntry& left, const ProjectEntry& right) {
+                return left.relativePath.generic_string() < right.relativePath.generic_string();
+            });
+
+            if (registryChanged) {
+                std::string writeError;
+                if (!writeJsonAtomic(root_ / ".lumin/AssetRegistry.json", registryJson(candidate), writeError)) {
+                    result.error = std::move(writeError);
+                    return result;
+                }
+            }
+
+            assets_ = std::move(candidate);
+            projectEntries_ = std::move(nextEntries);
+            observedAssetFiles_ = std::move(nextObservedAssetFiles);
+            registryNeedsUpgrade_ = false;
+            for (const std::string& diagnostic : result.diagnostics) {
+                if (std::ranges::find(diagnostics_, diagnostic) == diagnostics_.end()) {
+                    diagnostics_.push_back(diagnostic);
+                }
+            }
+        } catch (const std::exception& exception) {
+            result.error = exception.what();
         }
-        return results;
+        return result;
     }
 
     bool ProjectSession::renameAsset(const AssetId& asset, std::string_view newName, std::string& error) {
@@ -656,8 +924,15 @@ namespace lumin::project {
             std::filesystem::rename(current, next);
             renamed.relativePath = nextRelative;
             renamed.displayName = std::string{newName};
-            assets_.addOrReplace(std::move(renamed));
-            dirty_ = true;
+            assets_.addOrReplace(renamed);
+            if (!writeJsonAtomic(root_ / ".lumin/AssetRegistry.json", registryJson(assets_), error)) {
+                return false;
+            }
+            const AssetSyncResult sync = synchronizeProjectFiles();
+            if (!sync.succeeded()) {
+                error = sync.error;
+                return false;
+            }
             return true;
         } catch (const std::exception& exception) {
             error = exception.what();
@@ -700,7 +975,14 @@ namespace lumin::project {
             std::filesystem::remove(checkedProjectPath(root_, record->relativePath));
             loadedMeshes_.erase(asset.value);
             assets_.remove(asset);
-            dirty_ = true;
+            if (!writeJsonAtomic(root_ / ".lumin/AssetRegistry.json", registryJson(assets_), error)) {
+                return false;
+            }
+            const AssetSyncResult sync = synchronizeProjectFiles();
+            if (!sync.succeeded()) {
+                error = sync.error;
+                return false;
+            }
             return true;
         } catch (const std::exception& exception) {
             error = exception.what();
@@ -731,7 +1013,7 @@ namespace lumin::project {
             return iterator->second;
         }
         const AssetRecord* record = assets_.find(asset);
-        if (record == nullptr || record->type != AssetType::Mesh) {
+        if (record == nullptr || !record->available || record->type != AssetType::Mesh) {
             return std::nullopt;
         }
         try {

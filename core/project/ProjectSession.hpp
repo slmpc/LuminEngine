@@ -1,8 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -20,12 +20,6 @@ namespace lumin::project {
         Script,
     };
 
-    enum class ImportConflictPolicy {
-        Skip,
-        Replace,
-        Rename,
-    };
-
     struct AssetId {
         std::string value;
 
@@ -33,11 +27,23 @@ namespace lumin::project {
         friend bool operator==(const AssetId&, const AssetId&) = default;
     };
 
+    struct AssetFingerprint {
+        std::uintmax_t fileSize = 0;
+        std::uint64_t contentHash = 0;
+        bool valid = false;
+
+        friend bool operator==(const AssetFingerprint&, const AssetFingerprint&) = default;
+    };
+
     struct AssetRecord {
         AssetId id;
         AssetType type = AssetType::Mesh;
         std::filesystem::path relativePath;
         std::string displayName;
+        AssetFingerprint fingerprint;
+        bool available = false;
+
+        friend bool operator==(const AssetRecord&, const AssetRecord&) = default;
     };
 
     class AssetRegistry {
@@ -53,19 +59,34 @@ namespace lumin::project {
         std::vector<AssetRecord> assets_;
     };
 
-    struct ImportRequest {
-        std::filesystem::path source;
-        std::filesystem::path destinationDirectory;
-        ImportConflictPolicy conflict = ImportConflictPolicy::Rename;
+    enum class ProjectEntryKind {
+        Directory,
+        File,
     };
 
-    struct ImportItemResult {
-        std::filesystem::path source;
-        std::optional<AssetRecord> asset;
+    struct ProjectEntry {
+        std::filesystem::path relativePath;
+        ProjectEntryKind kind = ProjectEntryKind::File;
+        bool protectedEntry = false;
+        std::optional<AssetId> asset;
+
+        friend bool operator==(const ProjectEntry&, const ProjectEntry&) = default;
+    };
+
+    struct AssetSyncResult {
+        std::size_t added = 0;
+        std::size_t moved = 0;
+        std::size_t modified = 0;
+        std::size_t missing = 0;
+        std::vector<std::string> diagnostics;
         std::string error;
 
         [[nodiscard]] bool succeeded() const noexcept {
-            return asset.has_value();
+            return error.empty();
+        }
+
+        [[nodiscard]] bool changed() const noexcept {
+            return added != 0 || moved != 0 || modified != 0 || missing != 0;
         }
     };
 
@@ -106,9 +127,10 @@ namespace lumin::project {
         [[nodiscard]] const ProjectManifest& manifest() const noexcept;
         [[nodiscard]] AssetRegistry& assets() noexcept;
         [[nodiscard]] const AssetRegistry& assets() const noexcept;
+        [[nodiscard]] const std::vector<ProjectEntry>& projectEntries() const noexcept;
         [[nodiscard]] const std::vector<std::string>& diagnostics() const noexcept;
 
-        [[nodiscard]] std::vector<ImportItemResult> importAssets(std::span<const ImportRequest> requests);
+        [[nodiscard]] AssetSyncResult synchronizeProjectFiles(bool forceHash = false);
         bool renameAsset(const AssetId& asset, std::string_view newName, std::string& error);
         bool removeAsset(const AssetId& asset, std::string& error);
         [[nodiscard]] std::optional<scene::ActorHandle> createActorFromMesh(const AssetId& asset,
@@ -120,6 +142,12 @@ namespace lumin::project {
         [[nodiscard]] const ProjectRenderSettings& renderSettings() const noexcept;
 
     private:
+        struct ObservedAssetFile {
+            std::filesystem::file_time_type writeTime{};
+            std::uintmax_t fileSize = 0;
+            AssetFingerprint fingerprint;
+        };
+
         scene::Level& level_;
         scene::Camera& camera_;
         scripting::ScriptRuntime& scripts_;
@@ -128,8 +156,11 @@ namespace lumin::project {
         std::filesystem::path projectFile_;
         std::filesystem::path root_;
         std::unordered_map<std::string, scene::MeshHandle> loadedMeshes_;
+        std::unordered_map<std::string, ObservedAssetFile> observedAssetFiles_;
+        std::vector<ProjectEntry> projectEntries_;
         std::vector<std::string> diagnostics_;
         ProjectRenderSettings renderSettings_;
+        bool registryNeedsUpgrade_ = false;
         bool dirty_ = false;
     };
 

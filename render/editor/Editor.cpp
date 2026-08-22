@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -72,6 +74,189 @@ namespace lumin::editor {
             ImGui::SetNextItemWidth(-style::Space1);
         }
 
+        enum class BrowserIconKind {
+            Folder,
+            Mesh,
+            Texture,
+            Script,
+            Scene,
+            Project,
+            File,
+        };
+
+        enum class ToolbarIcon {
+            Back,
+            Up,
+            Refresh,
+        };
+
+        std::string lowerAscii(std::string value) {
+            std::ranges::transform(value, value.begin(), [](unsigned char character) {
+                return static_cast<char>(std::tolower(character));
+            });
+            return value;
+        }
+
+        bool pathWithin(const std::filesystem::path& path, const std::filesystem::path& directory) {
+            if (directory.empty()) {
+                return true;
+            }
+            const auto relative = path.lexically_relative(directory);
+            return !relative.empty() && !relative.is_absolute() && *relative.begin() != "..";
+        }
+
+        BrowserIconKind browserIconFor(const project::ProjectEntry& entry, const project::AssetRecord* asset) {
+            if (entry.kind == project::ProjectEntryKind::Directory) {
+                return BrowserIconKind::Folder;
+            }
+            if (asset != nullptr) {
+                switch (asset->type) {
+                case project::AssetType::Mesh:
+                    return BrowserIconKind::Mesh;
+                case project::AssetType::Texture:
+                    return BrowserIconKind::Texture;
+                case project::AssetType::Script:
+                    return BrowserIconKind::Script;
+                }
+            }
+            if (entry.relativePath.extension() == ".scene") {
+                return BrowserIconKind::Scene;
+            }
+            if (entry.relativePath.extension() == ".luminproject" ||
+                entry.relativePath.filename() == "AssetRegistry.json") {
+                return BrowserIconKind::Project;
+            }
+            return BrowserIconKind::File;
+        }
+
+        ImU32 iconColor(BrowserIconKind kind) {
+            switch (kind) {
+            case BrowserIconKind::Folder:
+                return IM_COL32(222, 177, 82, 255);
+            case BrowserIconKind::Mesh:
+                return IM_COL32(103, 174, 200, 255);
+            case BrowserIconKind::Texture:
+                return IM_COL32(109, 190, 132, 255);
+            case BrowserIconKind::Script:
+                return IM_COL32(224, 137, 105, 255);
+            case BrowserIconKind::Scene:
+                return IM_COL32(185, 135, 207, 255);
+            case BrowserIconKind::Project:
+                return IM_COL32(211, 197, 151, 255);
+            case BrowserIconKind::File:
+                return IM_COL32(155, 161, 168, 255);
+            }
+            return IM_COL32_WHITE;
+        }
+
+        void drawBrowserIcon(ImDrawList& drawList, ImVec2 origin, float size, BrowserIconKind kind) {
+            const ImU32 color = iconColor(kind);
+            const ImU32 muted = IM_COL32(68, 73, 79, 255);
+            const float stroke = std::max(1.5f, size * 0.055f);
+            const ImVec2 minimum{origin.x + size * 0.12f, origin.y + size * 0.18f};
+            const ImVec2 maximum{origin.x + size * 0.88f, origin.y + size * 0.82f};
+            if (kind == BrowserIconKind::Folder) {
+                drawList.AddRectFilled({minimum.x, origin.y + size * 0.30f}, maximum, color, size * 0.07f);
+                drawList.AddRectFilled(minimum, {origin.x + size * 0.48f, origin.y + size * 0.42f}, color,
+                                       size * 0.06f);
+                drawList.AddLine({minimum.x, origin.y + size * 0.45f}, {maximum.x, origin.y + size * 0.45f},
+                                 IM_COL32(255, 255, 255, 65), stroke);
+                return;
+            }
+            if (kind == BrowserIconKind::Mesh) {
+                const ImVec2 top{origin.x + size * 0.50f, origin.y + size * 0.13f};
+                const ImVec2 left{origin.x + size * 0.17f, origin.y + size * 0.33f};
+                const ImVec2 right{origin.x + size * 0.83f, origin.y + size * 0.33f};
+                const ImVec2 bottomLeft{left.x, origin.y + size * 0.70f};
+                const ImVec2 bottomRight{right.x, bottomLeft.y};
+                const ImVec2 bottom{top.x, origin.y + size * 0.88f};
+                drawList.AddLine(top, left, color, stroke);
+                drawList.AddLine(top, right, color, stroke);
+                drawList.AddLine(left, right, color, stroke);
+                drawList.AddLine(left, bottomLeft, color, stroke);
+                drawList.AddLine(right, bottomRight, color, stroke);
+                drawList.AddLine(bottomLeft, bottom, color, stroke);
+                drawList.AddLine(bottomRight, bottom, color, stroke);
+                drawList.AddLine(top, bottom, color, stroke);
+                return;
+            }
+            drawList.AddRectFilled(minimum, maximum, muted, size * 0.045f);
+            drawList.AddRect(minimum, maximum, color, size * 0.045f, 0, stroke);
+            if (kind == BrowserIconKind::Texture) {
+                drawList.AddCircleFilled({origin.x + size * 0.68f, origin.y + size * 0.36f}, size * 0.075f, color);
+                const ImVec2 points[] = {{origin.x + size * 0.20f, origin.y + size * 0.72f},
+                                         {origin.x + size * 0.40f, origin.y + size * 0.47f},
+                                         {origin.x + size * 0.54f, origin.y + size * 0.62f},
+                                         {origin.x + size * 0.66f, origin.y + size * 0.53f},
+                                         {origin.x + size * 0.81f, origin.y + size * 0.72f}};
+                drawList.AddPolyline(points, static_cast<int>(std::size(points)), color, 0, stroke);
+            } else if (kind == BrowserIconKind::Script) {
+                drawList.AddPolyline(std::array<ImVec2, 3>{{{origin.x + size * 0.42f, origin.y + size * 0.36f},
+                                                            {origin.x + size * 0.30f, origin.y + size * 0.50f},
+                                                            {origin.x + size * 0.42f, origin.y + size * 0.64f}}}
+                                         .data(),
+                                     3, color, 0, stroke);
+                drawList.AddPolyline(std::array<ImVec2, 3>{{{origin.x + size * 0.58f, origin.y + size * 0.36f},
+                                                            {origin.x + size * 0.70f, origin.y + size * 0.50f},
+                                                            {origin.x + size * 0.58f, origin.y + size * 0.64f}}}
+                                         .data(),
+                                     3, color, 0, stroke);
+            } else if (kind == BrowserIconKind::Scene) {
+                const ImVec2 center{origin.x + size * 0.50f, origin.y + size * 0.56f};
+                drawList.AddCircle(center, size * 0.17f, color, 0, stroke);
+                drawList.AddLine(center, {center.x, origin.y + size * 0.27f}, IM_COL32(109, 190, 132, 255), stroke);
+                drawList.AddLine(center, {origin.x + size * 0.73f, origin.y + size * 0.69f},
+                                 IM_COL32(224, 137, 105, 255), stroke);
+                drawList.AddLine(center, {origin.x + size * 0.27f, origin.y + size * 0.69f},
+                                 IM_COL32(103, 174, 200, 255), stroke);
+            } else {
+                for (int line = 0; line < 3; ++line) {
+                    const float y = origin.y + size * (0.38f + 0.14f * static_cast<float>(line));
+                    drawList.AddLine({origin.x + size * 0.28f, y}, {origin.x + size * 0.72f, y}, color, stroke);
+                }
+            }
+        }
+
+        bool toolbarIconButton(const char* id, ToolbarIcon icon, bool enabled = true) {
+            const float side = ImGui::GetFrameHeight();
+            if (!enabled) {
+                ImGui::BeginDisabled();
+            }
+            const bool pressed = ImGui::InvisibleButton(id, {side, side});
+            const ImVec2 minimum = ImGui::GetItemRectMin();
+            const ImVec2 center{minimum.x + side * 0.5f, minimum.y + side * 0.5f};
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            const ImU32 color = ImGui::GetColorU32(enabled ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+            const float stroke = 1.8f;
+            if (icon == ToolbarIcon::Back) {
+                drawList->AddLine({center.x + side * 0.22f, center.y}, {center.x - side * 0.18f, center.y}, color,
+                                  stroke);
+                drawList->AddPolyline(std::array<ImVec2, 3>{{{center.x - side * 0.04f, center.y - side * 0.17f},
+                                                             {center.x - side * 0.20f, center.y},
+                                                             {center.x - side * 0.04f, center.y + side * 0.17f}}}
+                                          .data(),
+                                      3, color, 0, stroke);
+            } else if (icon == ToolbarIcon::Up) {
+                drawList->AddLine({center.x, center.y + side * 0.22f}, {center.x, center.y - side * 0.18f}, color,
+                                  stroke);
+                drawList->AddPolyline(std::array<ImVec2, 3>{{{center.x - side * 0.17f, center.y - side * 0.03f},
+                                                             {center.x, center.y - side * 0.20f},
+                                                             {center.x + side * 0.17f, center.y - side * 0.03f}}}
+                                          .data(),
+                                      3, color, 0, stroke);
+            } else {
+                drawList->AddCircle(center, side * 0.22f, color, 0, stroke);
+                const ImVec2 triangle[] = {{center.x + side * 0.12f, center.y - side * 0.23f},
+                                           {center.x + side * 0.27f, center.y - side * 0.21f},
+                                           {center.x + side * 0.22f, center.y - side * 0.07f}};
+                drawList->AddTriangleFilled(triangle[0], triangle[1], triangle[2], color);
+            }
+            if (!enabled) {
+                ImGui::EndDisabled();
+            }
+            return enabled && pressed;
+        }
+
     } // namespace
 
     struct Editor::Impl {
@@ -117,14 +302,15 @@ namespace lumin::editor {
         std::array<char, 128> contentSearch{};
         std::array<char, 128> renameAssetName{};
         std::optional<project::AssetId> renameAssetId;
+        std::filesystem::path contentDirectory;
+        std::filesystem::path contentProjectRoot;
+        std::vector<std::filesystem::path> contentHistory;
+        std::chrono::steady_clock::time_point lastContentSync{};
         std::filesystem::path newProjectLocation;
-        std::vector<std::filesystem::path> importSources;
-        project::ImportConflictPolicy importConflict = project::ImportConflictPolicy::Rename;
         std::vector<std::filesystem::path> recentProjects;
         std::string statusMessage;
         std::function<void()> pendingDestructiveAction;
         bool showNewProject = false;
-        bool showImport = false;
         bool showConfirm = false;
         bool showRenameAsset = false;
         bool exitRequested = false;
@@ -379,11 +565,11 @@ namespace lumin::editor {
         }
 
         void requestOpenProject() {
-            if (!dialogs.openFiles || projectSession == nullptr) {
+            if (!dialogs.openProject || projectSession == nullptr) {
                 statusMessage = "Project dialog service is unavailable.";
                 return;
             }
-            dialogs.openFiles(EditorFileDialogKind::Project, false, [this](std::vector<std::filesystem::path> paths) {
+            dialogs.openProject([this](std::vector<std::filesystem::path> paths) {
                 if (!paths.empty()) {
                     openProjectPath(paths.front());
                 }
@@ -398,19 +584,6 @@ namespace lumin::editor {
             projectSession->setRenderSettings(currentProjectRenderSettings());
             std::string error;
             statusMessage = projectSession->save(error) ? "Project saved." : std::move(error);
-        }
-
-        void requestImport() {
-            if (!dialogs.openFiles || projectSession == nullptr || !projectSession->hasProject()) {
-                statusMessage = "Open a project before importing assets.";
-                return;
-            }
-            dialogs.openFiles(EditorFileDialogKind::Asset, true, [this](std::vector<std::filesystem::path> paths) {
-                if (!paths.empty()) {
-                    importSources = std::move(paths);
-                    showImport = true;
-                }
-            });
         }
 
         void drawMainMenu() {
@@ -442,10 +615,6 @@ namespace lumin::editor {
                 if (ImGui::MenuItem("Save Scene", "Ctrl+S", false,
                                     projectSession != nullptr && projectSession->hasProject())) {
                     saveProject();
-                }
-                if (ImGui::MenuItem("Import Assets...", nullptr, false,
-                                    projectSession != nullptr && projectSession->hasProject())) {
-                    requestImport();
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Exit")) {
@@ -506,47 +675,6 @@ namespace lumin::editor {
                 ImGui::EndPopup();
             }
 
-            if (showImport) {
-                ImGui::OpenPopup("Import Assets");
-                showImport = false;
-            }
-            if (ImGui::BeginPopupModal("Import Assets", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::Text("%zu file(s)", importSources.size());
-                if (ImGui::BeginChild("ImportFiles", {520.0f, 180.0f}, true)) {
-                    for (const auto& path : importSources) {
-                        const auto type = project::assetTypeForPath(path);
-                        ImGui::Text("%s  [%s]", path.filename().string().c_str(),
-                                    type.has_value() ? project::assetTypeName(*type) : "Unsupported");
-                    }
-                }
-                ImGui::EndChild();
-                constexpr const char* policies[] = {"Skip", "Replace", "Auto rename"};
-                int policy = static_cast<int>(importConflict);
-                ImGui::SetNextItemWidth(180.0f);
-                if (ImGui::Combo("Conflict", &policy, policies, 3)) {
-                    importConflict = static_cast<project::ImportConflictPolicy>(policy);
-                }
-                if (ImGui::Button("Import")) {
-                    std::vector<project::ImportRequest> requests;
-                    requests.reserve(importSources.size());
-                    for (const auto& source : importSources) {
-                        requests.push_back({.source = source, .destinationDirectory = {}, .conflict = importConflict});
-                    }
-                    const auto results = projectSession->importAssets(requests);
-                    const auto failures = std::ranges::count_if(results, [](const auto& result) {
-                        return !result.succeeded();
-                    });
-                    statusMessage = std::to_string(results.size() - failures) + " imported, " +
-                                    std::to_string(failures) + " failed.";
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Cancel")) {
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::EndPopup();
-            }
-
             if (showConfirm) {
                 ImGui::OpenPopup("Unsaved Changes");
                 showConfirm = false;
@@ -580,65 +708,257 @@ namespace lumin::editor {
             }
         }
 
-        void drawContentBrowser() {
-            ImGui::Begin("Content Browser");
+        bool contentDirectoryExists(const std::filesystem::path& directory) const {
+            if (directory.empty()) {
+                return true;
+            }
+            return projectSession != nullptr &&
+                   std::ranges::any_of(projectSession->projectEntries(), [&](const project::ProjectEntry& entry) {
+                       return entry.kind == project::ProjectEntryKind::Directory &&
+                              entry.relativePath.lexically_normal() == directory.lexically_normal();
+                   });
+        }
+
+        void navigateContent(std::filesystem::path directory, bool remember = true) {
+            directory = directory.lexically_normal();
+            if (directory == ".") {
+                directory.clear();
+            }
+            if (!contentDirectoryExists(directory) || directory == contentDirectory) {
+                return;
+            }
+            if (remember) {
+                contentHistory.push_back(contentDirectory);
+            }
+            contentDirectory = std::move(directory);
+        }
+
+        void synchronizeProjectFiles(bool manual) {
             if (projectSession == nullptr || !projectSession->hasProject()) {
+                return;
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (!manual && lastContentSync.time_since_epoch().count() != 0 &&
+                now - lastContentSync < std::chrono::seconds{1}) {
+                return;
+            }
+            lastContentSync = now;
+            const project::AssetSyncResult result = projectSession->synchronizeProjectFiles(manual);
+            if (!result.succeeded()) {
+                statusMessage = result.error;
+            } else if (manual || result.changed()) {
+                statusMessage = std::to_string(result.added) + " added, " + std::to_string(result.moved) + " moved, " +
+                                std::to_string(result.modified) + " modified, " + std::to_string(result.missing) +
+                                " missing.";
+                if (!result.diagnostics.empty()) {
+                    statusMessage += " " + result.diagnostics.front();
+                }
+            }
+            if (!contentDirectoryExists(contentDirectory)) {
+                contentDirectory.clear();
+                contentHistory.clear();
+            }
+        }
+
+        void drawDirectoryTreeNode(const std::filesystem::path& directory, std::string_view label, bool rootNode) {
+            bool hasChildren = false;
+            for (const project::ProjectEntry& entry : projectSession->projectEntries()) {
+                if (entry.kind == project::ProjectEntryKind::Directory &&
+                    entry.relativePath.parent_path() == directory) {
+                    hasChildren = true;
+                    break;
+                }
+            }
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (!hasChildren) {
+                flags |= ImGuiTreeNodeFlags_Leaf;
+            }
+            if (directory == contentDirectory) {
+                flags |= ImGuiTreeNodeFlags_Selected;
+            }
+            if (rootNode) {
+                flags |= ImGuiTreeNodeFlags_DefaultOpen;
+            }
+            ImGui::PushID(directory.generic_string().c_str());
+            const bool open =
+                ImGui::TreeNodeEx("##directory", flags, "%.*s", static_cast<int>(label.size()), label.data());
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+                navigateContent(directory);
+            }
+            if (open) {
+                for (const project::ProjectEntry& entry : projectSession->projectEntries()) {
+                    if (entry.kind == project::ProjectEntryKind::Directory &&
+                        entry.relativePath.parent_path() == directory) {
+                        drawDirectoryTreeNode(entry.relativePath, entry.relativePath.filename().string(), false);
+                    }
+                }
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+
+        void drawContentTile(const project::ProjectEntry& entry, std::optional<project::AssetId>& removeAsset) {
+            constexpr float tileWidth = 104.0f;
+            constexpr float tileHeight = 96.0f;
+            constexpr float iconSize = 46.0f;
+            const project::AssetRecord* asset =
+                entry.asset.has_value() ? projectSession->assets().find(*entry.asset) : nullptr;
+            const std::string id = entry.relativePath.generic_string();
+            ImGui::PushID(id.c_str());
+            ImGui::InvisibleButton("##entry", {tileWidth, tileHeight});
+            const bool hovered = ImGui::IsItemHovered();
+            const ImVec2 minimum = ImGui::GetItemRectMin();
+            const ImVec2 maximum = ImGui::GetItemRectMax();
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            if (hovered) {
+                drawList->AddRectFilled(minimum, maximum, ImGui::GetColorU32(ImGuiCol_HeaderHovered), 4.0f);
+            }
+            drawBrowserIcon(*drawList, {minimum.x + (tileWidth - iconSize) * 0.5f, minimum.y + 5.0f}, iconSize,
+                            browserIconFor(entry, asset));
+            const std::string name = entry.relativePath.filename().string();
+            drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), {minimum.x + 5.0f, minimum.y + 58.0f},
+                              ImGui::GetColorU32(ImGuiCol_Text), name.c_str(), nullptr, tileWidth - 10.0f);
+
+            if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                if (entry.kind == project::ProjectEntryKind::Directory) {
+                    navigateContent(entry.relativePath);
+                } else if (asset != nullptr && asset->available && asset->type == project::AssetType::Mesh) {
+                    if (const auto created = projectSession->createActorFromMesh(asset->id); created.has_value()) {
+                        selectActor(*created);
+                    }
+                }
+            }
+            if (hovered) {
+                ImGui::SetTooltip("%s", entry.relativePath.generic_string().c_str());
+            }
+            if (asset != nullptr && asset->available && ImGui::BeginPopupContextItem("AssetContext")) {
+                if (ImGui::MenuItem("Rename")) {
+                    renameAssetId = asset->id;
+                    renameAssetName.fill('\0');
+                    const std::size_t length = std::min(asset->displayName.size(), renameAssetName.size() - 1);
+                    std::copy_n(asset->displayName.data(), length, renameAssetName.data());
+                    showRenameAsset = true;
+                }
+                if (ImGui::MenuItem("Delete")) {
+                    removeAsset = asset->id;
+                }
+                ImGui::EndPopup();
+            }
+            if (asset != nullptr && asset->available && ImGui::BeginDragDropSource()) {
+                ImGui::SetDragDropPayload("LUMIN_ASSET", asset->id.value.data(), asset->id.value.size());
+                ImGui::TextUnformatted(asset->displayName.c_str());
+                ImGui::EndDragDropSource();
+            }
+            ImGui::PopID();
+        }
+
+        void drawContentBrowser() {
+            if (!ImGui::Begin("Content Browser")) {
+                ImGui::End();
+                return;
+            }
+            if (projectSession == nullptr || !projectSession->hasProject()) {
+                contentProjectRoot.clear();
+                contentDirectory.clear();
+                contentHistory.clear();
                 ImGui::TextDisabled("Open or create a project to browse content.");
                 ImGui::End();
                 return;
             }
-            if (ImGui::Button("Import")) {
-                requestImport();
+
+            if (contentProjectRoot != projectSession->rootDirectory()) {
+                contentProjectRoot = projectSession->rootDirectory();
+                contentDirectory.clear();
+                contentHistory.clear();
+                contentSearch.fill('\0');
+                lastContentSync = std::chrono::steady_clock::now();
+            }
+            synchronizeProjectFiles(false);
+
+            if (toolbarIconButton("##contentBack", ToolbarIcon::Back, !contentHistory.empty())) {
+                contentDirectory = contentHistory.back();
+                contentHistory.pop_back();
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Back");
+            }
+            ImGui::SameLine();
+            if (toolbarIconButton("##contentUp", ToolbarIcon::Up, !contentDirectory.empty())) {
+                navigateContent(contentDirectory.parent_path());
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Up");
+            }
+            ImGui::SameLine();
+            if (toolbarIconButton("##contentRefresh", ToolbarIcon::Refresh)) {
+                synchronizeProjectFiles(true);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Refresh");
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton(projectSession->manifest().name.c_str())) {
+                navigateContent({});
+            }
+            const std::filesystem::path displayedDirectory = contentDirectory;
+            std::filesystem::path breadcrumb;
+            std::optional<std::filesystem::path> breadcrumbTarget;
+            for (const auto& component : displayedDirectory) {
+                breadcrumb /= component;
+                ImGui::SameLine();
+                ImGui::TextDisabled(">");
+                ImGui::SameLine();
+                const std::string label = component.string() + "##" + breadcrumb.generic_string();
+                if (ImGui::SmallButton(label.c_str())) {
+                    breadcrumbTarget = breadcrumb;
+                }
+            }
+            if (breadcrumbTarget.has_value()) {
+                navigateContent(std::move(*breadcrumbTarget));
             }
             ImGui::SameLine();
             ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputTextWithHint("##contentSearch", "Search assets", contentSearch.data(), contentSearch.size());
-            const std::string_view query{contentSearch.data()};
+            ImGui::InputTextWithHint("##contentSearch", "Search project", contentSearch.data(), contentSearch.size());
+
+            const float treeWidth = std::clamp(ImGui::GetContentRegionAvail().x * 0.24f, 150.0f, 260.0f);
+            ImGui::BeginChild("DirectoryTree", {treeWidth, -ImGui::GetFrameHeightWithSpacing()}, false);
+            drawDirectoryTreeNode({}, projectSession->manifest().name, true);
+            ImGui::EndChild();
+            ImGui::SameLine();
+            ImGui::BeginChild("DirectoryContents", {0.0f, -ImGui::GetFrameHeightWithSpacing()}, false);
+
+            std::vector<const project::ProjectEntry*> visibleEntries;
+            const std::string query = lowerAscii(contentSearch.data());
+            for (const project::ProjectEntry& entry : projectSession->projectEntries()) {
+                const bool visible =
+                    query.empty()
+                        ? entry.relativePath.parent_path() == contentDirectory
+                        : pathWithin(entry.relativePath, contentDirectory) &&
+                              lowerAscii(entry.relativePath.filename().string()).find(query) != std::string::npos;
+                if (visible) {
+                    visibleEntries.push_back(&entry);
+                }
+            }
+            std::ranges::sort(visibleEntries, [](const auto* left, const auto* right) {
+                if (left->kind != right->kind) {
+                    return left->kind == project::ProjectEntryKind::Directory;
+                }
+                return lowerAscii(left->relativePath.filename().string()) <
+                       lowerAscii(right->relativePath.filename().string());
+            });
+
+            constexpr float tileWidth = 104.0f;
+            const int columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / tileWidth));
             std::optional<project::AssetId> removeAsset;
-            if (ImGui::BeginTable("Assets", 2,
-                                  ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
-                ImGui::TableSetupColumn("Name");
-                ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-                ImGui::TableHeadersRow();
-                for (const project::AssetRecord& asset : projectSession->assets().assets()) {
-                    if (!query.empty() && asset.displayName.find(query) == std::string::npos) {
-                        continue;
-                    }
-                    ImGui::PushID(asset.id.value.c_str());
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    if (ImGui::Selectable(asset.displayName.c_str(), false,
-                                          ImGuiSelectableFlags_SpanAllColumns |
-                                              ImGuiSelectableFlags_AllowDoubleClick) &&
-                        ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && asset.type == project::AssetType::Mesh) {
-                        if (const auto created = projectSession->createActorFromMesh(asset.id); created.has_value()) {
-                            selectActor(*created);
-                        }
-                    }
-                    if (ImGui::BeginDragDropSource()) {
-                        ImGui::SetDragDropPayload("LUMIN_ASSET", asset.id.value.data(), asset.id.value.size());
-                        ImGui::TextUnformatted(asset.displayName.c_str());
-                        ImGui::EndDragDropSource();
-                    }
-                    if (ImGui::BeginPopupContextItem("AssetContext")) {
-                        if (ImGui::MenuItem("Rename")) {
-                            renameAssetId = asset.id;
-                            renameAssetName.fill('\0');
-                            const std::size_t length = std::min(asset.displayName.size(), renameAssetName.size() - 1);
-                            std::copy_n(asset.displayName.data(), length, renameAssetName.data());
-                            showRenameAsset = true;
-                        }
-                        if (ImGui::MenuItem("Delete")) {
-                            removeAsset = asset.id;
-                        }
-                        ImGui::EndPopup();
-                    }
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(project::assetTypeName(asset.type));
-                    ImGui::PopID();
+            if (ImGui::BeginTable("ProjectEntries", columns, ImGuiTableFlags_SizingFixedFit)) {
+                for (const project::ProjectEntry* entry : visibleEntries) {
+                    ImGui::TableNextColumn();
+                    drawContentTile(*entry, removeAsset);
                 }
                 ImGui::EndTable();
             }
+            ImGui::EndChild();
+
             if (removeAsset.has_value()) {
                 std::string error;
                 if (!projectSession->removeAsset(*removeAsset, error)) {
@@ -669,8 +989,10 @@ namespace lumin::editor {
                 ImGui::EndPopup();
             }
             if (!statusMessage.empty()) {
-                ImGui::Separator();
-                ImGui::TextWrapped("%s", statusMessage.c_str());
+                ImGui::TextUnformatted(statusMessage.c_str());
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", statusMessage.c_str());
+                }
             }
             ImGui::End();
         }
@@ -697,7 +1019,7 @@ namespace lumin::editor {
                     }
                     if (projectSession != nullptr && projectSession->hasProject() && ImGui::BeginMenu("Add Script")) {
                         for (const project::AssetRecord& asset : projectSession->assets().assets()) {
-                            if (asset.type == project::AssetType::Script &&
+                            if (asset.available && asset.type == project::AssetType::Script &&
                                 ImGui::MenuItem(asset.displayName.c_str())) {
                                 const auto result =
                                     scripts.attach(level, handle, projectSession->rootDirectory() / asset.relativePath);
@@ -802,7 +1124,7 @@ namespace lumin::editor {
                             const project::AssetId asset{std::string{static_cast<const char*>(payload->Data),
                                                                      static_cast<std::size_t>(payload->DataSize)}};
                             if (const project::AssetRecord* record = projectSession->assets().find(asset);
-                                record != nullptr && record->type == project::AssetType::Texture) {
+                                record != nullptr && record->available && record->type == project::AssetType::Texture) {
                                 target = projectSession->rootDirectory() / record->relativePath;
                                 textureChanged = true;
                             }
@@ -883,7 +1205,7 @@ namespace lumin::editor {
                     if (projectSession != nullptr && projectSession->hasProject() &&
                         ImGui::BeginCombo("Add Script", "Select")) {
                         for (const project::AssetRecord& asset : projectSession->assets().assets()) {
-                            if (asset.type == project::AssetType::Script &&
+                            if (asset.available && asset.type == project::AssetType::Script &&
                                 ImGui::Selectable(asset.displayName.c_str())) {
                                 const auto result =
                                     scripts.attach(level, *actor, projectSession->rootDirectory() / asset.relativePath);

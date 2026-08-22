@@ -117,11 +117,12 @@ NRD 开关；TAA 是两条路径共用的选项。面板还可调整相机、曝
 
 ## 项目与资源编辑
 
-编辑器的 `File` 菜单提供 `New Project`、`Open Project`、`Recent Projects`、`Save Scene` 和 `Import Assets`。
+编辑器的 `File` 菜单提供 `New Project`、`Open Project`、`Recent Projects` 和 `Save Scene`。
 项目会创建 `.luminproject` 清单、`Scenes/Main.lumin.scene`、资源注册表，以及 Mesh、Texture、Script 内容目录。
-当前支持导入 OBJ、PNG/JPG 和 Lua；导入窗口会先校验资源，再按 Skip、Replace 或 Auto rename 策略写入项目。
+项目根目录任意位置的 OBJ、PNG/JPG 和 Lua 文件会被自动登记为带稳定 `AssetId` 的资源，内容在实际使用时加载。
 
-`Content Browser` 支持搜索、拖放创建模型 Actor、纹理拖放到材质槽，以及资源重命名和引用保护删除。每个 Actor
+`Content Browser` 以目录树、面包屑和类型图标展示整个项目，可自动刷新或手动同步外部文件变化，并支持搜索、拖放
+创建模型 Actor、纹理拖放到材质槽，以及资源重命名和引用保护删除。项目清单、场景、`.lumin` 和普通文件只读。每个 Actor
 可以在 `Details` 中绑定多个 Lua 脚本，调整执行顺序、启用状态、热重载或移除。项目场景保存通用 Actor、资源引用、
 材质、脚本组件、环境、编辑器相机和渲染设置。完整目录和生命周期约定见
 [`docs/project-editor.md`](docs/project-editor.md)。
