@@ -1,5 +1,5 @@
+#include "render/resources/FullscreenPipelineFactory.hpp"
 #include "render/resources/PipelineFactory.hpp"
-#include "render/resources/PipelineManager.hpp"
 #include "render/resources/ShaderLibrary.hpp"
 
 #include <nvrhi/nvrhi.h>
@@ -42,15 +42,9 @@ namespace {
         { factory.createGraphicsPipeline(desc) } -> std::same_as<nvrhi::GraphicsPipelineHandle>;
     });
 
-    static_assert(requires(lumin::render::PipelineManager& manager, nvrhi::BindingLayoutHandle fullscreenLayout,
-                           nvrhi::BindingLayoutHandle materialLayout, nvrhi::BindingLayoutHandle atmosphereLayout,
-                           nvrhi::Format format) {
-        manager.create(fullscreenLayout, materialLayout, atmosphereLayout, format, format);
-        { manager.sky() } -> std::same_as<const nvrhi::GraphicsPipelineHandle&>;
-        { manager.deferredLighting() } -> std::same_as<const nvrhi::GraphicsPipelineHandle&>;
-        { manager.taa() } -> std::same_as<const nvrhi::GraphicsPipelineHandle&>;
-        { manager.tonemap() } -> std::same_as<const nvrhi::GraphicsPipelineHandle&>;
-        { manager.postprocess() } -> std::same_as<const nvrhi::GraphicsPipelineHandle&>;
+    static_assert(requires(const lumin::render::FullscreenPipelineFactory& factory,
+                           std::span<const nvrhi::BindingLayoutHandle> layouts, nvrhi::Format format) {
+        { factory.create("Taa", format, layouts) } -> std::same_as<nvrhi::GraphicsPipelineHandle>;
     });
 
     std::string spirvEntryPoint(const std::filesystem::path& path) {
@@ -111,7 +105,7 @@ namespace {
 
         if (cullModes != std::vector{nvrhi::RasterCullMode::None}) {
             throw std::runtime_error(
-                "PipelineManager fullscreen descriptor must disable culling after the fullscreen winding change.");
+                "Fullscreen pipeline descriptors must disable culling after the fullscreen winding change.");
         }
     }
 

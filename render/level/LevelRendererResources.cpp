@@ -30,8 +30,17 @@ namespace lumin::render {
             .quality = {},
         });
         createAtmosphereConsumerBindings();
-        pipelines_.create(textures_.bindingLayout(), directLightingBindingLayout_, atmosphereConsumerBindingLayout_,
-                          textures_.lightingFormat(), context_.swapchainRhiFormat());
+        const std::array<nvrhi::BindingLayoutHandle, 1> fullscreenLayouts = {textures_.bindingLayout()};
+        const std::array<nvrhi::BindingLayoutHandle, 2> lightingLayouts = {textures_.bindingLayout(),
+                                                                           directLightingBindingLayout_};
+        const std::array<nvrhi::BindingLayoutHandle, 2> skyLayouts = {textures_.bindingLayout(),
+                                                                      atmosphereConsumerBindingLayout_};
+        skyPipeline_ = fullscreenPipelineFactory_.create("Sky", textures_.lightingFormat(), skyLayouts);
+        directLightingPipeline_ =
+            fullscreenPipelineFactory_.create("Deferred", textures_.lightingFormat(), lightingLayouts);
+        temporalAaPipeline_ = fullscreenPipelineFactory_.create("Taa", textures_.lightingFormat(), fullscreenLayouts);
+        toneMappingPipeline_ =
+            fullscreenPipelineFactory_.create("PostProcess", context_.swapchainRhiFormat(), fullscreenLayouts);
 
         std::array<gi::FrameResources, TextureManager::maxFramesInFlight> giFrames{};
         for (std::uint32_t frameIndex = 0; frameIndex < giFrames.size(); ++frameIndex) {
@@ -303,7 +312,10 @@ namespace lumin::render {
         destroyHybridGiResources();
         directLightingBindingSets_.fill(nullptr);
         modelRenderer_.reset();
-        pipelines_.destroy();
+        toneMappingPipeline_ = nullptr;
+        temporalAaPipeline_ = nullptr;
+        directLightingPipeline_ = nullptr;
+        skyPipeline_ = nullptr;
         atmosphereConsumerBindingSets_.fill(nullptr);
         atmosphereConsumerBindingLayout_ = nullptr;
         atmosphereLutGpu_.reset();

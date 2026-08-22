@@ -122,7 +122,8 @@ namespace lumin::render {
                               core::UiFontAtlas uiFontAtlas,
                               std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
         : context_(context), level_(level), shaderDirectory_(std::move(shaderDirectory)),
-          uiFontAtlas_(std::move(uiFontAtlas)), textures_(context), pipelines_(context, shaderDirectory_),
+          uiFontAtlas_(std::move(uiFontAtlas)), textures_(context),
+          fullscreenPipelineFactory_(*context.rhiDevice().Get(), shaderDirectory_),
           globalIllumination_(std::move(globalIllumination)) {
         if (globalIllumination_ == nullptr) {
             globalIllumination_ = gi::makeLegacyBackend(shaderDirectory_);

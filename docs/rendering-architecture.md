@@ -35,9 +35,9 @@ resize 和 shutdown 在安全边界按逆序通知，使消费者先释放对上
 当前运行时使用 `DefaultRenderPipelines` 提供的 Raster/Hybrid recipe，并经
 `RenderPipelineRecipeResolver + RenderPipelineInstance` 事务式创建候选管线。Feature 通过显式 factory 注册；旧
 `DeferredRenderFeatureSet`、`LevelRenderFeatureKind`、`LevelRenderFeatureHost` 和中央分派 `switch` 已删除。运行时仍直接
-读取活动场景，且部分 Feature 尚通过 `TextureManager` 与 `PipelineManager` 共享物理资源和 pipeline；这些剩余边界会在
-`RenderFramePacket`、Feature 资源所有权和渲染线程接入阶段删除。帧内数据已经通过 typed blackboard 隔离，不再存在万能
-帧数据结构。
+读取活动场景，且部分 Feature 尚通过 `TextureManager` 共享物理资源；该剩余边界会在 `RenderFramePacket`、Feature
+资源所有权和渲染线程接入阶段删除。`PipelineManager` 已删除，各 Feature pipeline handle 由拥有者保存，并统一使用
+RenderRhi 的无业务语义 `FullscreenPipelineFactory` 创建。帧内数据已经通过 typed blackboard 隔离，不再存在万能帧数据结构。
 
 ## 场景更新
 
@@ -81,7 +81,7 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 
 `LevelRenderer` 是迁移期兼容门面。`render/LevelRenderer.hpp` 只保留窗口、上下文、场景引用和逐帧
 入口所需的 API；具体资源成员通过 `std::unique_ptr<LevelRenderer::Impl>` 隐藏在实现文件中。这样公共头不再暴露
-`TextureManager`、`PipelineManager`、Hybrid GI 后端或 NvRHI framebuffer，资源成员变化也不会迫使 Application 和
+`TextureManager`、各 Feature pipeline handle、Hybrid GI 后端或 NvRHI framebuffer，资源成员变化也不会迫使 Application 和
 编辑器重新编译。`LevelRenderer.cpp` 只负责门面转发、帧入口、提交顺序和异常清理。
 
 实现按职责分成以下文件：
@@ -100,7 +100,8 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 渲染基础设施按物理目录隔离：
 
 - `render/resources/` 包含 `FrameGraph`、`DescriptorIndexingLimits`、`TextureManager`、`PipelineFactory`、
-  `PipelineManager`、`ShaderLibrary` 和 NvRHI 资源包装。`FrameGraph` 只负责外部分配资源的依赖排序与状态转换，
+  `FullscreenPipelineFactory`、`ShaderLibrary` 和 NvRHI 资源包装。通用 factory 不缓存或命名 Feature pipeline；
+  `FrameGraph` 只负责外部分配资源的依赖排序与状态转换，
   `DescriptorIndexingLimits` 负责材质纹理 descriptor 的容量预检和绑定计划；两者都不依赖 Editor。
 - `render/platform/vulkan/` 包含 `VulkanContext` 和 `VulkanRayTracingCapabilities`，是唯一允许直接调用原生 Vulkan
   设备、交换链和能力查询的目录。

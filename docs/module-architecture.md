@@ -57,7 +57,8 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 - `render/platform/` 保存窗口和调试适配；`render/platform/vulkan/` 只保存原生 Vulkan 上下文、交换链、
   能力探测以及与 NvRHI 的 native interop。
 - `render/core/` 保存后端无关的规划、设置和帧事务契约；`render/resources/` 保存 NvRHI FrameGraph 和通用 factory。
-  迁移完成前 `TextureManager`、`PipelineManager` 仍作为 Raster 兼容实现存在，禁止新增其他业务资源所有权。
+  迁移完成前 `TextureManager` 仍作为 Raster 兼容实现存在，禁止新增其他业务资源所有权；旧 `PipelineManager` 已由
+  无业务语义的 `FullscreenPipelineFactory` 和各 Feature 自有 handle 替代。
 - `render/editor/` 保存 `Editor`、`ImGuiContent` 和 `ImGuiFrontend`。该目录在主线程独占 ImGui context 与 SDL backend，
   深拷贝生成 `UiDrawPacket`；依赖关系不能反向流入 Runtime 或 Feature。
 - `render/presentation/` 保存 `UiRenderer` 与 `PresentationRenderer`，以稳定逻辑纹理 ID 解析字体和 Viewport 物理资源，

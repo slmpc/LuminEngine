@@ -34,6 +34,7 @@ add_library(lumin_render_rhi STATIC
     resources/DescriptorIndexingLimits.cpp
     resources/FrameGraph.cpp
     resources/FrameGraphResourceImporter.cpp
+    resources/FullscreenPipelineFactory.cpp
     resources/PipelineFactory.cpp
     resources/ShaderLibrary.cpp
     resources/VulkanResources.cpp
@@ -79,7 +80,6 @@ target_link_libraries(lumin_render_gpu_scene PUBLIC Lumin::RenderCore Lumin::Ren
 add_library(lumin_render_raster STATIC
     ModelRenderer.cpp
     ObjRenderer.cpp
-    resources/PipelineManager.cpp
     resources/TextureManager.cpp
 )
 add_library(Lumin::RasterFeatures ALIAS lumin_render_raster)

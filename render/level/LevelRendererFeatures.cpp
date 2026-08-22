@@ -910,7 +910,7 @@ namespace lumin::render {
                 builder.writeTexture(sceneHdr.color.graphResource, nvrhi::ResourceStates::RenderTarget);
             },
             [this, frameIndex, framebuffer = postProcess.lightingFramebuffer](const FrameGraphContext& frameContext) {
-                recordFullscreenPass(*frameContext.commandList, *framebuffer, pipelines_.sky(), frameIndex,
+                recordFullscreenPass(*frameContext.commandList, *framebuffer, skyPipeline_, frameIndex,
                                      atmosphereConsumerBindingSets_[frameIndex]);
             });
     }
@@ -982,7 +982,7 @@ namespace lumin::render {
                 builder.writeTexture(temporal.color.graphResource, nvrhi::ResourceStates::RenderTarget);
             },
             [this, frameIndex, framebuffer = postProcess.temporalFramebuffer](const FrameGraphContext& frameContext) {
-                recordFullscreenPass(*frameContext.commandList, *framebuffer, pipelines_.taa(), frameIndex);
+                recordFullscreenPass(*frameContext.commandList, *framebuffer, temporalAaPipeline_, frameIndex);
             });
         graph.addPass(
             "TAA history copy", FrameGraphPassType::Transfer,
@@ -1016,7 +1016,7 @@ namespace lumin::render {
             },
             [this, frameIndex,
              framebuffer = postProcess.toneMappingFramebuffer](const FrameGraphContext& frameContext) {
-                recordFullscreenPass(*frameContext.commandList, *framebuffer, pipelines_.tonemap(), frameIndex);
+                recordFullscreenPass(*frameContext.commandList, *framebuffer, toneMappingPipeline_, frameIndex);
             });
     }
 
@@ -1087,7 +1087,7 @@ namespace lumin::render {
             throw std::logic_error("Direct-lighting material bindings are unavailable for the frame slot.");
         }
         nvrhi::GraphicsState state;
-        state.setPipeline(pipelines_.deferredLighting())
+        state.setPipeline(directLightingPipeline_)
             .setFramebuffer(&framebuffer)
             .setViewport(nvrhi::ViewportState().addViewportAndScissorRect(
                 nvrhi::Viewport(static_cast<float>(renderExtent_.width), static_cast<float>(renderExtent_.height))))

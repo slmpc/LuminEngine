@@ -10,7 +10,7 @@
 #include "render/pipelines/DefaultRenderPipelines.hpp"
 #include "render/presentation/PresentationRenderer.hpp"
 #include "render/resources/FrameGraph.hpp"
-#include "render/resources/PipelineManager.hpp"
+#include "render/resources/FullscreenPipelineFactory.hpp"
 #include "render/resources/TextureManager.hpp"
 #include "render/world/RenderWorld.hpp"
 
@@ -161,7 +161,11 @@ namespace lumin::render {
         std::filesystem::path shaderDirectory_;
         core::UiFontAtlas uiFontAtlas_;
         TextureManager textures_;
-        PipelineManager pipelines_;
+        FullscreenPipelineFactory fullscreenPipelineFactory_;
+        nvrhi::GraphicsPipelineHandle skyPipeline_;
+        nvrhi::GraphicsPipelineHandle directLightingPipeline_;
+        nvrhi::GraphicsPipelineHandle temporalAaPipeline_;
+        nvrhi::GraphicsPipelineHandle toneMappingPipeline_;
         std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination_;
         PresentationRenderer presentation_;
         GpuTexture viewportOutput_;
