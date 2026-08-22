@@ -520,7 +520,7 @@ LUMIN_ENABLE_VOLUMETRIC_CLOUDS=ON|OFF
 - [ ] 扩展 GPU Scene previous transform、灯光数组和材质访问 ABI。
 - [ ] 将 Hybrid、raster fallback、NRD、cloud temporal 和 TAA 的 motion 全部迁移为 `previous-current`。
 - [ ] 删除 RTDI 临时原型，按最终契约重建 header/source/shader/manifest。
-- [ ] 调整 `TextureManager`，Hybrid 模式不分配 G-buffer/CSM。
+- [ ] 让 RT surface owner 完全自持物理纹理，使 Hybrid 模式不再创建 `RasterFeatureResources` 的 G-buffer/CSM。
 
 门槛：Hybrid 空管线可录制、提交、resize；资源分配测试证明没有 G-buffer/CSM image。
 

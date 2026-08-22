@@ -20,43 +20,55 @@ namespace lumin::render {
     void LevelRenderer::Impl::createRenderResources() {
         const std::uint32_t width = renderExtent_.width;
         const std::uint32_t height = renderExtent_.height;
-        textures_.create(width, height);
+        rasterResources_.create(width, height);
+        std::array<PostFxBindingInputs, frameSlotCount> postFxInputs{};
+        for (std::uint32_t frameIndex = 0; frameIndex < frameSlotCount; ++frameIndex) {
+            const RasterFeatureFrameResources& raster = rasterResources_.frame(frameIndex);
+            postFxInputs[frameIndex].surfaces = {raster.position.texture, raster.normalRoughness.texture,
+                                                 raster.albedo.texture, raster.motion.texture};
+            for (std::uint32_t cascade = 0; cascade < shadowCascadeCount; ++cascade) {
+                postFxInputs[frameIndex].shadows[cascade] = raster.shadowCascades[cascade].texture;
+            }
+        }
+        postFxResources_.create(width, height, postFxInputs);
         createViewportOutput();
         createDirectLightingBindingLayout();
         atmosphereLutGpu_ = std::make_unique<atmosphere::AtmosphereLutGpu>(atmosphere::AtmosphereLutGpuCreateInfo{
             .device = context_.rhiDevice(),
             .shaderDirectory = shaderDirectory_,
-            .frameSlotCount = TextureManager::maxFramesInFlight,
+            .frameSlotCount = frameSlotCount,
             .quality = {},
         });
         createAtmosphereConsumerBindings();
-        const std::array<nvrhi::BindingLayoutHandle, 1> fullscreenLayouts = {textures_.bindingLayout()};
-        const std::array<nvrhi::BindingLayoutHandle, 2> lightingLayouts = {textures_.bindingLayout(),
+        const std::array<nvrhi::BindingLayoutHandle, 1> fullscreenLayouts = {postFxResources_.bindingLayout()};
+        const std::array<nvrhi::BindingLayoutHandle, 2> lightingLayouts = {postFxResources_.bindingLayout(),
                                                                            directLightingBindingLayout_};
-        const std::array<nvrhi::BindingLayoutHandle, 2> skyLayouts = {textures_.bindingLayout(),
+        const std::array<nvrhi::BindingLayoutHandle, 2> skyLayouts = {postFxResources_.bindingLayout(),
                                                                       atmosphereConsumerBindingLayout_};
-        skyPipeline_ = fullscreenPipelineFactory_.create("Sky", textures_.lightingFormat(), skyLayouts);
+        skyPipeline_ = fullscreenPipelineFactory_.create("Sky", postFxResources_.lightingFormat(), skyLayouts);
         directLightingPipeline_ =
-            fullscreenPipelineFactory_.create("Deferred", textures_.lightingFormat(), lightingLayouts);
-        temporalAaPipeline_ = fullscreenPipelineFactory_.create("Taa", textures_.lightingFormat(), fullscreenLayouts);
+            fullscreenPipelineFactory_.create("Deferred", postFxResources_.lightingFormat(), lightingLayouts);
+        temporalAaPipeline_ =
+            fullscreenPipelineFactory_.create("Taa", postFxResources_.lightingFormat(), fullscreenLayouts);
         toneMappingPipeline_ =
             fullscreenPipelineFactory_.create("PostProcess", context_.swapchainRhiFormat(), fullscreenLayouts);
 
-        std::array<gi::FrameResources, TextureManager::maxFramesInFlight> giFrames{};
+        std::array<gi::FrameResources, frameSlotCount> giFrames{};
         for (std::uint32_t frameIndex = 0; frameIndex < giFrames.size(); ++frameIndex) {
-            const TextureFrameResources& frame = textures_.frame(frameIndex);
-            giFrames[frameIndex].position = frame.position.texture;
-            giFrames[frameIndex].normalRoughness = frame.normalRoughness.texture;
-            giFrames[frameIndex].albedoMetallic = frame.albedo.texture;
-            giFrames[frameIndex].motion = frame.motion.texture;
-            giFrames[frameIndex].depth = frame.depth.texture;
-            giFrames[frameIndex].uniformBuffer = frame.postProcessUniform.buffer;
-            giFrames[frameIndex].output = frame.globalIllumination.texture;
+            const RasterFeatureFrameResources& raster = rasterResources_.frame(frameIndex);
+            const PostFxFrameResources& postFx = postFxResources_.frame(frameIndex);
+            giFrames[frameIndex].position = raster.position.texture;
+            giFrames[frameIndex].normalRoughness = raster.normalRoughness.texture;
+            giFrames[frameIndex].albedoMetallic = raster.albedo.texture;
+            giFrames[frameIndex].motion = raster.motion.texture;
+            giFrames[frameIndex].depth = raster.depth.texture;
+            giFrames[frameIndex].uniformBuffer = postFx.uniforms.buffer;
+            giFrames[frameIndex].output = postFx.globalIllumination.texture;
         }
         globalIllumination_->create(gi::CreateInfo{context_.rhiDevice(),
                                                    {width, height},
-                                                   textures_.globalIlluminationFormat(),
-                                                   textures_.sampler(),
+                                                   postFxResources_.globalIlluminationFormat(),
+                                                   postFxResources_.sampler(),
                                                    giFrames});
         atmosphereForceRebuild_ = true;
         createModelRenderer();
@@ -93,12 +105,12 @@ namespace lumin::render {
             modelRenderer_.reset();
             return;
         }
-        const std::array<nvrhi::Format, 5> colorFormats = {textures_.positionFormat(), textures_.normalFormat(),
-                                                           textures_.albedoFormat(), textures_.motionFormat(),
-                                                           textures_.materialIdFormat()};
+        const std::array<nvrhi::Format, 5> colorFormats = {
+            rasterResources_.positionFormat(), rasterResources_.normalFormat(), rasterResources_.albedoFormat(),
+            rasterResources_.motionFormat(), rasterResources_.materialIdFormat()};
         modelRenderer_ = std::make_unique<ModelRenderer>(
-            context_, *snapshot, shaderDirectory_, colorFormats, textures_.depthFormat(), textures_.shadowDepthFormat(),
-            TextureManager::maxFramesInFlight, context_.modelRendererCapabilities());
+            context_, *snapshot, shaderDirectory_, colorFormats, rasterResources_.depthFormat(),
+            rasterResources_.shadowDepthFormat(), frameSlotCount, context_.modelRendererCapabilities());
         createDirectLightingBindingSets();
     }
 
@@ -126,7 +138,7 @@ namespace lumin::render {
         }
         for (std::uint32_t frameIndex = 0; frameIndex < directLightingBindingSets_.size(); ++frameIndex) {
             nvrhi::BindingSetDesc desc;
-            desc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, textures_.frame(frameIndex).materialId.texture))
+            desc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, rasterResources_.frame(frameIndex).materialId.texture))
                 .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, modelRenderer_->materialBuffer(frameIndex)));
             directLightingBindingSets_[frameIndex] =
                 context_.rhiDevice()->createBindingSet(desc, directLightingBindingLayout_);
@@ -184,20 +196,21 @@ namespace lumin::render {
             static_cast<std::uint32_t>(modelRenderer_->baseColorTextures().size());
         runtime->sceneBackend = std::make_unique<gpu::NvrhiGpuSceneBackend>(*context_.rhiDevice());
         runtime->sceneResources = std::make_unique<gpu::GpuSceneResources>(
-            *runtime->sceneBackend, gpu::GpuSceneResourceConfig{TextureManager::maxFramesInFlight, true});
+            *runtime->sceneBackend, gpu::GpuSceneResourceConfig{frameSlotCount, true});
         runtime->scenePlanner = std::make_unique<gpu::GpuSceneUpdatePlanner>();
 
-        for (std::uint32_t frameIndex = 0; frameIndex < TextureManager::maxFramesInFlight; ++frameIndex) {
-            const TextureFrameResources& frame = textures_.frame(frameIndex);
+        for (std::uint32_t frameIndex = 0; frameIndex < frameSlotCount; ++frameIndex) {
+            const RasterFeatureFrameResources& raster = rasterResources_.frame(frameIndex);
+            const PostFxFrameResources& postFx = postFxResources_.frame(frameIndex);
             runtime->directLightingFrames[frameIndex] = gi::RayTracedDiFrameResources{
-                .worldPositionHitT = frame.position.texture,
-                .normalRoughness = frame.normalRoughness.texture,
-                .albedoMetallic = frame.albedo.texture,
-                .materialId = frame.materialId.texture,
+                .worldPositionHitT = raster.position.texture,
+                .normalRoughness = raster.normalRoughness.texture,
+                .albedoMetallic = raster.albedo.texture,
+                .materialId = raster.materialId.texture,
                 .viewZ = {},
-                .motion = frame.motion.texture,
+                .motion = raster.motion.texture,
                 // Hybrid RTDI 使用 globalIllumination 作为 direct-radiance UAV，最终合成再写 lighting。
-                .directRadiance = frame.globalIllumination.texture,
+                .directRadiance = postFx.globalIllumination.texture,
                 .visibilityMask = {},
             };
         }
@@ -213,10 +226,10 @@ namespace lumin::render {
                 .frames = runtime->directLightingFrames,
             });
 
-        std::array<gi::RayTracedGiFrameInputs, TextureManager::maxFramesInFlight> rayTracedFrames{};
-        std::array<gi::SharcUpdateFrameInputs, TextureManager::maxFramesInFlight> sharcFrames{};
-        for (std::uint32_t frameIndex = 0; frameIndex < TextureManager::maxFramesInFlight; ++frameIndex) {
-            const TextureFrameResources& frame = textures_.frame(frameIndex);
+        std::array<gi::RayTracedGiFrameInputs, frameSlotCount> rayTracedFrames{};
+        std::array<gi::SharcUpdateFrameInputs, frameSlotCount> sharcFrames{};
+        for (std::uint32_t frameIndex = 0; frameIndex < frameSlotCount; ++frameIndex) {
+            const RasterFeatureFrameResources& frame = rasterResources_.frame(frameIndex);
             rayTracedFrames[frameIndex] = gi::RayTracedGiFrameInputs{
                 .position = frame.position.texture,
                 .normalRoughness = frame.normalRoughness.texture,
@@ -233,7 +246,7 @@ namespace lumin::render {
         runtime->sharc = std::make_unique<gi::SharcRadianceCache>(gi::SharcRadianceCacheCreateInfo{
             .device = context_.rhiDevice(),
             .shaderDirectory = shaderDirectory_,
-            .frameSlotCount = TextureManager::maxFramesInFlight,
+            .frameSlotCount = frameSlotCount,
             .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
             .maxMaterialTextureDescriptors = materialTextureDescriptorCapacity,
             .atmosphereBindingLayout = atmosphereConsumerBindingLayout_,
@@ -254,7 +267,7 @@ namespace lumin::render {
         runtime->nrd = std::make_unique<gi::NrdDenoiser>(gi::NrdDenoiserCreateInfo{
             .device = context_.rhiDevice(),
             .extent = renderExtent_,
-            .frameSlotCount = TextureManager::maxFramesInFlight,
+            .frameSlotCount = frameSlotCount,
         });
         if (runtime->rayTracedGi->formats().normalRoughness != runtime->nrd->expectedNormalRoughnessFormat()) {
             throw std::runtime_error("RT GI and NRD normal/roughness formats do not match.");
@@ -263,14 +276,14 @@ namespace lumin::render {
             .device = context_.rhiDevice(),
             .shaderDirectory = shaderDirectory_,
             .extent = renderExtent_,
-            .frameSlotCount = TextureManager::maxFramesInFlight,
+            .frameSlotCount = frameSlotCount,
         });
         runtime->lightingComposite =
             std::make_unique<gi::HybridLightingCompositePass>(gi::HybridLightingCompositeCreateInfo{
                 .device = context_.rhiDevice(),
                 .shaderDirectory = shaderDirectory_,
                 .extent = renderExtent_,
-                .frameSlotCount = TextureManager::maxFramesInFlight,
+                .frameSlotCount = frameSlotCount,
             });
         hybridGi_ = std::move(runtime);
 #endif
@@ -323,7 +336,9 @@ namespace lumin::render {
         atmosphereForceRebuild_ = true;
         globalIllumination_->destroy();
         destroyDirectLightingBindings();
-        textures_.destroy();
+        // PostFX binding sets 强引用 Raster 纹理，销毁顺序必须保持消费者先于 producer。
+        postFxResources_.destroy();
+        rasterResources_.destroy();
         viewportOutput_ = {};
         viewportOutputInitialized_ = false;
     }

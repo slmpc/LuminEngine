@@ -78,8 +78,8 @@ namespace {
                 "TAA history destination must be declared CopyDest.");
         require(level.find("context_.modelRendererCapabilities()") != std::string::npos,
                 "LevelRenderer must hand explicit device-derived ModelRendererCapabilities to ModelRenderer.");
-        require(level.find("textureDesc(frame.materialId") != std::string::npos &&
-                    level.find("addColorAttachment(frame.materialId.texture)") != std::string::npos &&
+        require(level.find("textureDesc(rasterFrame.materialId") != std::string::npos &&
+                    level.find("addColorAttachment(rasterFrame.materialId.texture)") != std::string::npos &&
                     level.find("clearTextureUInt(surface.materialId.texture") != std::string::npos &&
                     level.find("GpuMaterialIndex::invalidValue") != std::string::npos,
                 "The G-buffer must own, attach, and integer-clear a dedicated stable material-ID texture.");
@@ -92,7 +92,7 @@ namespace {
                     level.find("addBindingSet(directLightingBindingSets_[frameIndex])") != std::string::npos,
                 "Deferred direct lighting must bind its material resources in descriptor set 1.");
         require(level.find("? nvrhi::ResourceStates::DepthWrite") != std::string::npos &&
-                    level.find("textureDesc(frame.depth, depthInitialState)") != std::string::npos,
+                    level.find("textureDesc(rasterFrame.depth, depthInitialState)") != std::string::npos,
                 "The non-sampled G-buffer depth texture must retain DepthWrite across frame-slot reuse.");
         for (const std::string& pass : {"CSM clear", "G-buffer clear", "Procedural sky clear", "TAA clear"}) {
             const std::size_t name = level.find(pass);
@@ -148,14 +148,14 @@ namespace {
         require(level.find("registerFeature(rasterSurface()") != std::string::npos &&
                     level.find("modelRenderer_->commitSubmittedFrame") != std::string::npos &&
                     level.find("registerFeature(temporalAa()") != std::string::npos &&
-                    level.find("textures_.markHistoryValid") != std::string::npos,
+                    level.find("postFxResources_.markHistoryValid") != std::string::npos,
                 "Model and TAA histories must be committed through independent Feature submission notifications.");
         require(level.find("LevelRenderFeatureKind") == std::string::npos &&
                     level.find("switch (kind)") == std::string::npos,
                 "Runtime must not route Feature lifecycle through a central enum switch.");
         require(level.find("modelRenderer_->discardPendingFrame") != std::string::npos,
                 "Discarded Feature frames must abandon pending model transforms.");
-        require(level.find("textures_.invalidateHistory") == std::string::npos &&
+        require(level.find("postFxResources_.invalidateHistory") == std::string::npos &&
                     level.find("gi::shouldInvalidateHistory") == std::string::npos,
                 "LevelRenderer must not retain ad hoc TAA or GI invalidation decisions.");
         require(countOccurrences(level, "renderPipeline_->discardFrame") >= 3,

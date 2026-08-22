@@ -1,10 +1,10 @@
 #include "render/ModelRenderer.hpp"
+#include "render/features/postfx/PostFxResources.hpp"
 #include "render/gi/raytracing/GiComposite.hpp"
 #include "render/gi/raytracing/RayTracedGi.hpp"
 #include "render/gi/raytracing/SharcRadianceCache.hpp"
 #include "render/gpu/GpuMaterial.hpp"
 #include "render/gpu/GpuSceneResources.hpp"
-#include "render/resources/TextureManager.hpp"
 
 #include <cstddef>
 #include <cstdio>

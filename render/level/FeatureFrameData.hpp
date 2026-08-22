@@ -2,8 +2,9 @@
 
 #include "render/atmosphere/AtmosphereLutGpu.hpp"
 #include "render/core/FrameDataContracts.hpp"
+#include "render/features/postfx/PostFxResources.hpp"
+#include "render/features/raster/RasterFeatureResources.hpp"
 #include "render/resources/FrameGraphResourceImporter.hpp"
-#include "render/resources/TextureManager.hpp"
 
 #include <array>
 #include <optional>

@@ -35,9 +35,10 @@ resize 和 shutdown 在安全边界按逆序通知，使消费者先释放对上
 当前运行时使用 `DefaultRenderPipelines` 提供的 Raster/Hybrid recipe，并经
 `RenderPipelineRecipeResolver + RenderPipelineInstance` 事务式创建候选管线。Feature 通过显式 factory 注册；旧
 `DeferredRenderFeatureSet`、`LevelRenderFeatureKind`、`LevelRenderFeatureHost` 和中央分派 `switch` 已删除。运行时仍直接
-读取活动场景，且部分 Feature 尚通过 `TextureManager` 共享物理资源；该剩余边界会在 `RenderFramePacket`、Feature
-资源所有权和渲染线程接入阶段删除。`PipelineManager` 已删除，各 Feature pipeline handle 由拥有者保存，并统一使用
-RenderRhi 的无业务语义 `FullscreenPipelineFactory` 创建。帧内数据已经通过 typed blackboard 隔离，不再存在万能帧数据结构。
+读取活动场景，Feature 资源已经拆为 `RasterFeatureResources` 与 `PostFxResources`；旧 `TextureManager` 和
+`PipelineManager` 均已删除。各 Feature pipeline handle 由拥有者保存，并统一使用 RenderRhi 的无业务语义
+`FullscreenPipelineFactory` 创建。帧内数据已经通过 typed blackboard 隔离，不再存在万能帧数据结构。Hybrid 兼容实现
+当前仍复用 Raster surface 的部分物理纹理，后续由 RT surface owner 完全接管。
 
 ## 场景更新
 
@@ -81,7 +82,8 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 
 `LevelRenderer` 是迁移期兼容门面。`render/LevelRenderer.hpp` 只保留窗口、上下文、场景引用和逐帧
 入口所需的 API；具体资源成员通过 `std::unique_ptr<LevelRenderer::Impl>` 隐藏在实现文件中。这样公共头不再暴露
-`TextureManager`、各 Feature pipeline handle、Hybrid GI 后端或 NvRHI framebuffer，资源成员变化也不会迫使 Application 和
+Raster/PostFX 资源 owner、各 Feature pipeline handle、Hybrid GI 后端或 NvRHI framebuffer，资源成员变化也不会迫使
+Application 和
 编辑器重新编译。`LevelRenderer.cpp` 只负责门面转发、帧入口、提交顺序和异常清理。
 
 实现按职责分成以下文件：
@@ -99,8 +101,9 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 
 渲染基础设施按物理目录隔离：
 
-- `render/resources/` 包含 `FrameGraph`、`DescriptorIndexingLimits`、`TextureManager`、`PipelineFactory`、
-  `FullscreenPipelineFactory`、`ShaderLibrary` 和 NvRHI 资源包装。通用 factory 不缓存或命名 Feature pipeline；
+- `render/resources/` 包含 `FrameGraph`、`DescriptorIndexingLimits`、`PipelineFactory`、
+  `FullscreenPipelineFactory`、`ShaderLibrary` 和 NvRHI 资源包装。Raster/PostFX 业务资源分别位于
+  `render/features/raster/` 与 `render/features/postfx/`；通用 factory 不缓存或命名 Feature pipeline；
   `FrameGraph` 只负责外部分配资源的依赖排序与状态转换，
   `DescriptorIndexingLimits` 负责材质纹理 descriptor 的容量预检和绑定计划；两者都不依赖 Editor。
 - `render/platform/vulkan/` 包含 `VulkanContext` 和 `VulkanRayTracingCapabilities`，是唯一允许直接调用原生 Vulkan
@@ -194,7 +197,7 @@ texture 和 AS；该回收是逐帧资源生命周期的一部分，不能仅依
 `AccelStructRead` 后再写入 TLAS。两者之间的 `AccelStructWrite -> AccelStructRead` 屏障保证大型 BLAS 的构建结果在 TLAS
 读取其设备地址和内容前可见；不得仅依靠命令录制顺序、CPU fence 或捕获工具带来的隐式串行化。
 
-`TextureManager` 为每个帧槽拥有一张标准 RGBA 全局光照图像。RGB 保存线性间接辐射亮度，alpha 保存环境可见度；
+`PostFxResources` 为每个帧槽拥有一张标准 RGBA 全局光照图像。RGB 保存线性间接辐射亮度，alpha 保存环境可见度；
 禁用全局光照时的中性值为 `{0, 0, 0, 1}`。屏幕空间 AO 后端写入 `{0, 0, 0, ao}`，延迟光照按
 `legacyAmbient * globalIllumination.a + globalIllumination.rgb` 合成环境光。该图像同时支持颜色附件、采样和存储图像
 用途，以便后续后端使用光线追踪或计算通道写入相同契约。
@@ -246,8 +249,10 @@ Vulkan 后端通过负物理 viewport 高度将正 NDC Y 映射到较小的屏�
 
 ## 资源所有权
 
-`TextureManager` 拥有两个帧槽。每个槽位都有自己的 G-buffer、标准全局光照输出、HDR 光照、TAA 解析/历史、四张阴影图、
-后处理 uniform buffer 和 descriptor set。`LevelRenderer` 另行拥有一张可作为颜色附件和 sampled image 使用的 Viewport
+`RasterFeatureResources` 拥有两个帧槽的 G-buffer 与四张 CSM 阴影图；`PostFxResources` 独立拥有标准全局光照输出、
+HDR 光照、TAA 解析/历史、后处理 uniform buffer、sampler 和 descriptor set。PostFX 只通过显式
+`PostFxBindingInputs` 接收上游 sampled handle，销毁时必须先释放 descriptor set，再释放 Raster producer。
+`LevelRenderer` 另行拥有一张可作为颜色附件和 sampled image 使用的 Viewport
 输出纹理；其物理像素尺寸来自 ImGui Viewport 内容区，尺寸连续两帧稳定后才重建，以免拖动 dock 边界时反复等待 GPU。
 尺寸变化通过 `HistoryReason::RenderExtentChanged` 统一失效 TAA、NRD 和 SHARC 等时序状态。
 `ModelRenderer` 同样拥有逐帧对象及相机 buffer、四个逐帧阴影矩阵

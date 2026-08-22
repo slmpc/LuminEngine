@@ -1,4 +1,5 @@
-#include "render/resources/TextureManager.hpp"
+#include "render/features/postfx/PostFxResources.hpp"
+#include "render/features/raster/RasterFeatureResources.hpp"
 
 #include <algorithm>
 #include <array>
@@ -17,16 +18,21 @@
 
 namespace {
 
-    using lumin::render::TextureFrameResources;
-    using lumin::render::TextureManager;
+    using lumin::render::PostFxBindingInputs;
+    using lumin::render::PostFxFrameResources;
+    using lumin::render::PostFxResources;
+    using lumin::render::RasterFeatureFrameResources;
+    using lumin::render::RasterFeatureResources;
 
-    static_assert(std::same_as<decltype(TextureFrameResources::position), lumin::render::GpuTexture>);
-    static_assert(std::same_as<decltype(TextureFrameResources::postProcessUniform), lumin::render::GpuBuffer>);
-    static_assert(std::same_as<decltype(std::declval<const TextureManager&>().positionFormat()), nvrhi::Format>);
-    static_assert(std::same_as<decltype(std::declval<const TextureManager&>().sampler()), nvrhi::SamplerHandle>);
+    static_assert(std::same_as<decltype(RasterFeatureFrameResources::position), lumin::render::GpuTexture>);
+    static_assert(std::same_as<decltype(PostFxFrameResources::uniforms), lumin::render::GpuBuffer>);
     static_assert(
-        std::same_as<decltype(std::declval<const TextureManager&>().bindingLayout()), nvrhi::BindingLayoutHandle>);
-    static_assert(std::same_as<decltype(std::declval<const TextureManager&>().bindingSet(0)), nvrhi::BindingSetHandle>);
+        std::same_as<decltype(std::declval<const RasterFeatureResources&>().positionFormat()), nvrhi::Format>);
+    static_assert(std::same_as<decltype(std::declval<const PostFxResources&>().sampler()), nvrhi::SamplerHandle>);
+    static_assert(
+        std::same_as<decltype(std::declval<const PostFxResources&>().bindingLayout()), nvrhi::BindingLayoutHandle>);
+    static_assert(
+        std::same_as<decltype(std::declval<const PostFxResources&>().bindingSet(0)), nvrhi::BindingSetHandle>);
 
     struct LiveCounts {
         int textures = 0;
@@ -401,28 +407,43 @@ namespace {
         return texture.texture->getDesc();
     }
 
+    std::array<PostFxBindingInputs, 2> bindingInputs(const RasterFeatureResources& raster) {
+        std::array<PostFxBindingInputs, 2> result{};
+        for (std::uint32_t frameIndex = 0; frameIndex < result.size(); ++frameIndex) {
+            const RasterFeatureFrameResources& frame = raster.frame(frameIndex);
+            result[frameIndex].surfaces = {frame.position.texture, frame.normalRoughness.texture, frame.albedo.texture,
+                                           frame.motion.texture};
+            for (std::uint32_t cascade = 0; cascade < frame.shadowCascades.size(); ++cascade) {
+                result[frameIndex].shadows[cascade] = frame.shadowCascades[cascade].texture;
+            }
+        }
+        return result;
+    }
+
     void verifyTwoSlotContract() {
         FakeDevice device;
-        TextureManager manager(device);
-        manager.create(64, 32);
+        RasterFeatureResources raster(device, 2);
+        PostFxResources postFx(device, 2);
+        raster.create(64, 32);
+        postFx.create(64, 32, bindingInputs(raster));
 
         require(device.live.textures == 28, "Two frame slots must own fourteen textures each.");
         require(device.live.buffers == 2, "Two frame slots must own independent uniform buffers.");
         require(device.live.bindingSets == 2, "Two frame slots must own independent binding sets.");
-        require(manager.bindingSet(0) != manager.bindingSet(1), "Frame-slot binding sets must be distinct.");
+        require(postFx.bindingSet(0) != postFx.bindingSet(1), "Frame-slot binding sets must be distinct.");
         require(lumin::render::shadowCascadeCount == 4, "The CSM cascade count must remain four.");
-        require(manager.positionFormat() == nvrhi::Format::RGBA16_FLOAT &&
-                    manager.normalFormat() == nvrhi::Format::RGBA16_FLOAT &&
-                    manager.albedoFormat() == nvrhi::Format::RGBA8_UNORM &&
-                    manager.motionFormat() == nvrhi::Format::RG16_FLOAT &&
-                    manager.materialIdFormat() == nvrhi::Format::R32_UINT &&
-                    manager.depthFormat() == nvrhi::Format::D32 &&
-                    manager.globalIlluminationFormat() == nvrhi::Format::RGBA16_FLOAT &&
-                    manager.lightingFormat() == nvrhi::Format::RGBA16_FLOAT &&
-                    manager.shadowDepthFormat() == nvrhi::Format::D32,
+        require(raster.positionFormat() == nvrhi::Format::RGBA16_FLOAT &&
+                    raster.normalFormat() == nvrhi::Format::RGBA16_FLOAT &&
+                    raster.albedoFormat() == nvrhi::Format::RGBA8_UNORM &&
+                    raster.motionFormat() == nvrhi::Format::RG16_FLOAT &&
+                    raster.materialIdFormat() == nvrhi::Format::R32_UINT &&
+                    raster.depthFormat() == nvrhi::Format::D32 &&
+                    postFx.globalIlluminationFormat() == nvrhi::Format::RGBA16_FLOAT &&
+                    postFx.lightingFormat() == nvrhi::Format::RGBA16_FLOAT &&
+                    raster.shadowDepthFormat() == nvrhi::Format::D32,
                 "Texture formats must preserve the legacy preferred-format contract.");
 
-        const auto* layout = manager.bindingLayout()->getDesc();
+        const auto* layout = postFx.bindingLayout()->getDesc();
         require(layout != nullptr && layout->bindings.size() == 14, "Fullscreen layout must expose bindings 0-13.");
         for (std::uint32_t binding = 0; binding < 14; ++binding) {
             require(layout->bindings[binding].slot == binding,
@@ -433,9 +454,10 @@ namespace {
             require(layout->bindings[binding].type == expected, "Fullscreen binding types must preserve 0-13.");
         }
 
-        for (std::uint32_t frameIndex = 0; frameIndex < TextureManager::maxFramesInFlight; ++frameIndex) {
-            const TextureFrameResources& frame = manager.frame(frameIndex);
-            require(frame.position.texture && frame.history.texture && frame.postProcessUniform.buffer,
+        for (std::uint32_t frameIndex = 0; frameIndex < 2; ++frameIndex) {
+            const RasterFeatureFrameResources& frame = raster.frame(frameIndex);
+            const PostFxFrameResources& effects = postFx.frame(frameIndex);
+            require(frame.position.texture && effects.history.texture && effects.uniforms.buffer,
                     "Every frame slot must expose live NvRHI resources.");
             require(frame.position.width == 64 && frame.position.height == 32,
                     "Render textures must preserve the requested extent.");
@@ -444,26 +466,24 @@ namespace {
                         desc(frame.position).isUAV,
                     "Surface position must support render-target, sampled, and RT UAV usage.");
             require(desc(frame.normalRoughness).isRenderTarget && desc(frame.normalRoughness).isShaderResource &&
-                        desc(frame.normalRoughness).isUAV &&
-                        desc(frame.albedo).isRenderTarget && desc(frame.albedo).isShaderResource &&
-                        desc(frame.albedo).isUAV &&
+                        desc(frame.normalRoughness).isUAV && desc(frame.albedo).isRenderTarget &&
+                        desc(frame.albedo).isShaderResource && desc(frame.albedo).isUAV &&
                         desc(frame.motion).isRenderTarget && desc(frame.motion).isShaderResource &&
-                        desc(frame.motion).isUAV &&
-                        desc(frame.materialId).isRenderTarget && desc(frame.materialId).isShaderResource &&
-                        desc(frame.materialId).isUAV &&
+                        desc(frame.motion).isUAV && desc(frame.materialId).isRenderTarget &&
+                        desc(frame.materialId).isShaderResource && desc(frame.materialId).isUAV &&
                         desc(frame.materialId).format == nvrhi::Format::R32_UINT,
                     "Surface color resources must support render-target, sampled, and RT UAV usage.");
             require(desc(frame.depth).isRenderTarget && !desc(frame.depth).isShaderResource && !desc(frame.depth).isUAV,
                     "G-buffer depth must remain depth-attachment-only usage.");
-            require(desc(frame.globalIllumination).isRenderTarget && desc(frame.globalIllumination).isShaderResource &&
-                        desc(frame.globalIllumination).isUAV,
+            require(desc(effects.globalIllumination).isRenderTarget &&
+                        desc(effects.globalIllumination).isShaderResource && desc(effects.globalIllumination).isUAV,
                     "GI must remain render-target, sampled, and storage usage.");
-            require(desc(frame.lighting).isRenderTarget && desc(frame.lighting).isShaderResource &&
-                        desc(frame.lighting).isUAV && desc(frame.taaResolved).isRenderTarget &&
-                        desc(frame.taaResolved).isShaderResource && desc(frame.taaResolved).isUAV,
+            require(desc(effects.lighting).isRenderTarget && desc(effects.lighting).isShaderResource &&
+                        desc(effects.lighting).isUAV && desc(effects.taaResolved).isRenderTarget &&
+                        desc(effects.taaResolved).isShaderResource && desc(effects.taaResolved).isUAV,
                     "Lighting and TAA resolved textures must support Hybrid UAV usage.");
-            require(!desc(frame.history).isRenderTarget && desc(frame.history).isShaderResource &&
-                        !desc(frame.history).isUAV,
+            require(!desc(effects.history).isRenderTarget && desc(effects.history).isShaderResource &&
+                        !desc(effects.history).isUAV,
                     "TAA history must remain sampled and copy-destination compatible without render-target usage.");
             for (const lumin::render::GpuTexture& shadow : frame.shadowCascades) {
                 require(desc(shadow).width == lumin::render::shadowMapResolution &&
@@ -471,38 +491,38 @@ namespace {
                             desc(shadow).isShaderResource,
                         "Every shadow cascade must remain a 2048-square sampled depth target.");
             }
-            require(frame.postProcessUniform.buffer->getDesc().isConstantBuffer &&
-                        frame.postProcessUniform.buffer->getDesc().cpuAccess == nvrhi::CpuAccessMode::Write,
+            require(effects.uniforms.buffer->getDesc().isConstantBuffer &&
+                        effects.uniforms.buffer->getDesc().cpuAccess == nvrhi::CpuAccessMode::Write,
                     "Post-process uniforms must remain CPU-writable constant buffers.");
-            require(frame.history.initialState == nvrhi::ResourceStates::Common,
+            require(effects.history.initialState == nvrhi::ResourceStates::Common,
                     "History textures must begin in NvRHI's concrete first-use state.");
-            require(manager.historyInitialState(frameIndex) == nvrhi::ResourceStates::Common,
+            require(postFx.historyInitialState(frameIndex) == nvrhi::ResourceStates::Common,
                     "Uninitialized history imports must use NvRHI's supported Common/Undefined source state.");
 
-            const nvrhi::BindingSetDesc* setDesc = manager.bindingSet(frameIndex)->getDesc();
+            const nvrhi::BindingSetDesc* setDesc = postFx.bindingSet(frameIndex)->getDesc();
             require(setDesc != nullptr && setDesc->bindings.size() == 14,
                     "Every frame binding set must contain bindings 0-13.");
             for (std::uint32_t binding = 0; binding < 14; ++binding) {
                 require(setDesc->bindings[binding].slot == binding,
                         "Every frame binding set must preserve shader binding numbers 0-13.");
             }
-            const std::uint32_t previousIndex =
-                (frameIndex + TextureManager::maxFramesInFlight - 1) % TextureManager::maxFramesInFlight;
-            require(setDesc->bindings[6].resourceHandle == manager.frame(previousIndex).history.texture.Get(),
+            const std::uint32_t previousIndex = (frameIndex + 1) % 2;
+            require(setDesc->bindings[6].resourceHandle == postFx.frame(previousIndex).history.texture.Get(),
                     "Binding 6 must sample the previous frame slot's history texture.");
         }
 
-        manager.markHistoryValid(0);
-        require(manager.historyValid(0) && manager.historyInitialized(0),
+        postFx.markHistoryValid(0);
+        require(postFx.historyValid(0) && postFx.historyInitialized(0),
                 "markHistoryValid must set valid and initialized together.");
-        require(manager.historyInitialState(0) == nvrhi::ResourceStates::ShaderResource,
+        require(postFx.historyInitialState(0) == nvrhi::ResourceStates::ShaderResource,
                 "Written history must import as ShaderResource.");
-        manager.invalidateHistory();
-        require(!manager.historyValid(0) && manager.historyInitialized(0),
+        postFx.invalidateHistory();
+        require(!postFx.historyValid(0) && postFx.historyInitialized(0),
                 "invalidateHistory must preserve initialized history storage.");
 
-        manager.destroy();
-        require(!manager.historyValid(0) && !manager.historyInitialized(0),
+        postFx.destroy();
+        raster.destroy();
+        require(!postFx.historyValid(0) && !postFx.historyInitialized(0),
                 "destroy must clear valid and initialized history state.");
         requireNoLiveHandles(device);
         const auto firstTexture = std::find(device.live.releases.begin(), device.live.releases.end(), "texture");
@@ -511,45 +531,52 @@ namespace {
                     firstTexture > lastBindingSet.base() - 1,
                 "Binding sets must release before textures.");
 
-        manager.create(16, 16);
-        require(!manager.historyValid(0) && !manager.historyInitialized(0),
+        raster.create(16, 16);
+        postFx.create(16, 16, bindingInputs(raster));
+        require(!postFx.historyValid(0) && !postFx.historyInitialized(0),
                 "create must clear valid and initialized history state.");
-        manager.destroy();
+        postFx.destroy();
+        raster.destroy();
         requireNoLiveHandles(device);
     }
 
     void verifyFailureRollback() {
         FakeDevice device;
         device.failBindingSetCall = 2;
-        TextureManager manager(device);
+        RasterFeatureResources raster(device, 2);
+        PostFxResources postFx(device, 2);
+        raster.create(64, 32);
         bool failed = false;
         try {
-            manager.create(64, 32);
+            postFx.create(64, 32, bindingInputs(raster));
         } catch (const std::runtime_error&) {
             failed = true;
         }
         require(failed, "Second-slot binding-set failure must propagate.");
+        raster.destroy();
         requireNoLiveHandles(device);
-        manager.destroy();
+        postFx.destroy();
         requireNoLiveHandles(device);
     }
 
     void verifyMalformedExtent() {
         FakeDevice device;
-        TextureManager manager(device);
+        RasterFeatureResources raster(device, 2);
         bool failed = false;
         try {
-            manager.create(0, 32);
+            raster.create(0, 32);
         } catch (const std::invalid_argument&) {
             failed = true;
         }
-        require(failed, "TextureManager must reject an empty render extent.");
+        require(failed, "Raster Feature resources must reject an empty render extent.");
         requireNoLiveHandles(device);
     }
 
     void verifyForbiddenTokens() {
-        const std::string production =
-            readSource("render/resources/TextureManager.hpp") + readSource("render/resources/TextureManager.cpp");
+        const std::string production = readSource("render/features/raster/RasterFeatureResources.hpp") +
+                                       readSource("render/features/raster/RasterFeatureResources.cpp") +
+                                       readSource("render/features/postfx/PostFxResources.hpp") +
+                                       readSource("render/features/postfx/PostFxResources.cpp");
         constexpr const char* forbidden[] = {"VkDescriptor",    "VkSampler",     "VkImage",   "VkImageView",
                                              "vkCreate",        "vkUpdate",      "vkDestroy", "beginTracking",
                                              "setTextureState", "commitBarriers"};
@@ -565,7 +592,7 @@ int main() {
     verifyFailureRollback();
     verifyMalformedExtent();
     verifyForbiddenTokens();
-    std::puts("PASS: two independent frame slots expose NvRHI resources, CSM=4, and bindings 0-13.");
+    std::puts("PASS: Raster and PostFX owners expose independent frame resources, CSM=4, and bindings 0-13.");
     std::puts("PASS: history Unknown/ShaderResource states and invalidate semantics are preserved.");
     std::puts("PASS: second-slot binding failure rolls back to zero live handles.");
     std::puts("PASS: empty extents are rejected with zero live handles.");

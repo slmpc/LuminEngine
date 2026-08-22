@@ -122,7 +122,8 @@ namespace lumin::render {
                               core::UiFontAtlas uiFontAtlas,
                               std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
         : context_(context), level_(level), shaderDirectory_(std::move(shaderDirectory)),
-          uiFontAtlas_(std::move(uiFontAtlas)), textures_(context),
+          uiFontAtlas_(std::move(uiFontAtlas)), rasterResources_(*context.rhiDevice().Get(), frameSlotCount),
+          postFxResources_(*context.rhiDevice().Get(), frameSlotCount),
           fullscreenPipelineFactory_(*context.rhiDevice().Get(), shaderDirectory_),
           globalIllumination_(std::move(globalIllumination)) {
         if (globalIllumination_ == nullptr) {
@@ -287,7 +288,7 @@ namespace lumin::render {
         core::RenderDeviceCapabilities capabilities;
         capabilities.supported = {core::RenderCapability::Graphics, core::RenderCapability::Compute,
                                   core::RenderCapability::DynamicRendering};
-        capabilities.maxFramesInFlight = TextureManager::maxFramesInFlight;
+        capabilities.maxFramesInFlight = frameSlotCount;
         pipelines::DefaultRenderPipelineKind path = pipelines::DefaultRenderPipelineKind::Raster;
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         const world::RenderWorldSnapshotPtr snapshot = renderWorld_.snapshot();
@@ -388,7 +389,7 @@ namespace lumin::render {
                                            addTemporalAaFeaturePasses(context);
                                        },
                                        [this](const core::RenderFrameIdentity& identity) {
-                                           textures_.markHistoryValid(identity.frameSlot.value());
+                                           postFxResources_.markHistoryValid(identity.frameSlot.value());
                                        }});
         registerFeature(toneMapping(), {[this](core::RenderFeatureFrameContext& context) {
                             addToneMappingFeaturePasses(context);
@@ -404,9 +405,8 @@ namespace lumin::render {
             core::RenderPipelineRecipeResolver::resolve(registry, definition.recipe(), capabilities);
         auto candidate = std::make_unique<core::RenderPipelineInstance>(
             registry, resolved,
-            core::FeatureCreateContext{.device = context_.rhiDevice(),
-                                       .capabilities = capabilities,
-                                       .frameSlotCount = TextureManager::maxFramesInFlight});
+            core::FeatureCreateContext{
+                .device = context_.rhiDevice(), .capabilities = capabilities, .frameSlotCount = frameSlotCount});
         candidate->onRenderExtentChanged(renderExtent_);
         activePipelineKind_ = path;
         renderPipeline_ = std::move(candidate);

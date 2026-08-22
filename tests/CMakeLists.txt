@@ -277,19 +277,19 @@ lumin_configure_test(lumin_scripting_tests)
 target_link_libraries(lumin_scripting_tests PRIVATE Lumin::Scripting)
 lumin_register_test(lumin_scripting_tests Scripting LABELS unit)
 
-add_executable(lumin_texture_manager_tests
-    TextureManagerTests.cpp
-    "${PROJECT_SOURCE_DIR}/render/resources/TextureManager.cpp"
+add_executable(lumin_feature_resource_tests
+    FeatureResourceOwnershipTests.cpp
+    "${PROJECT_SOURCE_DIR}/render/features/raster/RasterFeatureResources.cpp"
+    "${PROJECT_SOURCE_DIR}/render/features/postfx/PostFxResources.cpp"
     "${PROJECT_SOURCE_DIR}/render/resources/VulkanResources.cpp"
 )
-lumin_configure_test(lumin_texture_manager_tests)
-target_compile_definitions(lumin_texture_manager_tests
+lumin_configure_test(lumin_feature_resource_tests)
+target_compile_definitions(lumin_feature_resource_tests
     PRIVATE
         LUMIN_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
-        LUMIN_TEXTURE_MANAGER_STANDALONE_TEST
 )
-target_link_libraries(lumin_texture_manager_tests PRIVATE glm::glm nvrhi)
-lumin_register_test(lumin_texture_manager_tests TextureManager LABELS raster unit contract)
+target_link_libraries(lumin_feature_resource_tests PRIVATE glm::glm nvrhi)
+lumin_register_test(lumin_feature_resource_tests FeatureResourceOwnership LABELS raster postfx unit contract)
 
 add_executable(lumin_editor_tests EditorTests.cpp)
 lumin_configure_test(lumin_editor_tests)

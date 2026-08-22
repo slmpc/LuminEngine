@@ -78,9 +78,9 @@ lumin_configure_render_library(lumin_render_gpu_scene)
 target_link_libraries(lumin_render_gpu_scene PUBLIC Lumin::RenderCore Lumin::RenderRhi)
 
 add_library(lumin_render_raster STATIC
+    features/raster/RasterFeatureResources.cpp
     ModelRenderer.cpp
     ObjRenderer.cpp
-    resources/TextureManager.cpp
 )
 add_library(Lumin::RasterFeatures ALIAS lumin_render_raster)
 lumin_configure_render_library(lumin_render_raster)
@@ -88,6 +88,13 @@ target_link_libraries(lumin_render_raster
     PUBLIC Lumin::RenderCore Lumin::RenderRhi Lumin::VulkanBackend Lumin::GpuScene
 )
 lumin_render_target_uses_shaders(lumin_render_raster)
+
+add_library(lumin_render_postfx STATIC
+    features/postfx/PostFxResources.cpp
+)
+add_library(Lumin::PostFxFeatures ALIAS lumin_render_postfx)
+lumin_configure_render_library(lumin_render_postfx)
+target_link_libraries(lumin_render_postfx PUBLIC Lumin::RenderCore Lumin::RenderRhi)
 
 set(_lumin_gi_sources gi/legacy/LegacyBackend.cpp)
 if(LUMIN_NRD_AVAILABLE)
@@ -137,6 +144,7 @@ target_link_libraries(lumin_render_features INTERFACE
     Lumin::GpuScene
     Lumin::RasterFeatures
     Lumin::GiFeatures
+    Lumin::PostFxFeatures
     Lumin::RenderPresentation
 )
 
@@ -174,7 +182,8 @@ target_link_libraries(lumin_render INTERFACE Lumin::RenderRuntime Lumin::RenderF
 
 set_target_properties(
     lumin_render_core lumin_render_rhi lumin_vulkan_backend lumin_render_atmosphere lumin_render_gpu_scene
-    lumin_render_raster lumin_render_gi lumin_render_pipelines lumin_render_presentation lumin_render_runtime
+    lumin_render_raster lumin_render_gi lumin_render_postfx lumin_render_pipelines lumin_render_presentation
+    lumin_render_runtime
     lumin_editor_module
     PROPERTIES FOLDER "Lumin/Render"
 )

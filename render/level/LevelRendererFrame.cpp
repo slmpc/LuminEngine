@@ -192,10 +192,10 @@ namespace lumin::render {
         const glm::vec3 cameraForward = camera.forward();
         const glm::vec3 lightDirection = normalizedLightDirection(sun.direction);
         core::ShadowData shadows = calculateCascadeShadows(camera, aspectRatio, lightDirection, settings.shadows);
-        const std::uint32_t historyReadIndex =
-            (frameIndex + TextureManager::maxFramesInFlight - 1) % TextureManager::maxFramesInFlight;
-        const TextureFrameResources& frame = textures_.frame(frameIndex);
-        const TextureFrameResources& historyReadFrame = textures_.frame(historyReadIndex);
+        const std::uint32_t historyReadIndex = (frameIndex + frameSlotCount - 1) % frameSlotCount;
+        const RasterFeatureFrameResources& rasterFrame = rasterResources_.frame(frameIndex);
+        const PostFxFrameResources& postFxFrame = postFxResources_.frame(frameIndex);
+        const PostFxFrameResources& historyReadFrame = postFxResources_.frame(historyReadIndex);
 
         core::FrameSceneData sceneData{
             .world = renderWorld,
@@ -260,23 +260,25 @@ namespace lumin::render {
             for (std::uint32_t cascade = 0; cascade < shadowCascadeCount; ++cascade) {
                 const FrameGraphResourceHandle graphResource =
                     importer.importTexture("shadow.cascade" + std::to_string(cascade),
-                                           textureDesc(frame.shadowCascades[cascade], frameInitialState));
-                shadows.cascades[cascade] = textureFrameData(frame.shadowCascades[cascade], graphResource);
+                                           textureDesc(rasterFrame.shadowCascades[cascade], frameInitialState));
+                shadows.cascades[cascade] = textureFrameData(rasterFrame.shadowCascades[cascade], graphResource);
             }
             rasterSurface.position = textureFrameData(
-                frame.position,
-                importer.importTexture("gbuffer.position", textureDesc(frame.position, frameInitialState)));
+                rasterFrame.position,
+                importer.importTexture("gbuffer.position", textureDesc(rasterFrame.position, frameInitialState)));
             rasterSurface.normalRoughness = textureFrameData(
-                frame.normalRoughness,
-                importer.importTexture("gbuffer.normal", textureDesc(frame.normalRoughness, frameInitialState)));
+                rasterFrame.normalRoughness,
+                importer.importTexture("gbuffer.normal", textureDesc(rasterFrame.normalRoughness, frameInitialState)));
             rasterSurface.albedoMetallic = textureFrameData(
-                frame.albedo, importer.importTexture("gbuffer.albedo", textureDesc(frame.albedo, frameInitialState)));
+                rasterFrame.albedo,
+                importer.importTexture("gbuffer.albedo", textureDesc(rasterFrame.albedo, frameInitialState)));
             rasterSurface.motion = textureFrameData(
-                frame.motion, importer.importTexture("gbuffer.motion", textureDesc(frame.motion, frameInitialState)));
-            FrameGraphTextureDesc materialIdDesc = textureDesc(frame.materialId, frameInitialState);
+                rasterFrame.motion,
+                importer.importTexture("gbuffer.motion", textureDesc(rasterFrame.motion, frameInitialState)));
+            FrameGraphTextureDesc materialIdDesc = textureDesc(rasterFrame.materialId, frameInitialState);
             materialIdDesc.finalState = nvrhi::ResourceStates::ShaderResource;
             rasterSurface.materialId =
-                textureFrameData(frame.materialId, importer.importTexture("gbuffer.material-id", materialIdDesc));
+                textureFrameData(rasterFrame.materialId, importer.importTexture("gbuffer.material-id", materialIdDesc));
             if (modelRenderer_ != nullptr) {
                 const nvrhi::BufferHandle& materialBuffer = modelRenderer_->materialBuffer(frameIndex);
                 rasterSurface.materials = core::BufferFrameData{
@@ -290,9 +292,10 @@ namespace lumin::render {
                     .readyPass = {},
                 };
             }
-            FrameGraphTextureDesc depthDesc = textureDesc(frame.depth, depthInitialState);
+            FrameGraphTextureDesc depthDesc = textureDesc(rasterFrame.depth, depthInitialState);
             depthDesc.finalState = nvrhi::ResourceStates::DepthWrite;
-            rasterSurface.depth = textureFrameData(frame.depth, importer.importTexture("gbuffer.depth", depthDesc));
+            rasterSurface.depth =
+                textureFrameData(rasterFrame.depth, importer.importTexture("gbuffer.depth", depthDesc));
         }
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         else {
@@ -324,18 +327,20 @@ namespace lumin::render {
         }
 #endif
         core::IndirectLightingData indirectLighting;
-        indirectLighting.combined = textureFrameData(
-            frame.globalIllumination, importer.importTexture("global-illumination.output",
-                                                             textureDesc(frame.globalIllumination, frameInitialState)));
+        indirectLighting.combined =
+            textureFrameData(postFxFrame.globalIllumination,
+                             importer.importTexture("global-illumination.output",
+                                                    textureDesc(postFxFrame.globalIllumination, frameInitialState)));
         core::DenoisedLightingData denoisedLighting{
             .diffuse = {},
             .specular = {},
             .combined = indirectLighting.combined,
         };
         core::SceneHdrData sceneHdr;
-        sceneHdr.color = textureFrameData(
-            frame.lighting, importer.importTexture(hybridPathActive ? "rt.surface.direct-radiance" : "lighting.hdr",
-                                                   textureDesc(frame.lighting, frameInitialState)));
+        sceneHdr.color =
+            textureFrameData(postFxFrame.lighting,
+                             importer.importTexture(hybridPathActive ? "rt.surface.direct-radiance" : "lighting.hdr",
+                                                    textureDesc(postFxFrame.lighting, frameInitialState)));
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridPathActive) {
             rtSurface.directRadiance = indirectLighting.combined;
@@ -345,17 +350,18 @@ namespace lumin::render {
         sceneHdr.motion = hybridPathActive ? rtSurface.motion : rasterSurface.motion;
         sceneHdr.depth = hybridPathActive ? rtSurface.viewDepth : rasterSurface.depth;
         core::TemporalOutputData temporalOutput;
-        temporalOutput.color =
-            textureFrameData(frame.taaResolved,
-                             importer.importTexture("taa.resolved", textureDesc(frame.taaResolved, frameInitialState)));
+        temporalOutput.color = textureFrameData(
+            postFxFrame.taaResolved,
+            importer.importTexture("taa.resolved", textureDesc(postFxFrame.taaResolved, frameInitialState)));
         temporalOutput.historyRead = textureFrameData(
             historyReadFrame.history,
-            importer.importTexture("taa.history.read", textureDesc(historyReadFrame.history,
-                                                                   textures_.historyInitialState(historyReadIndex))));
+            importer.importTexture(
+                "taa.history.read",
+                textureDesc(historyReadFrame.history, postFxResources_.historyInitialState(historyReadIndex))));
         temporalOutput.historyWrite = textureFrameData(
-            frame.history,
+            postFxFrame.history,
             importer.importTexture("taa.history.write",
-                                   textureDesc(frame.history, textures_.historyInitialState(frameIndex))));
+                                   textureDesc(postFxFrame.history, postFxResources_.historyInitialState(frameIndex))));
 
         FrameGraphTextureDesc viewportDesc =
             textureDesc(viewportOutput_, viewportOutputInitialized_ ? nvrhi::ResourceStates::ShaderResource
@@ -388,21 +394,21 @@ namespace lumin::render {
         if (!hybridPathActive) {
             for (std::uint32_t cascade = 0; cascade < shadowCascadeCount; ++cascade) {
                 rasterTargets.shadowFramebuffers[cascade] = createFramebuffer(
-                    device, nvrhi::FramebufferDesc().setDepthAttachment(frame.shadowCascades[cascade].texture));
+                    device, nvrhi::FramebufferDesc().setDepthAttachment(rasterFrame.shadowCascades[cascade].texture));
             }
             nvrhi::FramebufferDesc gbufferDesc;
-            gbufferDesc.addColorAttachment(frame.position.texture)
-                .addColorAttachment(frame.normalRoughness.texture)
-                .addColorAttachment(frame.albedo.texture)
-                .addColorAttachment(frame.motion.texture)
-                .addColorAttachment(frame.materialId.texture)
-                .setDepthAttachment(frame.depth.texture);
+            gbufferDesc.addColorAttachment(rasterFrame.position.texture)
+                .addColorAttachment(rasterFrame.normalRoughness.texture)
+                .addColorAttachment(rasterFrame.albedo.texture)
+                .addColorAttachment(rasterFrame.motion.texture)
+                .addColorAttachment(rasterFrame.materialId.texture)
+                .setDepthAttachment(rasterFrame.depth.texture);
             rasterTargets.surfaceFramebuffer = createFramebuffer(device, gbufferDesc);
             postProcess.lightingFramebuffer =
-                createFramebuffer(device, nvrhi::FramebufferDesc().addColorAttachment(frame.lighting.texture));
+                createFramebuffer(device, nvrhi::FramebufferDesc().addColorAttachment(postFxFrame.lighting.texture));
         }
         postProcess.temporalFramebuffer =
-            createFramebuffer(device, nvrhi::FramebufferDesc().addColorAttachment(frame.taaResolved.texture));
+            createFramebuffer(device, nvrhi::FramebufferDesc().addColorAttachment(postFxFrame.taaResolved.texture));
         postProcess.toneMappingFramebuffer =
             createFramebuffer(device, nvrhi::FramebufferDesc().addColorAttachment(viewportOutput_.texture));
 

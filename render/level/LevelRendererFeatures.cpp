@@ -960,8 +960,9 @@ namespace lumin::render {
         FrameGraph& graph = context.frameGraph();
         const core::HistoryAction action = context.historyAction(core::HistoryDomain::Taa);
         postProcess.uniforms.renderOptions.x =
-            action == core::HistoryAction::Keep && textures_.historyValid(postProcess.historyReadSlot) ? 1.0f : 0.0f;
-        textures_.updatePostProcessUniforms(frameIndex, postProcess.uniforms);
+            action == core::HistoryAction::Keep && postFxResources_.historyValid(postProcess.historyReadSlot) ? 1.0f
+                                                                                                              : 0.0f;
+        postFxResources_.updateUniforms(frameIndex, postProcess.uniforms);
 
         graph.addPass(
             "TAA clear", FrameGraphPassType::Transfer,
@@ -1055,7 +1056,7 @@ namespace lumin::render {
     void LevelRenderer::Impl::recordGBufferPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
                                                 std::uint32_t frameIndex, const glm::mat4& viewProjection,
                                                 const glm::mat4& previousViewProjection) {
-        const TextureFrameResources& frame = textures_.frame(frameIndex);
+        const RasterFeatureFrameResources& frame = rasterResources_.frame(frameIndex);
         if (modelRenderer_ != nullptr) {
             modelRenderer_->recordGBuffer(commandList, framebuffer, frame.position.width, frame.position.height,
                                           frameIndex, viewProjection, previousViewProjection);
@@ -1073,7 +1074,7 @@ namespace lumin::render {
             .setFramebuffer(&framebuffer)
             .setViewport(nvrhi::ViewportState().addViewportAndScissorRect(
                 nvrhi::Viewport(static_cast<float>(width), static_cast<float>(height))))
-            .addBindingSet(textures_.bindingSet(frameIndex));
+            .addBindingSet(postFxResources_.bindingSet(frameIndex));
         if (additionalBindingSet) {
             state.addBindingSet(additionalBindingSet);
         }
@@ -1091,14 +1092,14 @@ namespace lumin::render {
             .setFramebuffer(&framebuffer)
             .setViewport(nvrhi::ViewportState().addViewportAndScissorRect(
                 nvrhi::Viewport(static_cast<float>(renderExtent_.width), static_cast<float>(renderExtent_.height))))
-            .addBindingSet(textures_.bindingSet(frameIndex))
+            .addBindingSet(postFxResources_.bindingSet(frameIndex))
             .addBindingSet(directLightingBindingSets_[frameIndex]);
         commandList.setGraphicsState(state);
         commandList.draw(nvrhi::DrawArguments().setVertexCount(3));
     }
 
     void LevelRenderer::Impl::recordHistoryCopy(nvrhi::ICommandList& commandList, std::uint32_t frameIndex) {
-        const TextureFrameResources& frame = textures_.frame(frameIndex);
+        const PostFxFrameResources& frame = postFxResources_.frame(frameIndex);
         commandList.copyTexture(frame.history.texture, nvrhi::TextureSlice{}, frame.taaResolved.texture,
                                 nvrhi::TextureSlice{});
     }

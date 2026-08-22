@@ -5,13 +5,14 @@
 #include "render/atmosphere/AtmosphereLutGpu.hpp"
 #include "render/atmosphere/AtmosphereLutScheduler.hpp"
 #include "render/core/RenderPipelineInstance.hpp"
+#include "render/features/postfx/PostFxResources.hpp"
+#include "render/features/raster/RasterFeatureResources.hpp"
 #include "render/gi/GlobalIllumination.hpp"
 #include "render/level/FeatureFrameData.hpp"
 #include "render/pipelines/DefaultRenderPipelines.hpp"
 #include "render/presentation/PresentationRenderer.hpp"
 #include "render/resources/FrameGraph.hpp"
 #include "render/resources/FullscreenPipelineFactory.hpp"
-#include "render/resources/TextureManager.hpp"
 #include "render/world/RenderWorld.hpp"
 
 #include <array>
@@ -33,6 +34,9 @@ namespace lumin::render {
 
     struct LevelRenderer::Impl final {
     public:
+        /// 迁移期 Runtime 与 VulkanContext 共用的并行帧槽数量。
+        static constexpr std::uint32_t frameSlotCount = 2;
+
         Impl(VulkanContext& context, const scene::Level& level, std::filesystem::path shaderDirectory,
              core::UiFontAtlas uiFontAtlas, std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination);
         ~Impl();
@@ -81,7 +85,7 @@ namespace lumin::render {
             std::unique_ptr<gi::NrdDenoiser> nrd;
             std::unique_ptr<gi::GiCompositePass> composite;
             std::unique_ptr<gi::HybridLightingCompositePass> lightingComposite;
-            std::array<gi::RayTracedDiFrameResources, TextureManager::maxFramesInFlight> directLightingFrames{};
+            std::array<gi::RayTracedDiFrameResources, frameSlotCount> directLightingFrames{};
             std::optional<gpu::GpuSceneUpdatePlan> pendingScenePlan;
             std::optional<gpu::GpuScenePreparedUpdate> pendingSceneUpdate;
             std::optional<gi::NrdPreparedFrame> pendingNrdFrame;
@@ -160,7 +164,8 @@ namespace lumin::render {
         const scene::Level& level_;
         std::filesystem::path shaderDirectory_;
         core::UiFontAtlas uiFontAtlas_;
-        TextureManager textures_;
+        RasterFeatureResources rasterResources_;
+        PostFxResources postFxResources_;
         FullscreenPipelineFactory fullscreenPipelineFactory_;
         nvrhi::GraphicsPipelineHandle skyPipeline_;
         nvrhi::GraphicsPipelineHandle directLightingPipeline_;
@@ -179,11 +184,11 @@ namespace lumin::render {
         std::unique_ptr<atmosphere::AtmosphereLutGpu> atmosphereLutGpu_;
         std::optional<core::RenderSequence> pendingAtmosphereSequence_;
         nvrhi::BindingLayoutHandle atmosphereConsumerBindingLayout_;
-        std::array<nvrhi::BindingSetHandle, TextureManager::maxFramesInFlight> atmosphereConsumerBindingSets_{};
+        std::array<nvrhi::BindingSetHandle, frameSlotCount> atmosphereConsumerBindingSets_{};
         std::unique_ptr<HybridGiState> hybridGi_;
         std::unique_ptr<ModelRenderer> modelRenderer_;
         nvrhi::BindingLayoutHandle directLightingBindingLayout_;
-        std::array<nvrhi::BindingSetHandle, TextureManager::maxFramesInFlight> directLightingBindingSets_{};
+        std::array<nvrhi::BindingSetHandle, frameSlotCount> directLightingBindingSets_{};
         std::uint64_t swapchainGeneration_ = 0;
         glm::mat4 previousViewProjection_{1.0f};
         glm::mat4 previousView_{1.0f};
@@ -194,7 +199,7 @@ namespace lumin::render {
         bool lastSubmittedFrameUsedHybridGi_ = false;
         std::uint64_t nextRenderSequence_ = 0;
         core::FrameChangeSet pendingFrameChanges_;
-        std::array<bool, TextureManager::maxFramesInFlight> frameResourcesInitialized_{};
+        std::array<bool, frameSlotCount> frameResourcesInitialized_{};
         bool atmosphereForceRebuild_ = true;
         bool requestedSharcEnabled_ = true;
         pipelines::DefaultRenderPipelineKind activePipelineKind_ = pipelines::DefaultRenderPipelineKind::Raster;
