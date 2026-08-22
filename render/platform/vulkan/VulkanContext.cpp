@@ -4,7 +4,6 @@
 
 #include "render/platform/Window.hpp"
 #include "render/BackendLifetime.hpp"
-#include "render/ModelRenderer.hpp"
 #include "render/RayTracingBuildConfiguration.hpp"
 
 #include <algorithm>

@@ -10,14 +10,13 @@
 #include <vulkan/vulkan.h>
 
 #include "render/platform/vulkan/VulkanRayTracingCapabilities.hpp"
+#include "render/core/ModelRendererCapabilities.hpp"
 
 namespace lumin::platform {
     class Window;
 }
 
 namespace lumin::render {
-
-    struct ModelRendererCapabilities;
 
     struct VulkanContextDesc {
         std::string applicationName = "Lumin Engine";

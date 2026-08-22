@@ -65,6 +65,7 @@ target_link_libraries(lumin_application
     PUBLIC
         Lumin::Core
         Lumin::Render
+        Lumin::Editor
 )
 target_compile_definitions(lumin_application
     PRIVATE

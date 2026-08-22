@@ -11,6 +11,7 @@
 #include <nvrhi/nvrhi.h>
 
 #include "assets/ObjLoader.hpp"
+#include "render/core/ModelRendererCapabilities.hpp"
 #include "render/gpu/GpuMaterial.hpp"
 
 namespace lumin::scene {
@@ -38,12 +39,6 @@ namespace lumin::render {
 
     static_assert(sizeof(ObjectData) == 240);
     static_assert(alignof(ObjectData) == 16);
-
-    struct ModelRendererCapabilities {
-        std::uint32_t maxMaterialTextureArrayLength = 1024;
-        std::uint32_t maxDrawIndirectCount = 65536;
-        std::uint32_t maxImageDimension2D = 8192;
-    };
 
     struct ModelBatch {
         using Command = nvrhi::DrawIndexedIndirectArguments;

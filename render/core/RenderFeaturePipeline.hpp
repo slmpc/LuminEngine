@@ -1,10 +1,10 @@
 #pragma once
 
-#include "render/resources/FrameGraph.hpp"
 #include "render/core/FrameIdentity.hpp"
 #include "render/core/History.hpp"
 #include "render/core/RenderBlackboard.hpp"
 #include "render/core/RenderFeaturePlan.hpp"
+#include "render/resources/FrameGraph.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +14,27 @@
 #include <vector>
 
 namespace lumin::render::core {
+
+    /**
+     * @brief Feature 工厂和初始化阶段可访问的显式共享服务集合。
+     *
+     *
+     * 所有指针均为非拥有指针，其生命周期必须覆盖 `IRenderFeature::initialize()` 调用。Feature 可以保存
+     * NvRHI
+     * handle，但不得保存该上下文本身。具体 Feature 应自行拥有由这些服务创建的资源和流水线。
+
+     */
+    class FeatureCreateContext final {
+    public:
+        /// 渲染线程独占的 NvRHI 设备；无 GPU 的纯逻辑 Feature 可以不使用该指针。
+        nvrhi::IDevice* device = nullptr;
+
+        /// 当前设备经过后端探测后发布的不可变能力集合。
+        RenderDeviceCapabilities capabilities;
+
+        /// 可轮转使用的 CPU/GPU 帧槽数量；逐帧资源必须按此数量创建。
+        std::uint32_t frameSlotCount = 0;
+    };
 
     /**
      * @brief 向单个渲染 Feature 提供一帧内有效的后端无关上下文。
@@ -71,6 +92,12 @@ namespace lumin::render::core {
         /// 返回 Feature 的静态规划描述符；引用必须在 Feature 生命周期内保持有效。
         [[nodiscard]] virtual const FeatureDescriptor& descriptor() const noexcept = 0;
 
+        /// 在 Feature 首次进入可执行管线时创建持久资源；默认实现不执行操作。
+        virtual void initialize(const FeatureCreateContext& context);
+
+        /// 在等待相关帧槽后通知 Feature 重建与尺寸相关的资源；默认实现不执行操作。
+        virtual void onRenderExtentChanged(RenderExtent extent);
+
         /// 向本帧 FrameGraph 注册 pass，并按需读取或发布 blackboard 数据。
         virtual void addPasses(RenderFeatureFrameContext& context) = 0;
 
@@ -79,6 +106,9 @@ namespace lumin::render::core {
 
         /// 在已开始构建的帧未提交时回滚暂存状态；实现不得抛出异常。
         virtual void onFrameDiscarded(const RenderFrameIdentity& identity) noexcept;
+
+        /// 释放 Feature 持有的 GPU 资源；会在析构前显式调用，默认实现不执行操作。
+        virtual void shutdown() noexcept;
     };
 
     /**

@@ -2,9 +2,10 @@
 
 ## 应用与游戏边界
 
-依赖方向固定为 `Lumin::Core` -> `Lumin::Render` -> `Lumin::Application`。Core 不依赖 Vulkan、SDL、NvRHI 或渲染器；
-Render 只读取 Core 的场景和资产接口，Application 是唯一同时组合两者的宿主。旧的 `Runtime`、`Rendering`、`Editor`
-和 `GameEngine` 名称仅作为迁移期 alias 保留。`Application` 的公共头
+依赖方向固定为 `Lumin::Application` -> `Lumin::Render` -> `Lumin::RenderCore` -> `Lumin::Core`。Core 不依赖 Vulkan、
+SDL、NvRHI 或渲染器；Render 只读取 Core 的场景和资产接口，Application 是唯一同时组合两者的宿主。
+`Lumin::Rendering` 已删除；RenderCore、RenderRhi、VulkanBackend、RenderRuntime、Editor 和各 Feature 名称均对应真实
+构建 target。`Application` 的公共头
 使用 PImpl，只公开窗口配置、脚本配置和 `Game` 注入点，不泄露 SDL、Vulkan、renderer 或场景的具体所有权。
 
 `Application` 拥有窗口、Vulkan 上下文、`Level`、`Camera`、`ScriptRuntime`、`LevelRenderer` 和 `Editor`。
@@ -13,6 +14,28 @@ Render 只读取 Core 的场景和资产接口，Application 是唯一同时组�
 
 renderer 创建后会安装 idle 守卫，正常退出或异常展开都会先调用 `waitIdle()`；成员销毁顺序保证 Editor 和 renderer
 先于 Vulkan 上下文与窗口关闭。
+
+## 模块化重构状态
+
+新的基础设施已经可独立使用：`RenderFeatureRegistry` 显式注册静态 Feature factory；
+`RenderPipelineRecipeResolver` 根据 typed input/output、能力、少量显式依赖和历史域所有权建立 DAG，并拒绝缺失输入、
+重复 producer、环和重复历史所有者。`RenderSettingsStore` 按 Feature 类型保存配置，提交时生成不可变快照并把变化归类为
+`HotUpdate`、`HistoryReset`、`PipelineRecompose` 或 `ResourceRecreate`。
+
+`RenderPipelineInstance` 从解析后的执行顺序创建 Feature。Factory 和 `initialize()` 只接收显式
+`FeatureCreateContext`；候选初始化失败时逆序 `shutdown()`，旧实例不受影响。一帧内按 DAG 顺序调用 `addPasses()`，
+提交成功后正序调用 `onFrameSubmitted()`，失败或主动丢弃时逆序调用 `onFrameDiscarded()`，只有成功提交才推进历史。
+resize 和 shutdown 在安全边界按逆序通知，使消费者先释放对上游资源的引用。
+
+帧数据已定义为 `FrameSceneData`、`GpuSceneData`、`RasterSurfaceData`、`RtSurfaceData`、`AtmosphereData`、
+`IndirectLightingData`、`DenoisedLightingData`、`SceneHdrData`、`TemporalOutputData` 和 `PresentData`。GPU 数据同时携带
+物理 NvRHI handle、本帧唯一 FrameGraph handle、format、extent 和 ready pass。同一物理资源必须经
+`FrameGraphResourceImporter` 导入；兼容重复导入复用首个 handle，状态或范围冲突立即失败。
+
+当前运行时仍由 `LevelRenderer` 和窄 `LevelRenderFeatureHost` 适配这些基础设施，仍直接读取活动场景和 ImGui 状态。
+在 Feature typed-contract 迁移、资源所有权拆分、`RenderFramePacket` 与渲染线程接入完成前，这些旧类型属于明确的迁移
+边界，不得继续扩展业务逻辑。后续阶段会删除 `DeferredRenderFeatureSet`、`LevelRenderFeatureKind`、
+`LevelRenderFrameData`、`TextureManager`、`PipelineManager` 和旧 `LevelRenderer::Impl`。
 
 ## 场景更新
 
@@ -50,9 +73,9 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 所有图形通道均使用 Vulkan 1.3 动态渲染。`PipelineFactory` 支持 MRT 流水线和仅含顶点阶段的深度流水线；
 项目不会创建 `VkRenderPass` 或 framebuffer 对象。
 
-## LevelRenderer 模块边界
+## LevelRenderer 迁移边界
 
-`LevelRenderer` 现在是一个稳定的公共门面。`render/LevelRenderer.hpp` 只保留窗口、上下文、场景引用和逐帧
+`LevelRenderer` 是迁移期兼容门面。`render/LevelRenderer.hpp` 只保留窗口、上下文、场景引用和逐帧
 入口所需的 API；具体资源成员通过 `std::unique_ptr<LevelRenderer::Impl>` 隐藏在实现文件中。这样公共头不再暴露
 `TextureManager`、`PipelineManager`、Hybrid GI 后端或 NvRHI framebuffer，资源成员变化也不会迫使 Application 和
 编辑器重新编译。`LevelRenderer.cpp` 只负责门面转发、帧入口、提交顺序和异常清理。

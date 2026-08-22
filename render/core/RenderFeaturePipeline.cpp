@@ -7,6 +7,12 @@
 
 namespace lumin::render::core {
 
+    void IRenderFeature::initialize(const FeatureCreateContext&) {
+    }
+
+    void IRenderFeature::onRenderExtentChanged(RenderExtent) {
+    }
+
     RenderFeatureFrameContext::RenderFeatureFrameContext(const RenderFrameIdentity& frameIdentity,
                                                          const HistoryFramePlan& historyPlan, FrameGraph& graph,
                                                          RenderBlackboard& frameBlackboard)
@@ -40,6 +46,9 @@ namespace lumin::render::core {
     }
 
     void IRenderFeature::onFrameDiscarded(const RenderFrameIdentity&) noexcept {
+    }
+
+    void IRenderFeature::shutdown() noexcept {
     }
 
     RenderFeaturePipeline::RenderFeaturePipeline() : RenderFeaturePipeline(makeDefaultHistoryPolicyMap()) {

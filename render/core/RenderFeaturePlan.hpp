@@ -1,5 +1,6 @@
 #pragma once
 
+#include "render/core/FrameDataContract.hpp"
 #include "render/core/History.hpp"
 #include "render/core/RenderCapabilities.hpp"
 
@@ -67,6 +68,18 @@ namespace lumin::render::core {
 
         /// 必须先启用并先执行规划的 Feature。
         std::vector<FeatureId> dependencies;
+
+        /// 当前 Feature 构建帧图前必须已经发布的数据契约。
+        std::vector<FrameDataContract> requiredInputs;
+
+        /// 当前 Feature 可以使用、但不会影响激活结果的数据契约。
+        std::vector<FrameDataContract> optionalInputs;
+
+        /// 当前 Feature 向后续 Feature 发布的数据契约。
+        std::vector<FrameDataContract> outputs;
+
+        /// 不通过数据流表达的显式顺序约束；应只用于外部副作用。
+        std::vector<FeatureId> after;
 
         /// 必需能力或强依赖不可用时的处理策略。
         MissingRequirementPolicy missingRequirementPolicy = MissingRequirementPolicy::DisableFeature;

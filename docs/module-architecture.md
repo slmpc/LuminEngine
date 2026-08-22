@@ -1,22 +1,27 @@
 # 模块与构建架构
 
-项目由两个大模块和一个很薄的组合层组成：
+项目由 Core、分层 Render 静态库和一个很薄的 Application 组合层组成：
 
 ```text
-                 Application
-                /             \
-               v               v
-             Core             Render
+                         Application
+                       /      |      \
+                      v       v       v
+                   Editor   Render   Core
                               |
-                              v
-                           Core API
-
-  Core: Game / Scene / Assets / Scripting
-  Render: platform / resources / features / editor
+             +----------------+----------------+
+             v                v                v
+       RenderRuntime    RenderFeatures   RenderPipelines
+             |                |                |
+             +--------+-------+----------------+
+                      v
+        VulkanBackend / RenderRhi / RenderCore
+                                      |
+                                      v
+                                    Core
 ```
 
-箭头表示“依赖”。`Application` 是组合层，同时依赖 Core 和 Render；Render 只依赖 Core 的数据接口，Core 不依赖
-图形 API。Editor 应用位于 Application 之上，使用无行为的 `Game` 宿主启动项目工作流。
+箭头表示“依赖”。`Application` 是组合层，同时依赖 Core、Render 门面和 Editor；任何 Render target 都不得反向依赖
+Application。Editor 应用位于 Application 之上，使用无行为的 `Game` 宿主启动项目工作流。
 
 ## Core
 
@@ -30,24 +35,37 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 
 ## Render
 
-`render/` 是独立的 GPU 模块，统一拥有窗口平台适配、Vulkan/NvRHI backend、资源状态跟踪、GPU Scene、
-deferred/Blinn-Phong、RT DI/GI、SHARC、NRD、大气 LUT、ImGui renderer 和 Editor UI。它只通过 `scene`、
-`assets` 等 Core API 消费场景数据，不包含 `Application` 或 `Game` 的生命周期控制。物理目录按依赖边界划分，
-命名空间保持为 `lumin::render`，因此迁移不会改变外部 API：
+`render/` 由多个真实静态库组成，分别拥有 Core 契约、NvRHI 资源、Vulkan backend、Feature 域、Runtime 和 Editor。
+这些 target 不是指向同一个单体库的 alias。`Lumin::Render` 只是组合内置 Runtime、Feature 和 recipe 的 INTERFACE 门面，
+自身不编译源码。
+
+当前 target 及职责如下：
+
+- `Lumin::RenderCore`：帧身份、历史策略、typed blackboard、typed frame-data contract、Feature registry、recipe DAG、
+  typed settings 和 `RenderPipelineInstance` 生命周期事务；不依赖 SDL、原生 Vulkan或 Editor。
+- `Lumin::RenderRhi`：`FrameGraph`、资源导入去重、`ShaderLibrary`、无业务语义的 Pipeline/资源 factory；只面向 NvRHI。
+- `Lumin::VulkanBackend`：窗口 surface、`VulkanContext`、交换链、能力探测和 RenderDoc 接入；这是唯一原生 Vulkan 边界。
+- `Lumin::Atmosphere`、`Lumin::GpuScene`、`Lumin::RasterFeatures`、`Lumin::GiFeatures`：按资源所有权域拆分的 Feature 实现。
+- `Lumin::RenderPresentation`：当前 ImGui NvRHI renderer；主线程 `UiDrawPacket` 迁移完成后只消费深拷贝 UI 数据。
+- `Lumin::RenderPipelines`：recipe 与默认模块注册。迁移期间仍包含旧 `DeferredRenderPipeline` 窄适配器。
+- `Lumin::RenderRuntime`：帧事务和渲染门面。迁移期间仍包含旧 `LevelRenderer` 实现，最终由异步 `Renderer` 替换。
+- `Lumin::Editor`：独立 Editor UI target，不再与 Render 单体库共享产物。
+
+物理目录继续按依赖边界划分：
 
 - `render/platform/` 保存窗口和调试适配；`render/platform/vulkan/` 只保存原生 Vulkan 上下文、交换链、
   能力探测以及与 NvRHI 的 native interop。
-- `render/resources/` 保存 `FrameGraph`、`DescriptorIndexingLimits`、NvRHI buffer/texture 包装、
-  `TextureManager`、pipeline 创建/缓存和 `ShaderLibrary`。这些类型负责资源描述、状态跟踪、绑定计划和资源生命周期，
-  不包含编辑器窗口逻辑。
+- `render/core/` 保存后端无关的规划、设置和帧事务契约；`render/resources/` 保存 NvRHI FrameGraph 和通用 factory。
+  迁移完成前 `TextureManager`、`PipelineManager` 仍作为 Raster 兼容实现存在，禁止新增其他业务资源所有权。
 - `render/editor/` 保存 `Editor`、`ImGuiContent`、`ImGuiLayer` 和 `ImGuiManager`。该目录负责 UI 帧、
   ImGui 输入捕获和交换链绘制，渲染资源通过 `resources` 的公共 API 注入。
 - `render/level/`、`render/features/`、`render/gi/`、`render/atmosphere/` 和 `render/gpu/` 保存场景渲染功能；
   `render/gi/legacy/` 保存 raster fallback，`render/gi/raytracing/` 保存 RTDI、RTGI、SHARC、NRD 与 composite，
   通过 `resources` 声明和使用资源，不直接操作原生 Vulkan 状态。
 
-`Lumin::Render` 是唯一真实的渲染静态库。`Lumin::Rendering`、`Lumin::RenderCore`、`Lumin::Editor`、
-`Lumin::VulkanBackend` 和 `Lumin::RenderFeatures` 仅是迁移期 alias，避免外部测试一次性修改所有链接名。
+`Lumin::Rendering` 已删除。`Lumin::RenderCore`、`Lumin::RenderRhi`、`Lumin::VulkanBackend`、各 Feature target、
+`Lumin::RenderRuntime` 和 `Lumin::Editor` 都对应独立构建产物；只有 `Lumin::Render` 与 `Lumin::RenderFeatures` 是不隐藏
+源码的组合 target。
 
 ## Application
 
@@ -60,12 +78,13 @@ deferred/Blinn-Phong、RT DI/GI、SHARC、NRD、大气 LUT、ImGui renderer 和 
 顶层 `CMakeLists.txt` 只负责工具链、依赖和组合层。大模块各自拥有一个构建文件：
 
 - `core/CMakeLists.txt`：Core 的全部源文件和依赖；
-- `render/CMakeLists.txt`：Render 的全部源文件、可选 NRD/SHARC 源码和 alias；
+- `render/CMakeLists.txt`：RenderCore、RHI、Vulkan backend、Feature 域、Runtime、Pipelines、Presentation 和 Editor；
 - `shaders/CMakeLists.txt`：调用 Python shader generator 并注册 shader targets；
 - `apps/editor/CMakeLists.txt`、`tests/CMakeLists.txt`：应用与验证目标。
 
-不再为 atmosphere、GI、GPU Scene 等内部子系统创建独立的 CMake 文件。新增源文件只需要加入所属大模块
-的一个列表；新增 shader 只需要添加 companion JSON，不需要编辑 CMake JSON 解析逻辑。
+Feature target 必须能够独立编译和测试。新增源码应加入实际拥有它的 target，禁止为绕过链接错误将源码重复放入多个
+静态库，也禁止重新建立多个名称指向同一库的伪模块。新增 shader 只需要添加 companion JSON，不需要编辑 CMake JSON
+解析逻辑。
 
 ## Shader 配置
 

@@ -114,8 +114,18 @@ set_tests_properties(
 
 add_executable(lumin_frame_graph_tests FrameGraphTests.cpp)
 lumin_configure_test(lumin_frame_graph_tests)
-target_link_libraries(lumin_frame_graph_tests PRIVATE Lumin::RenderCore)
+target_link_libraries(lumin_frame_graph_tests PRIVATE Lumin::RenderRhi)
 lumin_register_test(lumin_frame_graph_tests FrameGraphNvRhiManualBarriers LABELS nvrhi render unit contract)
+
+add_executable(lumin_render_modularity_tests RenderModularityTests.cpp)
+lumin_configure_test(lumin_render_modularity_tests)
+target_link_libraries(lumin_render_modularity_tests PRIVATE Lumin::RenderCore)
+lumin_register_test(lumin_render_modularity_tests RenderModularity LABELS render architecture unit contract)
+
+add_executable(lumin_render_pipeline_instance_tests RenderPipelineInstanceTests.cpp)
+lumin_configure_test(lumin_render_pipeline_instance_tests)
+target_link_libraries(lumin_render_pipeline_instance_tests PRIVATE Lumin::RenderCore Lumin::RenderRhi)
+lumin_register_test(lumin_render_pipeline_instance_tests RenderPipelineInstance LABELS render architecture unit contract)
 
 add_executable(lumin_nvrhi_resource_tests NvrhiResourceTests.cpp)
 lumin_configure_test(lumin_nvrhi_resource_tests)
@@ -184,7 +194,7 @@ lumin_register_test(lumin_imgui_renderer_tests ImGuiRenderer LABELS vulkan ui un
 
 add_executable(lumin_tests CameraLevelTests.cpp)
 lumin_configure_test(lumin_tests)
-target_link_libraries(lumin_tests PRIVATE Lumin::Rendering)
+target_link_libraries(lumin_tests PRIVATE Lumin::Render)
 target_compile_definitions(lumin_tests
     PRIVATE
         LUMIN_TEST_ASSET_DIR="${LUMIN_ASSET_DIR_CMAKE}"
@@ -214,7 +224,7 @@ lumin_register_test(lumin_render_backend_policy_tests RenderBackendPolicy LABELS
 
 add_executable(lumin_descriptor_indexing_tests DescriptorIndexingTests.cpp)
 lumin_configure_test(lumin_descriptor_indexing_tests)
-target_link_libraries(lumin_descriptor_indexing_tests PRIVATE Lumin::Rendering)
+target_link_libraries(lumin_descriptor_indexing_tests PRIVATE Lumin::RenderRhi Lumin::RasterFeatures)
 lumin_register_test(lumin_descriptor_indexing_tests DescriptorIndexing LABELS raster unit contract)
 
 add_executable(lumin_gi_tests
@@ -288,7 +298,7 @@ lumin_register_test(lumin_texture_manager_tests TextureManager LABELS raster uni
 
 add_executable(lumin_editor_tests EditorTests.cpp)
 lumin_configure_test(lumin_editor_tests)
-target_link_libraries(lumin_editor_tests PRIVATE Lumin::Editor)
+target_link_libraries(lumin_editor_tests PRIVATE Lumin::Editor Lumin::RenderPresentation)
 lumin_register_test(lumin_editor_tests Editor LABELS unit)
 
 add_executable(lumin_project_editor_tests ProjectEditorTests.cpp)
@@ -323,7 +333,7 @@ lumin_register_test(lumin_render_feature_pipeline_tests RenderFeaturePipeline LA
 
 add_executable(lumin_deferred_render_pipeline_tests DeferredRenderPipelineTests.cpp)
 lumin_configure_test(lumin_deferred_render_pipeline_tests)
-target_link_libraries(lumin_deferred_render_pipeline_tests PRIVATE Lumin::RenderCore)
+target_link_libraries(lumin_deferred_render_pipeline_tests PRIVATE Lumin::RenderPipelines)
 lumin_register_test(lumin_deferred_render_pipeline_tests DeferredRenderPipeline LABELS render unit contract)
 
 add_executable(lumin_render_world_tests RenderWorldTests.cpp)
@@ -333,5 +343,5 @@ lumin_register_test(lumin_render_world_tests RenderWorld LABELS scene unit)
 
 add_executable(lumin_gpu_scene_tests GpuSceneTests.cpp)
 lumin_configure_test(lumin_gpu_scene_tests)
-target_link_libraries(lumin_gpu_scene_tests PRIVATE Lumin::RenderCore)
+target_link_libraries(lumin_gpu_scene_tests PRIVATE Lumin::GpuScene)
 lumin_register_test(lumin_gpu_scene_tests GpuScene LABELS raytracing gpu-scene unit contract)

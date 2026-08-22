@@ -1,4 +1,5 @@
 #include "render/resources/FrameGraph.hpp"
+#include "render/resources/FrameGraphResourceImporter.hpp"
 
 #include <cstdint>
 #include <iostream>
@@ -36,8 +37,7 @@ namespace {
             events.emplace_back("begin-buffer");
         }
 
-        void setTextureState(nvrhi::ITexture*, nvrhi::TextureSubresourceSet,
-                             nvrhi::ResourceStates state) override {
+        void setTextureState(nvrhi::ITexture*, nvrhi::TextureSubresourceSet, nvrhi::ResourceStates state) override {
             require(state != nvrhi::ResourceStates::Unknown,
                     "FrameGraph must never request an Unknown destination state.");
             require(state != nvrhi::ResourceStates::Common,
@@ -117,11 +117,13 @@ namespace {
         const auto input = graph.importTexture("input", texture);
 
         for (const char* name : {"read-a", "read-b"}) {
-            graph.addPass(name, FrameGraphPassType::Graphics,
-                          [input](lumin::render::FrameGraphBuilder& builder) {
-                              builder.readTexture(input, nvrhi::ResourceStates::ShaderResource);
-                          },
-                          [](const FrameGraphContext&) {});
+            graph.addPass(
+                name, FrameGraphPassType::Graphics,
+                [input](lumin::render::FrameGraphBuilder& builder) {
+                    builder.readTexture(input, nvrhi::ResourceStates::ShaderResource);
+                },
+                [](const FrameGraphContext&) {
+                });
         }
 
         RecordingBarriers barriers;
@@ -138,11 +140,13 @@ namespace {
         const auto target = graph.importTexture("target", texture);
 
         for (const char* name : {"write-a", "write-b"}) {
-            graph.addPass(name, FrameGraphPassType::Graphics,
-                          [target](lumin::render::FrameGraphBuilder& builder) {
-                              builder.writeTexture(target, nvrhi::ResourceStates::RenderTarget);
-                          },
-                          [](const FrameGraphContext&) {});
+            graph.addPass(
+                name, FrameGraphPassType::Graphics,
+                [target](lumin::render::FrameGraphBuilder& builder) {
+                    builder.writeTexture(target, nvrhi::ResourceStates::RenderTarget);
+                },
+                [](const FrameGraphContext&) {
+                });
         }
 
         RecordingBarriers barriers;
@@ -155,8 +159,7 @@ namespace {
     void testAccelerationStructuresUseFrameGraphBarriers() {
         FrameGraph graph;
         FrameGraphAccelerationStructureDesc desc;
-        desc.accelerationStructure =
-            reinterpret_cast<nvrhi::rt::IAccelStruct*>(static_cast<std::uintptr_t>(4));
+        desc.accelerationStructure = reinterpret_cast<nvrhi::rt::IAccelStruct*>(static_cast<std::uintptr_t>(4));
         desc.initialState = nvrhi::ResourceStates::Common;
         desc.finalState = nvrhi::ResourceStates::AccelStructRead;
         const auto tlas = graph.importAccelerationStructure("scene-tlas", desc);
@@ -166,13 +169,15 @@ namespace {
             [tlas](lumin::render::FrameGraphBuilder& builder) {
                 builder.writeAccelerationStructure(tlas);
             },
-            [](const FrameGraphContext&) {});
+            [](const FrameGraphContext&) {
+            });
         graph.addPass(
             "trace", FrameGraphPassType::RayTracing,
             [tlas](lumin::render::FrameGraphBuilder& builder) {
                 builder.readAccelerationStructure(tlas);
             },
-            [](const FrameGraphContext&) {});
+            [](const FrameGraphContext&) {
+            });
 
         RecordingBarriers barriers;
         graph.execute(FrameGraphContext{.barriers = &barriers});
@@ -184,8 +189,7 @@ namespace {
             }
             std::cerr << '\n';
         }
-        require(barriers.events == expected,
-                "FrameGraph must transition TLAS build writes to ray tracing reads.");
+        require(barriers.events == expected, "FrameGraph must transition TLAS build writes to ray tracing reads.");
         require(graph.resourceInfo(tlas).kind == lumin::render::FrameGraphResourceKind::AccelerationStructure,
                 "Acceleration structures must remain distinct graph resources.");
     }
@@ -288,7 +292,31 @@ namespace {
         require(forwardRejected, "A forward explicit pass dependency must be rejected during setup.");
     }
 
-}
+    void testPhysicalResourcesAreImportedOnce() {
+        FrameGraph graph;
+        lumin::render::FrameGraphResourceImporter importer{graph};
+        FrameGraphTextureDesc texture;
+        texture.texture = reinterpret_cast<nvrhi::ITexture*>(static_cast<std::uintptr_t>(11));
+        texture.initialState = nvrhi::ResourceStates::ShaderResource;
+        texture.finalState = nvrhi::ResourceStates::ShaderResource;
+
+        const auto first = importer.importTexture("first", texture);
+        const auto second = importer.importTexture("second", texture);
+        require(first.id == second.id && importer.importedResourceCount() == 1,
+                "Compatible imports of one physical resource must reuse the first FrameGraph handle.");
+
+        texture.finalState = nvrhi::ResourceStates::Present;
+        bool incompatibleRejected = false;
+        try {
+            static_cast<void>(importer.importTexture("incompatible", texture));
+        } catch (const std::invalid_argument&) {
+            incompatibleRejected = true;
+        }
+        require(incompatibleRejected,
+                "Conflicting state declarations for one physical resource must be rejected immediately.");
+    }
+
+} // namespace
 
 int main() {
     try {
@@ -300,6 +328,7 @@ int main() {
         testExplicitPassDependenciesParticipateInTopologicalSorting();
         testDuplicatePassDependenciesAreDeduplicated();
         testInvalidAndNonEarlierPassDependenciesAreRejected();
+        testPhysicalResourcesAreImportedOnce();
         std::cout << "FrameGraphNvRhiManualBarriers PASS\n";
         return 0;
     } catch (const std::exception& error) {

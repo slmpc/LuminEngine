@@ -1,99 +1,179 @@
-# Render 是独立的 GPU 模块，依赖 Core 的场景快照，但不依赖 Application 或 Game。
+# Render 由真实静态库组成；依赖只能从 Runtime/Feature 指向 Core、RHI 与 Vulkan 后端。
 find_package(Vulkan REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(imguizmo CONFIG REQUIRED)
 find_package(nvrhi CONFIG REQUIRED)
 
-set(_lumin_render_sources
-    ${PROJECT_SOURCE_DIR}/render/platform/RenderDocAttachment.cpp
-    ${PROJECT_SOURCE_DIR}/render/platform/Window.cpp
-    ${PROJECT_SOURCE_DIR}/render/resources/FrameGraph.cpp
-    ${PROJECT_SOURCE_DIR}/render/platform/vulkan/VulkanContext.cpp
-    ${PROJECT_SOURCE_DIR}/render/platform/vulkan/VulkanRayTracingCapabilities.cpp
-    ${PROJECT_SOURCE_DIR}/render/resources/VulkanResources.cpp
-    ${PROJECT_SOURCE_DIR}/render/DeferredRenderPipeline.cpp
-    ${PROJECT_SOURCE_DIR}/render/resources/DescriptorIndexingLimits.cpp
-    ${PROJECT_SOURCE_DIR}/render/ModelRenderer.cpp
-    ${PROJECT_SOURCE_DIR}/render/resources/PipelineFactory.cpp
-    ${PROJECT_SOURCE_DIR}/render/resources/PipelineManager.cpp
-    ${PROJECT_SOURCE_DIR}/render/resources/ShaderLibrary.cpp
-    ${PROJECT_SOURCE_DIR}/render/resources/TextureManager.cpp
-    ${PROJECT_SOURCE_DIR}/render/LevelRenderer.cpp
-    ${PROJECT_SOURCE_DIR}/render/level/LevelRendererResources.cpp
-    ${PROJECT_SOURCE_DIR}/render/level/LevelRendererFeatures.cpp
-    ${PROJECT_SOURCE_DIR}/render/level/LevelRendererFrame.cpp
-    ${PROJECT_SOURCE_DIR}/render/features/LevelRenderFeature.cpp
-    ${PROJECT_SOURCE_DIR}/render/ObjRenderer.cpp
-    ${PROJECT_SOURCE_DIR}/render/editor/ImGuiLayer.cpp
-    ${PROJECT_SOURCE_DIR}/render/editor/ImGuiManager.cpp
-    ${PROJECT_SOURCE_DIR}/render/atmosphere/AtmosphereGpuConstants.cpp
-    ${PROJECT_SOURCE_DIR}/render/atmosphere/AtmosphereLutGpu.cpp
-    ${PROJECT_SOURCE_DIR}/render/atmosphere/AtmosphereLutPassPlan.cpp
-    ${PROJECT_SOURCE_DIR}/render/atmosphere/AtmosphereLutResources.cpp
-    ${PROJECT_SOURCE_DIR}/render/atmosphere/AtmosphereLutScheduler.cpp
-    ${PROJECT_SOURCE_DIR}/render/atmosphere/AtmosphereTypes.cpp
-    ${PROJECT_SOURCE_DIR}/render/core/History.cpp
-    ${PROJECT_SOURCE_DIR}/render/core/RenderCapabilities.cpp
-    ${PROJECT_SOURCE_DIR}/render/core/RenderFeaturePipeline.cpp
-    ${PROJECT_SOURCE_DIR}/render/core/RenderFeaturePlan.cpp
-    ${PROJECT_SOURCE_DIR}/render/gpu/GpuScene.cpp
-    ${PROJECT_SOURCE_DIR}/render/gpu/GpuSceneResources.cpp
-    ${PROJECT_SOURCE_DIR}/render/world/RenderWorld.cpp
-    ${PROJECT_SOURCE_DIR}/render/gi/legacy/LegacyBackend.cpp
-    ${PROJECT_SOURCE_DIR}/render/editor/Editor.cpp
-    ${PROJECT_SOURCE_DIR}/render/editor/EditorStyle.cpp
-    ${PROJECT_SOURCE_DIR}/render/editor/ViewportPicking.cpp
+function(lumin_configure_render_library target)
+    lumin_configure_library(${target})
+    target_include_directories(${target} PUBLIC "$<BUILD_INTERFACE:${LUMIN_GENERATED_INCLUDE_DIR}>")
+endfunction()
+
+function(lumin_render_target_uses_shaders target)
+    target_compile_definitions(${target} PRIVATE LUMIN_SHADER_DIR="${LUMIN_SHADER_OUTPUT_DIR_CMAKE}")
+    add_dependencies(${target} lumin_shaders)
+endfunction()
+
+add_library(lumin_render_core STATIC
+    core/FrameDataContract.cpp
+    core/History.cpp
+    core/RenderCapabilities.cpp
+    core/RenderFeaturePipeline.cpp
+    core/RenderFeaturePlan.cpp
+    core/RenderFeatureRegistry.cpp
+    core/RenderPipelineInstance.cpp
+    core/RenderSettingsStore.cpp
+    world/RenderWorld.cpp
+)
+add_library(Lumin::RenderCore ALIAS lumin_render_core)
+lumin_configure_render_library(lumin_render_core)
+target_link_libraries(lumin_render_core PUBLIC Lumin::Core nvrhi)
+
+add_library(lumin_render_rhi STATIC
+    resources/DescriptorIndexingLimits.cpp
+    resources/FrameGraph.cpp
+    resources/FrameGraphResourceImporter.cpp
+    resources/PipelineFactory.cpp
+    resources/ShaderLibrary.cpp
+    resources/VulkanResources.cpp
+)
+add_library(Lumin::RenderRhi ALIAS lumin_render_rhi)
+lumin_configure_render_library(lumin_render_rhi)
+target_link_libraries(lumin_render_rhi PUBLIC nvrhi)
+
+add_library(lumin_vulkan_backend STATIC
+    platform/RenderDocAttachment.cpp
+    platform/Window.cpp
+    platform/vulkan/VulkanContext.cpp
+    platform/vulkan/VulkanRayTracingCapabilities.cpp
+)
+add_library(Lumin::VulkanBackend ALIAS lumin_vulkan_backend)
+lumin_configure_render_library(lumin_vulkan_backend)
+target_link_libraries(lumin_vulkan_backend
+    PUBLIC Vulkan::Vulkan nvrhi nvrhi_vk SDL3::SDL3 Lumin::RenderCore
+    PRIVATE ${CMAKE_DL_LIBS}
 )
 
+add_library(lumin_render_atmosphere STATIC
+    atmosphere/AtmosphereGpuConstants.cpp
+    atmosphere/AtmosphereLutGpu.cpp
+    atmosphere/AtmosphereLutPassPlan.cpp
+    atmosphere/AtmosphereLutResources.cpp
+    atmosphere/AtmosphereLutScheduler.cpp
+    atmosphere/AtmosphereTypes.cpp
+)
+add_library(Lumin::Atmosphere ALIAS lumin_render_atmosphere)
+lumin_configure_render_library(lumin_render_atmosphere)
+target_link_libraries(lumin_render_atmosphere PUBLIC Lumin::RenderCore Lumin::RenderRhi)
+lumin_render_target_uses_shaders(lumin_render_atmosphere)
+
+add_library(lumin_render_gpu_scene STATIC
+    gpu/GpuScene.cpp
+    gpu/GpuSceneResources.cpp
+)
+add_library(Lumin::GpuScene ALIAS lumin_render_gpu_scene)
+lumin_configure_render_library(lumin_render_gpu_scene)
+target_link_libraries(lumin_render_gpu_scene PUBLIC Lumin::RenderCore Lumin::RenderRhi)
+
+add_library(lumin_render_raster STATIC
+    ModelRenderer.cpp
+    ObjRenderer.cpp
+    resources/PipelineManager.cpp
+    resources/TextureManager.cpp
+)
+add_library(Lumin::RasterFeatures ALIAS lumin_render_raster)
+lumin_configure_render_library(lumin_render_raster)
+target_link_libraries(lumin_render_raster
+    PUBLIC Lumin::RenderCore Lumin::RenderRhi Lumin::VulkanBackend Lumin::GpuScene
+)
+lumin_render_target_uses_shaders(lumin_render_raster)
+
+set(_lumin_gi_sources gi/legacy/LegacyBackend.cpp)
 if(LUMIN_NRD_AVAILABLE)
-    list(APPEND _lumin_render_sources
-        ${PROJECT_SOURCE_DIR}/render/gi/raytracing/GiComposite.cpp
-        ${PROJECT_SOURCE_DIR}/render/gi/raytracing/HybridLightingComposite.cpp
-        ${PROJECT_SOURCE_DIR}/render/gi/raytracing/NrdDenoiser.cpp
-        ${PROJECT_SOURCE_DIR}/render/gi/raytracing/RayTracedDirectLighting.cpp
-        ${PROJECT_SOURCE_DIR}/render/gi/raytracing/RayTracedGi.cpp
+    list(APPEND _lumin_gi_sources
+        gi/raytracing/GiComposite.cpp
+        gi/raytracing/HybridLightingComposite.cpp
+        gi/raytracing/NrdDenoiser.cpp
+        gi/raytracing/RayTracedDirectLighting.cpp
+        gi/raytracing/RayTracedGi.cpp
     )
 endif()
 if(LUMIN_SHARC_AVAILABLE)
-    list(APPEND _lumin_render_sources ${PROJECT_SOURCE_DIR}/render/gi/raytracing/SharcRadianceCache.cpp)
+    list(APPEND _lumin_gi_sources gi/raytracing/SharcRadianceCache.cpp)
 endif()
-
-add_library(lumin_render STATIC ${_lumin_render_sources})
-add_library(Lumin::Render ALIAS lumin_render)
-add_library(Lumin::Rendering ALIAS lumin_render)
-add_library(Lumin::RenderCore ALIAS lumin_render)
-add_library(Lumin::VulkanBackend ALIAS lumin_render)
-add_library(Lumin::RenderFeatures ALIAS lumin_render)
-add_library(Lumin::Atmosphere ALIAS lumin_render)
-add_library(Lumin::Editor ALIAS lumin_render)
-lumin_configure_library(lumin_render)
-target_include_directories(lumin_render
-    PUBLIC
-        "$<BUILD_INTERFACE:${LUMIN_GENERATED_INCLUDE_DIR}>"
-        "${PROJECT_SOURCE_DIR}"
-        "${PROJECT_SOURCE_DIR}/core"
-)
-target_link_libraries(lumin_render
-    PUBLIC
-        Lumin::Core
-        Vulkan::Vulkan
-        nvrhi
-        nvrhi_vk
-        SDL3::SDL3
-        imgui::imgui
-        imguizmo::imguizmo
-    PRIVATE
-        ${CMAKE_DL_LIBS}
-)
+add_library(lumin_render_gi STATIC ${_lumin_gi_sources})
+add_library(Lumin::GiFeatures ALIAS lumin_render_gi)
+lumin_configure_render_library(lumin_render_gi)
+target_link_libraries(lumin_render_gi PUBLIC Lumin::RenderCore Lumin::RenderRhi Lumin::Atmosphere Lumin::GpuScene)
 if(LUMIN_NRD_AVAILABLE)
-    target_link_libraries(lumin_render PUBLIC Lumin::Nrd)
+    target_link_libraries(lumin_render_gi PUBLIC Lumin::Nrd)
 endif()
 if(LUMIN_SHARC_AVAILABLE)
-    target_link_libraries(lumin_render PUBLIC Lumin::Sharc)
+    target_link_libraries(lumin_render_gi PUBLIC Lumin::Sharc)
 endif()
-target_compile_definitions(lumin_render PRIVATE LUMIN_SHADER_DIR="${LUMIN_SHADER_OUTPUT_DIR_CMAKE}")
-add_dependencies(lumin_render lumin_shaders)
+lumin_render_target_uses_shaders(lumin_render_gi)
 
-# 旧 target 名仅保留 alias，避免测试和外部示例在迁移期间同时改动。
-set_target_properties(lumin_render PROPERTIES EXPORT_NAME Render)
+add_library(lumin_render_pipelines STATIC
+    DeferredRenderPipeline.cpp
+    features/LevelRenderFeature.cpp
+)
+add_library(Lumin::RenderPipelines ALIAS lumin_render_pipelines)
+lumin_configure_render_library(lumin_render_pipelines)
+target_link_libraries(lumin_render_pipelines PUBLIC Lumin::RenderCore Lumin::RenderRhi)
+
+add_library(lumin_render_presentation STATIC
+    editor/ImGuiLayer.cpp
+    editor/ImGuiManager.cpp
+)
+add_library(Lumin::RenderPresentation ALIAS lumin_render_presentation)
+lumin_configure_render_library(lumin_render_presentation)
+target_link_libraries(lumin_render_presentation
+    PUBLIC Lumin::RenderCore Lumin::RenderRhi Lumin::VulkanBackend SDL3::SDL3 imgui::imgui
+)
+lumin_render_target_uses_shaders(lumin_render_presentation)
+
+add_library(lumin_render_features INTERFACE)
+add_library(Lumin::RenderFeatures ALIAS lumin_render_features)
+target_link_libraries(lumin_render_features INTERFACE
+    Lumin::Atmosphere
+    Lumin::GpuScene
+    Lumin::RasterFeatures
+    Lumin::GiFeatures
+    Lumin::RenderPresentation
+)
+
+add_library(lumin_render_runtime STATIC
+    LevelRenderer.cpp
+    level/LevelRendererFeatures.cpp
+    level/LevelRendererFrame.cpp
+    level/LevelRendererResources.cpp
+)
+add_library(Lumin::RenderRuntime ALIAS lumin_render_runtime)
+lumin_configure_render_library(lumin_render_runtime)
+target_link_libraries(lumin_render_runtime
+    PUBLIC Lumin::RenderCore Lumin::RenderRhi Lumin::VulkanBackend
+    PRIVATE Lumin::RenderFeatures Lumin::RenderPipelines
+)
+lumin_render_target_uses_shaders(lumin_render_runtime)
+
+add_library(lumin_editor_module STATIC
+    editor/Editor.cpp
+    editor/EditorStyle.cpp
+    editor/ViewportPicking.cpp
+)
+add_library(Lumin::Editor ALIAS lumin_editor_module)
+lumin_configure_render_library(lumin_editor_module)
+target_link_libraries(lumin_editor_module PUBLIC Lumin::Core Lumin::RenderCore PRIVATE imgui::imgui imguizmo::imguizmo)
+
+# 默认门面组合 Runtime 与内置静态 Feature；它本身不再隐藏额外源码。
+add_library(lumin_render INTERFACE)
+add_library(Lumin::Render ALIAS lumin_render)
+target_link_libraries(lumin_render INTERFACE Lumin::RenderRuntime Lumin::RenderFeatures Lumin::RenderPipelines)
+
+set_target_properties(
+    lumin_render_core lumin_render_rhi lumin_vulkan_backend lumin_render_atmosphere lumin_render_gpu_scene
+    lumin_render_raster lumin_render_gi lumin_render_pipelines lumin_render_presentation lumin_render_runtime
+    lumin_editor_module
+    PROPERTIES FOLDER "Lumin/Render"
+)
