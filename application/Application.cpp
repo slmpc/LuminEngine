@@ -2,10 +2,10 @@
 
 #include "config/EngineSettings.hpp"
 #include "project/ProjectSession.hpp"
-#include "render/LevelRenderer.hpp"
+#include "render/Renderer.hpp"
 #include "render/editor/Editor.hpp"
 #include "render/editor/ImGuiFrontend.hpp"
-#include "render/pipelines/DefaultRenderPipelines.hpp"
+#include "render/editor/RenderSettingsPanelAdapter.hpp"
 #include "render/platform/RenderDocAttachment.hpp"
 #include "render/platform/Window.hpp"
 #include "render/platform/vulkan/VulkanContext.hpp"
@@ -48,23 +48,6 @@ namespace lumin::core {
             return attachment;
         }
 
-        class RendererIdleGuard {
-        public:
-            explicit RendererIdleGuard(render::LevelRenderer& renderer) noexcept : renderer_(renderer) {
-            }
-
-            ~RendererIdleGuard() {
-                try {
-                    renderer_.waitIdle();
-                } catch (...) {
-                    // Destructors cannot report a second failure while unwinding.
-                }
-            }
-
-        private:
-            render::LevelRenderer& renderer_;
-        };
-
     } // namespace
 
     struct Application::Impl {
@@ -72,14 +55,6 @@ namespace lumin::core {
             : config(std::move(applicationConfig)), game(std::move(applicationGame)),
               renderDoc(attachRenderDoc(config)),
               window(platform::WindowDesc{config.width, config.height, config.title}),
-              vulkan(window, render::VulkanContextDesc{.applicationName = config.title,
-                                                       .enableValidation =
-#if defined(LUMIN_ENABLE_VALIDATION)
-                                                           true,
-#else
-                                                           false,
-#endif
-                                                       .rayTracing = {}}),
               scripts(scripting::ScriptRuntimeOptions{.scriptRoot = config.scriptRoot,
                                                       .diagnosticCapacity = 256,
                                                       .consoleHistoryCapacity = 128,
@@ -102,10 +77,19 @@ namespace lumin::core {
 #endif
             ui = std::make_unique<render::ImGuiFrontend>();
             ui->initialize(window);
-            renderer = std::make_unique<render::LevelRenderer>(
-                vulkan, render::world::RenderWorldExtractor::extract(level), shaderDirectory, ui->fontAtlas());
-            viewportExtent = render::core::RenderExtent{vulkan.swapchainWidth(), vulkan.swapchainHeight()};
-            RendererIdleGuard idleGuard{*renderer};
+            auto vulkan = std::make_unique<render::VulkanContext>(
+                window, render::VulkanContextDesc{.applicationName = config.title,
+                                                  .enableValidation =
+#if defined(LUMIN_ENABLE_VALIDATION)
+                                                      true,
+#else
+                                                      false,
+#endif
+                                                  .rayTracing = {}});
+            viewportExtent = render::core::RenderExtent{vulkan->swapchainWidth(), vulkan->swapchainHeight()};
+            renderer = std::make_unique<render::Renderer>(std::move(vulkan),
+                                                          render::world::RenderWorldExtractor::extract(level),
+                                                          shaderDirectory, ui->fontAtlas());
             const std::filesystem::path engineSettingsPath = preferenceFilePath("engine-settings.json");
             const config::EngineSettingsLoadResult loadedSettings =
                 config::loadEngineSettings(engineSettingsPath, preferenceFilePath("recent-projects.txt"));
@@ -123,12 +107,18 @@ namespace lumin::core {
                 startupProject = loadedSettings.settings.lastProject;
             }
             editor = std::make_unique<editor::Editor>(
-                level, camera, renderSettings, scripts,
+                level, camera, renderSettingsAdapter.editable(), scripts,
                 [this] {
-                    return renderer->globalIlluminationBackendInfo();
+                    rendererStatusCache = renderer->status();
+                    return render::gi::BackendInfo{rendererStatusCache.globalIlluminationBackend,
+                                                   rendererStatusCache.globalIlluminationTemporal,
+                                                   rendererStatusCache.hardwareRayTracing};
                 },
                 [this] {
-                    return renderer->viewportImage();
+                    rendererStatusCache = renderer->status();
+                    return render::ImGuiViewportImage{rendererStatusCache.viewport.textureId,
+                                                      rendererStatusCache.viewport.width,
+                                                      rendererStatusCache.viewport.height};
                 },
                 &project,
                 editor::EditorDialogServices{.openProject =
@@ -149,8 +139,9 @@ namespace lumin::core {
                 static_cast<void>(editor->openProject(*startupProject));
             }
 
-            std::cout << "Level renderer ready: models=" << renderer->modelCount()
-                      << " mdiDraws=" << renderer->mdiDrawCount()
+            rendererStatusCache = renderer->status();
+            std::cout << "Level renderer ready: models=" << rendererStatusCache.modelCount
+                      << " mdiDraws=" << rendererStatusCache.mdiDrawCount
                       << " gbuffer=position+normalRoughness+albedoMetallic+motion csm=4 ssao=on taa=on\n";
 
             auto previousTime = std::chrono::steady_clock::now();
@@ -228,17 +219,24 @@ namespace lumin::core {
                 game::advanceGameFrame(*game, context,
                                        routing.dispatchGameInput ? std::optional<game::GameInput>{input} : std::nullopt,
                                        deltaSeconds);
-                const VkExtent2D framebufferExtent = window.framebufferExtent();
-                renderer->drawFrame(framePacketBuilder.build(
-                    level, camera, render::pipelines::makeDefaultRenderSettingsSnapshot(renderSettings),
-                    ui->finishFrame(),
+                const auto framebufferExtent = window.framebufferExtent();
+                const bool framebufferResized = window.framebufferResized();
+                if (framebufferResized) {
+                    ++surfaceRevision;
+                    window.resetFramebufferResized();
+                }
+                renderer->submit(framePacketBuilder.build(
+                    level, camera, renderSettingsAdapter.snapshot(), ui->finishFrame(),
                     render::core::SurfaceState{
                         .windowExtent = {framebufferExtent.width, framebufferExtent.height},
                         .viewportExtent = viewportExtent,
-                        .framebufferResized = window.framebufferResized(),
+                        .framebufferResized = framebufferResized,
+                        .surfaceRevision = surfaceRevision,
                         .minimized = framebufferExtent.width == 0 || framebufferExtent.height == 0,
                     }));
             }
+            renderer->flush();
+            renderer->stop();
             return 0;
         }
 
@@ -246,20 +244,21 @@ namespace lumin::core {
         std::unique_ptr<game::Game> game;
         platform::RenderDocAttachment renderDoc;
         platform::Window window;
-        render::VulkanContext vulkan;
         scene::Level level;
         scene::Camera camera;
         scripting::ScriptRuntime scripts;
-        render::RenderSettings renderSettings;
+        render::editor::RenderSettingsPanelAdapter renderSettingsAdapter;
         render::core::RenderFramePacketBuilder framePacketBuilder;
         render::core::RenderExtent viewportExtent{1280, 720};
         project::ProjectSession project;
         std::unique_ptr<render::ImGuiFrontend> ui;
-        std::unique_ptr<render::LevelRenderer> renderer;
+        std::unique_ptr<render::Renderer> renderer;
+        render::RendererStatusSnapshot rendererStatusCache;
         std::unique_ptr<editor::Editor> editor;
         std::optional<scripting::ScriptHandle> startupScript;
         bool viewportLookActive = false;
         bool escapeHeld = false;
+        std::uint64_t surfaceRevision = 0;
     };
 
     Application::Application(ApplicationConfig config, std::unique_ptr<game::Game> game)

@@ -6,6 +6,8 @@
 #include "render/LevelRenderer.hpp"
 #include "render/editor/ImGuiContent.hpp"
 #include "render/editor/ImGuiFrontend.hpp"
+#include "render/editor/RenderSettingsPanelAdapter.hpp"
+#include "render/pipelines/DefaultRenderPipelines.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -106,6 +108,24 @@ namespace {
                 "Text input capture must claim gameplay input.");
         require(ImGuiCaptureState{true, true, true}.uiClaimsInput(),
                 "Combined capture flags must continue to claim gameplay input.");
+    }
+
+    void testRenderSettingsPanelAdapterPublishesTypedSnapshots() {
+        lumin::render::editor::RenderSettingsPanelAdapter adapter;
+        const lumin::render::core::RenderSettingsSnapshot before = adapter.snapshot();
+        adapter.editable().toneMapping.exposure = 2.5f;
+        adapter.editable().globalIllumination.mode = lumin::render::GlobalIlluminationMode::Legacy;
+        const lumin::render::core::RenderSettingsSnapshot after = adapter.snapshot();
+
+        require(before.get<lumin::render::ToneMappingSettings>(lumin::render::pipelines::feature_ids::toneMapping())
+                        .exposure == 1.0f,
+                "An older settings snapshot must not observe later panel edits.");
+        require(after.get<lumin::render::ToneMappingSettings>(lumin::render::pipelines::feature_ids::toneMapping())
+                            .exposure == 2.5f &&
+                    after.get<lumin::render::GlobalIlluminationSettings>(
+                             lumin::render::pipelines::feature_ids::globalIllumination())
+                            .mode == lumin::render::GlobalIlluminationMode::Legacy,
+                "The panel adapter must publish edits through the typed Feature store.");
     }
 
     void testConsoleReturnsValues() {
@@ -436,6 +456,7 @@ int main() {
     try {
         testEmptyAndStaleSelection();
         testExactInputCapturePolicy();
+        testRenderSettingsPanelAdapterPublishesTypedSnapshots();
         testConsoleReturnsValues();
         testLayoutLifecycleTransitions();
         testEditorNeutralDarkTheme();

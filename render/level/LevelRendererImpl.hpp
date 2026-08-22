@@ -94,11 +94,12 @@ namespace lumin::render {
 #endif
         };
 
-        void drawFrame(core::RenderFramePacket packet);
+        [[nodiscard]] bool drawFrame(core::RenderFramePacket packet);
         void waitIdle() const;
         [[nodiscard]] std::uint32_t modelCount() const noexcept;
         [[nodiscard]] std::uint32_t mdiDrawCount() const noexcept;
         [[nodiscard]] gi::BackendInfo globalIlluminationBackendInfo() const noexcept;
+        [[nodiscard]] const std::string& diagnostic() const noexcept;
         [[nodiscard]] ImGuiViewportImage viewportImage() const noexcept;
 
     private:
@@ -194,6 +195,8 @@ namespace lumin::render {
         glm::mat4 previousProjection_{1.0f};
         glm::vec2 previousJitter_{0.0f};
         FeatureConfigurationState committedFeatureConfiguration_{};
+        core::RenderSettingsSchemaRegistry settingsSchemas_;
+        std::optional<core::RenderSettingsSnapshot> committedSettings_;
         bool hasSubmittedFrame_ = false;
         bool lastSubmittedFrameUsedHybridGi_ = false;
         std::uint64_t nextRenderSequence_ = 0;
@@ -203,6 +206,7 @@ namespace lumin::render {
         bool requestedSharcEnabled_ = true;
         pipelines::DefaultRenderPipelineKind activePipelineKind_ = pipelines::DefaultRenderPipelineKind::Raster;
         std::unique_ptr<core::RenderPipelineInstance> renderPipeline_;
+        std::string diagnostic_;
     };
 
 } // namespace lumin::render

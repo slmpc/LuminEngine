@@ -46,12 +46,12 @@ namespace lumin::render {
     void ObjRenderer::drawFrame(scene::Camera& camera, RenderSettings& settings) {
         const std::uint32_t width = impl_->context.swapchainWidth();
         const std::uint32_t height = impl_->context.swapchainHeight();
-        impl_->renderer->drawFrame(impl_->framePacketBuilder.build(
+        static_cast<void>(impl_->renderer->drawFrame(impl_->framePacketBuilder.build(
             impl_->level, camera, pipelines::makeDefaultRenderSettingsSnapshot(settings), {},
             core::SurfaceState{.windowExtent = {width, height},
                                .viewportExtent = {width, height},
                                .framebufferResized = false,
-                               .minimized = width == 0 || height == 0}));
+                               .minimized = width == 0 || height == 0})));
     }
 
     void ObjRenderer::waitIdle() const {

@@ -227,11 +227,12 @@ namespace {
         }
 
         const std::string application = stripCommentsAndLiterals(readFile(root / "application/Application.cpp"));
-        const std::size_t contextMember = application.find("render::VulkanContext vulkan");
-        const std::size_t rendererMember = application.find("std::unique_ptr<render::LevelRenderer> renderer");
-        if (contextMember == std::string::npos || rendererMember == std::string::npos ||
-            contextMember > rendererMember) {
-            throw std::runtime_error("Application member order must destroy renderer children before VulkanContext");
+        const std::string rendererRuntime = stripCommentsAndLiterals(readFile(root / "render/runtime/Renderer.cpp"));
+        if (application.find("std::unique_ptr<render::Renderer> renderer") == std::string::npos ||
+            application.find("render::VulkanContext vulkan") != std::string::npos ||
+            rendererRuntime.find("renderer.reset();\n                    context.reset();") == std::string::npos) {
+            throw std::runtime_error(
+                "Renderer thread must destroy LevelRenderer children before its owned VulkanContext");
         }
 
         const auto recordCleanup = [](lumin::render::detail::BackendLifetimeAvailability availability) {

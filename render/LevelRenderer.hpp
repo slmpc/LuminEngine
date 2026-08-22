@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <string>
 
 namespace lumin::render {
 
@@ -39,13 +40,15 @@ namespace lumin::render {
          * @brief 消费一份完全拥有的帧 packet，并同步录制、提交和 present。
          * @param packet 主线程构建的不可变值；函数返回后不保留对调用方对象的引用。
          */
-        void drawFrame(core::RenderFramePacket packet);
+        [[nodiscard]] bool drawFrame(core::RenderFramePacket packet);
         /// 等待当前设备队列空闲。
         void waitIdle() const;
 
         [[nodiscard]] std::uint32_t modelCount() const noexcept;
         [[nodiscard]] std::uint32_t mdiDrawCount() const noexcept;
         [[nodiscard]] gi::BackendInfo globalIlluminationBackendInfo() const noexcept;
+        /** 返回最近一次能力回退或非致命管线重组诊断；引用在下一帧前有效。 */
+        [[nodiscard]] const std::string& diagnostic() const noexcept;
         /** 返回 Presentation Feature 当前发布的稳定 Viewport 逻辑图像。 */
         [[nodiscard]] ImGuiViewportImage viewportImage() const noexcept;
 

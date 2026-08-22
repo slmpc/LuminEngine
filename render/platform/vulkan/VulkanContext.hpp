@@ -9,8 +9,9 @@
 #include <nvrhi/vulkan.h>
 #include <vulkan/vulkan.h>
 
-#include "render/platform/vulkan/VulkanRayTracingCapabilities.hpp"
 #include "render/core/ModelRendererCapabilities.hpp"
+#include "render/core/RenderFramePacket.hpp"
+#include "render/platform/vulkan/VulkanRayTracingCapabilities.hpp"
 
 namespace lumin::platform {
     class Window;
@@ -72,6 +73,17 @@ namespace lumin::render {
         [[nodiscard]] PFN_vkCmdBeginDebugUtilsLabelEXT cmdBeginDebugUtilsLabel() const noexcept;
         [[nodiscard]] PFN_vkCmdEndDebugUtilsLabelEXT cmdEndDebugUtilsLabel() const noexcept;
 
+        /**
+         * @brief 更新交换链下一次 acquire/recreate 使用的窗口值状态。
+         * @param state
+         * 主线程随
+         * packet 深拷贝的状态；不得包含 SDL 对象。
+         * @thread_safety 只能由拥有此 Context
+         * 的渲染线程调用。
+
+         */
+        void updateSurfaceState(const core::SurfaceState& state) noexcept;
+
         [[nodiscard]] static constexpr nvrhi::Format mapSwapchainFormat(VkFormat format) noexcept {
             switch (format) {
             case VK_FORMAT_B8G8R8A8_SRGB:
@@ -110,7 +122,7 @@ namespace lumin::render {
 
         void createInstance();
         void createDebugMessenger();
-        void createSurface();
+        void createSurface(platform::Window& window);
         void pickPhysicalDevice();
         void createDevice();
         void createRhiDevice();
@@ -127,7 +139,6 @@ namespace lumin::render {
 
         [[nodiscard]] bool validationLayersAvailable() const;
         [[nodiscard]] bool instanceExtensionAvailable(const char* extensionName) const;
-        [[nodiscard]] std::vector<const char*> requiredExtensions() const;
         [[nodiscard]] QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) const;
         [[nodiscard]] bool deviceExtensionsAvailable(VkPhysicalDevice device) const;
         [[nodiscard]] VulkanRayTracingSupport queryRayTracingSupport(VkPhysicalDevice device) const;
@@ -143,8 +154,9 @@ namespace lumin::render {
         };
         [[nodiscard]] SwapchainSupport querySwapchainSupport() const;
 
-        platform::Window& window_;
         VulkanContextDesc desc_;
+        core::SurfaceState surfaceState_;
+        std::vector<const char*> requiredInstanceExtensions_;
         bool validationEnabled_ = false;
         bool debugUtilsEnabled_ = false;
         std::uint32_t apiVersion_ = VK_API_VERSION_1_0;
@@ -181,6 +193,7 @@ namespace lumin::render {
         std::vector<VkSemaphore> renderFinishedSemaphores_;
         std::uint32_t currentFrame_ = 0;
         std::uint64_t swapchainGeneration_ = 0;
+        std::uint64_t swapchainSurfaceRevision_ = 0;
         bool destroyed_ = false;
     };
 

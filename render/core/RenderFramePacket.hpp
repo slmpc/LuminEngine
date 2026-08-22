@@ -30,6 +30,8 @@ namespace lumin::render::core {
         RenderExtent viewportExtent;
         /** 主线程是否观察到窗口 framebuffer resize 事件。 */
         bool framebufferResized = false;
+        /** 单调 surface 修订号；resize packet 被替换后，后续 packet 仍携带尚未应用的代数。 */
+        std::uint64_t surfaceRevision = 0;
         /** 窗口是否处于不可渲染的零像素状态。 */
         bool minimized = false;
     };

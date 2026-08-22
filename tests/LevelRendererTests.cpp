@@ -203,9 +203,9 @@ namespace {
                     level.find("supportsSharcShaderStorage()") != std::string::npos &&
                     level.find("GlobalIlluminationMode::RayTracing") != std::string::npos,
                 "Hybrid GI selection must honor the explicit mode and complete runtime capability set.");
-        require(level.find("requiredCapacity > hybridGi_->geometryDescriptorCapacity") != std::string::npos &&
-                    level.find("ensureHybridGiCapacity()") != std::string::npos,
-                "Growing geometry descriptor arrays must be rebuilt from the waited-idle topology path.");
+        require(level.find("ensureHybridGiCapacity()") != std::string::npos &&
+                    level.find("std::unique_ptr<HybridGiState> candidate = buildCandidate()") != std::string::npos,
+                "Topology changes must transactionally rebuild Hybrid bindings from the waited-idle path.");
 
         std::size_t position = level.find("LevelRenderer::Impl::addHybridSurfaceFeaturePasses");
         position = requireAfter(level, "runtime.sceneResources->recordUpdate", position);
@@ -284,6 +284,9 @@ namespace {
     }
 
     void verifySwapchainLifecycle(const std::string& context) {
+        require(context.find("window_") == std::string::npos &&
+                    context.find("void VulkanContext::updateSurfaceState") != std::string::npos,
+                "VulkanContext must discard Window after surface bootstrap and consume value SurfaceState updates.");
         require(context.find("swapchainTextureInitialized_") != std::string::npos,
                 "Swapchain wrapper initialization state is not tracked.");
         require(context.find("ResourceStates::Unknown") != std::string::npos,
@@ -309,6 +312,25 @@ namespace {
         cancellation = requireAfter(context, "waitIdle()", cancellation);
         requireAfter(context, "recreateSwapchain()", cancellation);
         std::cout << "SWAPCHAIN_STATES=Unknown>Present;RECREATE=Unknown;WRAPPER_RELEASE=before-native\n";
+    }
+
+    void verifyAsyncRuntime(const std::string& renderer, const std::string& mailbox) {
+        require(renderer.find("std::thread") != std::string::npos &&
+                    renderer.find("mailbox.submit") != std::string::npos,
+                "Renderer must submit immutable packets to a dedicated worker thread.");
+        require(renderer.find("RenderControlKind::Flush") != std::string::npos &&
+                    renderer.find("RenderControlKind::Stop") != std::string::npos,
+                "Flush and stop must use the ordered control queue.");
+        require(renderer.find("renderer.reset();") < renderer.find("context.reset();"),
+                "Feature Runtime resources must be destroyed before VulkanContext on the render thread.");
+        require(mailbox.find("latestFrame_ = RenderMailboxFrame") != std::string::npos &&
+                    mailbox.find("controls_.push_back") != std::string::npos,
+                "Mailbox must keep one latest frame and a distinct FIFO control queue.");
+        for (const std::string& forbidden : {"scene::Level", "scene::Camera", "ImGui::", "SDL_"}) {
+            require(renderer.find(forbidden) == std::string::npos,
+                    "The asynchronous Runtime must not read main-thread framework objects.");
+        }
+        std::cout << "ASYNC_RUNTIME=latest-wins+ordered-control;GPU_OWNER=render-thread\n";
     }
 
     void verifyNvrhiYCoordinateConvention(const std::string& level) {
@@ -379,6 +401,8 @@ int main() {
                                   readSource("render/level/LevelRendererResources.cpp") +
                                   readSource("render/level/LevelRendererFeatures.cpp");
         const std::string context = readSource("render/platform/vulkan/VulkanContext.cpp");
+        const std::string renderer = readSource("render/runtime/Renderer.cpp");
+        const std::string mailbox = readSource("render/runtime/RenderMailbox.cpp");
         const std::string pipelineDefinition = readSource("render/pipelines/DefaultRenderPipelines.cpp");
         const std::string frameContracts = readSource("render/core/FrameDataContracts.hpp");
         verifyPassOrder(level, pipelineDefinition);
@@ -388,6 +412,7 @@ int main() {
         verifyHybridGiIntegration(level);
         verifyFeaturePipelineContract(level, pipelineDefinition, frameContracts);
         verifySwapchainLifecycle(context);
+        verifyAsyncRuntime(renderer, mailbox);
         verifyNvrhiYCoordinateConvention(level);
         verifyHybridMotionContract();
         verifyHybridRaySidednessContract();

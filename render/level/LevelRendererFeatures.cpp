@@ -689,13 +689,17 @@ namespace lumin::render {
     }
 
     void LevelRenderer::Impl::addGiDenoiserFeaturePasses(core::RenderFeatureFrameContext& context) {
+        HybridPassData& data = context.blackboard().get<HybridPassData>();
+        if (!data.active) {
+            // Raster recipe 已把 legacy GI 写入 DenoisedLightingData::combined，不需要任何 RT/NRD 输入。
+            return;
+        }
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
         const core::RtSurfaceData& surfaceData = context.blackboard().get<core::RtSurfaceData>();
         const core::TemporalOutputData& temporal = context.blackboard().get<core::TemporalOutputData>();
         core::SceneHdrData& sceneHdr = context.blackboard().get<core::SceneHdrData>();
         core::DenoisedLightingData& denoised = context.blackboard().get<core::DenoisedLightingData>();
-        HybridPassData& data = context.blackboard().get<HybridPassData>();
         const GlobalIlluminationSettings& settings =
             sceneData.settings.get<GlobalIlluminationSettings>(pipelines::feature_ids::globalIllumination());
         const std::uint32_t frameIndex = context.identity().frameSlot.value();

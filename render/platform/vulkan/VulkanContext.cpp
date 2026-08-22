@@ -2,9 +2,9 @@
 
 #include "render/platform/vulkan/VulkanContext.hpp"
 
-#include "render/platform/Window.hpp"
 #include "render/BackendLifetime.hpp"
 #include "render/RayTracingBuildConfiguration.hpp"
+#include "render/platform/Window.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -134,9 +134,16 @@ namespace lumin::render {
         return graphics.has_value() && present.has_value();
     }
 
-    VulkanContext::VulkanContext(platform::Window& window, const VulkanContextDesc& desc)
-        : window_(window), desc_(desc) {
+    VulkanContext::VulkanContext(platform::Window& window, const VulkanContextDesc& desc) : desc_(desc) {
         try {
+            const VkExtent2D initialExtent = window.framebufferExtent();
+            surfaceState_ = core::SurfaceState{
+                .windowExtent = {initialExtent.width, initialExtent.height},
+                .viewportExtent = {initialExtent.width, initialExtent.height},
+                .framebufferResized = window.framebufferResized(),
+                .minimized = initialExtent.width == 0 || initialExtent.height == 0,
+            };
+            requiredInstanceExtensions_ = window.requiredInstanceExtensions();
             VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
             apiVersion_ = selectApiVersion();
             if (apiVersion_ < VK_API_VERSION_1_3) {
@@ -144,11 +151,16 @@ namespace lumin::render {
             }
             validationEnabled_ = desc_.enableValidation && validationLayersAvailable();
             debugUtilsEnabled_ = instanceExtensionAvailable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            if (debugUtilsEnabled_ &&
+                std::find(requiredInstanceExtensions_.begin(), requiredInstanceExtensions_.end(),
+                          VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == requiredInstanceExtensions_.end()) {
+                requiredInstanceExtensions_.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            }
 
             createInstance();
             VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Instance(instance_));
             createDebugMessenger();
-            createSurface();
+            createSurface(window);
             pickPhysicalDevice();
             createDevice();
             VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Device(device_));
@@ -354,6 +366,10 @@ namespace lumin::render {
         return cmdEndDebugUtilsLabel_;
     }
 
+    void VulkanContext::updateSurfaceState(const core::SurfaceState& state) noexcept {
+        surfaceState_ = state;
+    }
+
     std::optional<VulkanFrame> VulkanContext::beginFrame() {
         if (frameQueryPending_[currentFrame_]) {
             if (!rhiDevice_->pollEventQuery(frameQueries_[currentFrame_])) {
@@ -422,8 +438,9 @@ namespace lumin::render {
         presentInfo.pSwapchains = &swapchain_;
         presentInfo.pImageIndices = &frame.imageIndex;
         const VkResult result = vkQueuePresentKHR(presentQueue_, &presentInfo);
-        const bool needsRecreate =
-            result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || window_.framebufferResized();
+        const bool needsRecreate = result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR ||
+                                   surfaceState_.framebufferResized ||
+                                   surfaceState_.surfaceRevision != swapchainSurfaceRevision_;
         currentFrameCommandsSubmitted_ = false;
         currentFrame_ = (currentFrame_ + 1) % maxFramesInFlight;
         if (!needsRecreate && result != VK_SUCCESS) {
@@ -479,8 +496,6 @@ namespace lumin::render {
         appInfo.engineVersion = VK_MAKE_VERSION(0, 1, 0);
         appInfo.apiVersion = apiVersion_;
 
-        std::vector<const char*> extensions = requiredExtensions();
-
         VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo;
         populateDebugCreateInfo(debugCreateInfo);
 
@@ -489,8 +504,8 @@ namespace lumin::render {
         createInfo.pNext = validationEnabled_ && debugUtilsEnabled_ ? &debugCreateInfo : nullptr;
         createInfo.flags = 0;
         createInfo.pApplicationInfo = &appInfo;
-        createInfo.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
-        createInfo.ppEnabledExtensionNames = extensions.data();
+        createInfo.enabledExtensionCount = static_cast<std::uint32_t>(requiredInstanceExtensions_.size());
+        createInfo.ppEnabledExtensionNames = requiredInstanceExtensions_.data();
 
         if (validationEnabled_) {
             createInfo.enabledLayerCount = static_cast<std::uint32_t>(std::size(validationLayers));
@@ -518,8 +533,8 @@ namespace lumin::render {
         }
     }
 
-    void VulkanContext::createSurface() {
-        surface_ = window_.createSurface(instance_);
+    void VulkanContext::createSurface(platform::Window& window) {
+        surface_ = window.createSurface(instance_);
     }
 
     void VulkanContext::pickPhysicalDevice() {
@@ -772,7 +787,8 @@ namespace lumin::render {
         waitIdle();
         cleanupSwapchainResources();
         createSwapchainResources();
-        window_.resetFramebufferResized();
+        surfaceState_.framebufferResized = false;
+        swapchainSurfaceRevision_ = surfaceState_.surfaceRevision;
         ++swapchainGeneration_;
     }
 
@@ -818,7 +834,7 @@ namespace lumin::render {
         if (capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max()) {
             return capabilities.currentExtent;
         }
-        VkExtent2D extent = window_.framebufferExtent();
+        VkExtent2D extent{surfaceState_.windowExtent.width, surfaceState_.windowExtent.height};
         extent.width = std::clamp(extent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
         extent.height =
             std::clamp(extent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
@@ -955,17 +971,6 @@ namespace lumin::render {
         return std::any_of(extensions.begin(), extensions.end(), [extensionName](const VkExtensionProperties& item) {
             return std::strcmp(extensionName, item.extensionName) == 0;
         });
-    }
-
-    std::vector<const char*> VulkanContext::requiredExtensions() const {
-        std::vector<const char*> extensions = window_.requiredInstanceExtensions();
-
-        if (debugUtilsEnabled_ &&
-            std::find(extensions.begin(), extensions.end(), VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == extensions.end()) {
-            extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-        }
-
-        return extensions;
     }
 
     VulkanContext::QueueFamilyIndices VulkanContext::findQueueFamilies(VkPhysicalDevice device) const {

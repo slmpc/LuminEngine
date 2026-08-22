@@ -154,6 +154,8 @@ add_library(lumin_render_runtime STATIC
     level/LevelRendererFeatures.cpp
     level/LevelRendererFrame.cpp
     level/LevelRendererResources.cpp
+    runtime/RenderMailbox.cpp
+    runtime/Renderer.cpp
 )
 add_library(Lumin::RenderRuntime ALIAS lumin_render_runtime)
 lumin_configure_render_library(lumin_render_runtime)
@@ -167,12 +169,13 @@ add_library(lumin_editor_module STATIC
     editor/Editor.cpp
     editor/EditorStyle.cpp
     editor/ImGuiFrontend.cpp
+    editor/RenderSettingsPanelAdapter.cpp
     editor/ViewportPicking.cpp
 )
 add_library(Lumin::Editor ALIAS lumin_editor_module)
 lumin_configure_render_library(lumin_editor_module)
 target_link_libraries(lumin_editor_module
-    PUBLIC Lumin::Core Lumin::RenderCore
+    PUBLIC Lumin::Core Lumin::RenderCore Lumin::RenderPipelines
     PRIVATE Lumin::VulkanBackend SDL3::SDL3 imgui::imgui imguizmo::imguizmo
 )
 

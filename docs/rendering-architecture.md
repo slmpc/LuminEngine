@@ -8,13 +8,14 @@ SDL、NvRHI 或渲染器；Render 只读取 Core 的场景和资产接口，Appl
 构建 target。`Application` 的公共头
 使用 PImpl，只公开窗口配置、脚本配置和 `Game` 注入点，不泄露 SDL、Vulkan、renderer 或场景的具体所有权。
 
-`Application` 拥有窗口、Vulkan 上下文、`Level`、`Camera`、`ScriptRuntime`、主线程
-`RenderFramePacketBuilder`、`LevelRenderer` 和 `Editor`。
+`Application` 拥有窗口、`Level`、`Camera`、`ScriptRuntime`、主线程 `RenderFramePacketBuilder`、
+`RenderSettingsPanelAdapter`、异步 `Renderer` 和 `Editor`。`VulkanContext` 在主线程完成 SDL surface bootstrap 后立即把
+所有权转入 `Renderer`；专用渲染线程创建 `LevelRenderer` 及全部 Feature 资源，并在退出时先销毁它们再销毁 Context。
 具体游戏通过 `GameContext` 只接收 `Level`、`Camera` 与 `ScriptRuntime`，因此场景初始化和逐帧逻辑可以脱离 Vulkan
 测试。`apps/editor` 使用无行为的 `Game` 宿主，不创建演示场景；项目内容只由 `ProjectSession` 创建或加载。
 
-renderer 创建后会安装 idle 守卫，正常退出或异常展开都会先调用 `waitIdle()`；成员销毁顺序保证 Editor 和 renderer
-先于 Vulkan 上下文与窗口关闭。
+正常退出通过有序控制队列执行 `flush()` 和 `stop()`；异常展开由 `Renderer` 析构等待线程结束。stop 在渲染线程等待
+GPU idle，并按 `LevelRenderer -> VulkanContext -> Window` 的顺序释放。
 
 ## 模块化重构状态
 
@@ -22,6 +23,8 @@ renderer 创建后会安装 idle 守卫，正常退出或异常展开都会先�
 `RenderPipelineRecipeResolver` 根据 typed input/output、能力、少量显式依赖和历史域所有权建立 DAG，并拒绝缺失输入、
 重复 producer、环和重复历史所有者。`RenderSettingsStore` 按 Feature 类型保存配置，提交时生成不可变快照并把变化归类为
 `HotUpdate`、`HistoryReset`、`PipelineRecompose` 或 `ResourceRecreate`。
+Editor 只修改独立 `RenderSettingsPanelAdapter` 的聚合面板视图；adapter 在主线程通过 schema 校验并写入 typed store，
+Feature 和 Runtime 不包含 ImGui 设置代码。Runtime 始终相对最近成功提交的 settings snapshot 计算变化影响。
 
 `RenderPipelineInstance` 从解析后的执行顺序创建 Feature。Factory 和 `initialize()` 只接收显式
 `FeatureCreateContext`；候选初始化失败时逆序 `shutdown()`，旧实例不受影响。一帧内按 DAG 顺序调用 `addPasses()`，
@@ -83,9 +86,14 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 所有图形通道均使用 Vulkan 1.3 动态渲染。`PipelineFactory` 支持 MRT 流水线和仅含顶点阶段的深度流水线；
 项目不会创建 `VkRenderPass` 或 framebuffer 对象。
 
-## LevelRenderer 迁移边界
+## Renderer Runtime 边界
 
-`LevelRenderer` 是迁移期同步 Runtime。`render/LevelRenderer.hpp` 只接收非拥有 `VulkanContext`、初始
+`Renderer` 是主线程异步门面，公开 `submit(RenderFramePacket)`、`status()`、`flush()` 和 `stop()`。frame mailbox 只保存
+一个尚未消费的最新 packet；替换旧 packet 只增加丢帧计数，不推进历史。`flush/stop` 使用独立 FIFO 控制队列，并记录
+排队时必须先消费的 frame 序号，因此不会被 latest-wins 替换。最小化窗口的 packet 只被消费，不调用 Vulkan acquire，
+也不推进 GPU 历史。启动握手、逐帧异常和确定性退出状态通过 `RendererStatusSnapshot` 发布。
+
+`LevelRenderer` 是渲染线程内部的同步帧事务实现。`render/LevelRenderer.hpp` 只接收非拥有 `VulkanContext`、初始
 `RenderWorldSnapshotPtr` 和逐帧 `RenderFramePacket`；它不保存活动场景、相机或 UI backend 引用。具体资源成员通过
 `std::unique_ptr<LevelRenderer::Impl>` 隐藏在实现文件中。这样公共头不再暴露
 Raster/PostFX 资源 owner、各 Feature pipeline handle、Hybrid GI 后端或 NvRHI framebuffer，资源成员变化也不会迫使
@@ -97,6 +105,8 @@ Application 和
 - `render/level/LevelRendererImpl.hpp` 保存私有所有权、Feature host 接口和跨帧状态声明。
 - `render/level/LevelRendererResources.cpp` 创建、销毁和重建交换链、Viewport、材质、Atmosphere 与 Hybrid GI 资源。
 - `render/core/RenderFramePacket.*` 定义跨线程不可变消息和主线程场景/相机快照 builder。
+- `render/runtime/RenderMailbox.*` 定义 latest-wins frame 单槽和不可丢失有序控制队列。
+- `render/runtime/Renderer.cpp` 独占渲染线程、启动/退出握手、异常传播与状态发布。
 - `render/level/LevelRendererFrame.cpp` 从 packet 生成渲染提交相关的抖动/阴影数据，导入逐帧资源，创建 framebuffer，
   并执行 `FrameGraph`。
 - `render/level/LevelRendererFeatures.cpp` 只实现各 Feature 的 pass setup/record，以及提交成功和丢弃时的资源通知。
@@ -115,9 +125,10 @@ Application 和
   `FrameGraph` 只负责外部分配资源的依赖排序与状态转换，
   `DescriptorIndexingLimits` 负责材质纹理 descriptor 的容量预检和绑定计划；两者都不依赖 Editor。
 - `render/platform/vulkan/` 包含 `VulkanContext` 和 `VulkanRayTracingCapabilities`，是唯一允许直接调用原生 Vulkan
-  设备、交换链和能力查询的目录。
+  设备、交换链和能力查询的目录。Context 在构造时使用 `Window` 获取扩展和 surface，随后不保存 `Window&`；交换链
+  resize 只消费 packet 中的 `SurfaceState`。单调 `surfaceRevision` 保证携带 resize 事件的 packet 被替换后仍会重建。
 - `render/editor/` 包含 `Editor`、`ImGuiContent` 和主线程 `ImGuiFrontend`。该前端独占 ImGui context 与 SDL backend，
-  并生成不含外部指针的 `UiDrawPacket` 和 `UiFontAtlas`。
+  并生成不含外部指针的 `UiDrawPacket` 和 `UiFontAtlas`；`RenderSettingsPanelAdapter` 负责 typed store 适配。
 - `render/presentation/` 包含渲染侧 `UiRenderer` 与 `PresentationRenderer`。它们不依赖 ImGui、SDL 或 Editor，只将
   packet 中的稳定 `UiTextureId` 解析为当前 NvRHI 资源并合成到交换链。
 

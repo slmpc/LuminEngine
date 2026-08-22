@@ -88,8 +88,8 @@ namespace lumin::render {
 
     LevelRenderer::~LevelRenderer() = default;
 
-    void LevelRenderer::drawFrame(core::RenderFramePacket packet) {
-        impl_->drawFrame(std::move(packet));
+    bool LevelRenderer::drawFrame(core::RenderFramePacket packet) {
+        return impl_->drawFrame(std::move(packet));
     }
 
     void LevelRenderer::waitIdle() const {
@@ -106,6 +106,10 @@ namespace lumin::render {
 
     gi::BackendInfo LevelRenderer::globalIlluminationBackendInfo() const noexcept {
         return impl_->globalIlluminationBackendInfo();
+    }
+
+    const std::string& LevelRenderer::diagnostic() const noexcept {
+        return impl_->diagnostic();
     }
 
     ImGuiViewportImage LevelRenderer::viewportImage() const noexcept {
@@ -126,6 +130,7 @@ namespace lumin::render {
         if (globalIllumination_ == nullptr) {
             globalIllumination_ = gi::makeLegacyBackend(shaderDirectory_);
         }
+        pipelines::registerDefaultRenderSettings(settingsSchemas_);
         renderExtent_ = core::RenderExtent{context_.swapchainWidth(), context_.swapchainHeight()};
         requestedRenderExtent_ = renderExtent_;
         createRenderResources();
@@ -142,11 +147,19 @@ namespace lumin::render {
         destroyRenderResources();
     }
 
-    void LevelRenderer::Impl::drawFrame(core::RenderFramePacket packet) {
+    bool LevelRenderer::Impl::drawFrame(core::RenderFramePacket packet) {
         if (!packet.isValid()) {
             throw std::invalid_argument("LevelRenderer received an invalid render frame packet.");
         }
         const RenderSettings settings = pipelines::readDefaultRenderSettings(packet.settings);
+        if (committedSettings_.has_value()) {
+            const core::FeatureSettingsChange settingsChange =
+                settingsSchemas_.diff(*committedSettings_, packet.settings);
+            if (!settingsChange.historyReasons.empty()) {
+                pendingFrameChanges_.merge(settingsChange.historyReasons);
+            }
+        }
+        context_.updateSurfaceState(packet.surface);
         if (swapchainGeneration_ != context_.swapchainGeneration()) {
             refreshSwapchainResources();
         }
@@ -186,7 +199,7 @@ namespace lumin::render {
         }
         if (!frame.has_value()) {
             refreshSwapchainResources();
-            return;
+            return false;
         }
 
         const core::RenderFrameIdentity identity{
@@ -225,6 +238,7 @@ namespace lumin::render {
         previousProjection_ = recorded.projection;
         previousJitter_ = recorded.jitter;
         committedFeatureConfiguration_ = recorded.featureConfiguration;
+        committedSettings_ = packet.settings;
         committedWorld_ = packet.world;
         hasSubmittedFrame_ = true;
         lastSubmittedFrameUsedHybridGi_ = recorded.usedHybridGlobalIllumination;
@@ -235,6 +249,7 @@ namespace lumin::render {
         if (recreate) {
             refreshSwapchainResources();
         }
+        return true;
     }
 
     void LevelRenderer::Impl::waitIdle() const {
@@ -286,6 +301,10 @@ namespace lumin::render {
         return globalIllumination_->info();
     }
 
+    const std::string& LevelRenderer::Impl::diagnostic() const noexcept {
+        return diagnostic_;
+    }
+
     void LevelRenderer::Impl::createRenderFeaturePipeline(pipelines::DefaultRenderPipelineKind requestedPath) {
         core::RenderDeviceCapabilities capabilities;
         capabilities.supported = {core::RenderCapability::Graphics, core::RenderCapability::Compute,
@@ -315,10 +334,12 @@ namespace lumin::render {
         const auto registerFeature = [&registry, &definition](const core::FeatureId& id,
                                                               BoundRenderFeatureCallbacks callbacks) {
             core::FeatureDescriptor descriptor = definition.descriptor(id);
-            registry.registerFeature(descriptor, [descriptor = std::move(descriptor), callbacks = std::move(callbacks)](
-                                                     const core::FeatureCreateContext&) mutable {
-                return std::make_unique<BoundRenderFeature>(descriptor, callbacks);
-            });
+            core::FeatureDescriptor factoryDescriptor = descriptor;
+            registry.registerFeature(std::move(descriptor),
+                                     [descriptor = std::move(factoryDescriptor),
+                                      callbacks = std::move(callbacks)](const core::FeatureCreateContext&) mutable {
+                                         return std::make_unique<BoundRenderFeature>(descriptor, callbacks);
+                                     });
         };
 
         using namespace pipelines::feature_ids;
@@ -421,8 +442,14 @@ namespace lumin::render {
             renderPipeline_->discardFrame();
             context_.waitIdle();
             frameGraph_.reset();
-            createHybridGiResources();
-            pendingFrameChanges_.add(core::HistoryReason::FeatureConfigurationChanged);
+            try {
+                createHybridGiResources();
+                pendingFrameChanges_.add(core::HistoryReason::FeatureConfigurationChanged);
+                diagnostic_.clear();
+            } catch (const std::exception& exception) {
+                diagnostic_ = std::string{"Hybrid resource reconfiguration failed; retaining the previous state: "} +
+                              exception.what();
+            }
         }
         const world::RenderWorldSnapshotPtr snapshot = currentWorld_;
         useRayTracing = settings.globalIllumination.mode == GlobalIlluminationMode::RayTracing &&
@@ -432,11 +459,27 @@ namespace lumin::render {
 #else
         static_cast<void>(settings);
 #endif
+        if (settings.globalIllumination.mode == GlobalIlluminationMode::RayTracing && !useRayTracing &&
+            diagnostic_.empty()) {
+            diagnostic_ = "Hybrid rendering is unavailable for the current device or scene; using Raster fallback.";
+        } else if (settings.globalIllumination.mode != GlobalIlluminationMode::RayTracing) {
+            diagnostic_.clear();
+        }
         const pipelines::DefaultRenderPipelineKind requestedPath =
             useRayTracing ? pipelines::DefaultRenderPipelineKind::Hybrid : pipelines::DefaultRenderPipelineKind::Raster;
         if (renderPipeline_ == nullptr || activePipelineKind_ != requestedPath) {
-            createRenderFeaturePipeline(requestedPath);
-            pendingFrameChanges_.add(core::HistoryReason::FeatureConfigurationChanged);
+            context_.waitIdle();
+            try {
+                // candidate 完成 DAG 解析、Feature 初始化和 extent 通知后才替换旧 PipelineInstance。
+                createRenderFeaturePipeline(requestedPath);
+                pendingFrameChanges_.add(core::HistoryReason::FeatureConfigurationChanged);
+                if (requestedPath == pipelines::DefaultRenderPipelineKind::Hybrid) {
+                    diagnostic_.clear();
+                }
+            } catch (const std::exception& exception) {
+                diagnostic_ = std::string{"Render pipeline recomposition failed; retaining the previous recipe: "} +
+                              exception.what();
+            }
         }
     }
 
