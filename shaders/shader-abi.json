@@ -3,6 +3,7 @@
   "compiler": {
     "target": "spirv",
     "profile": "spirv_1_5",
+    "optimization": "3",
     "matrixLayout": "column-major",
     "warningsAsErrors": "all",
     "includeDirectories": [

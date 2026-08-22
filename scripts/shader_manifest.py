@@ -90,6 +90,7 @@ def collect(source_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     compiler_defaults = {
         "target": "spirv",
         "profile": "spirv_1_5",
+        "optimization": "3",
         "matrixLayout": "column-major",
         "warningsAsErrors": "all",
         "includeDirectories": ["include"],
@@ -178,6 +179,7 @@ def make_command(
         cmake_quote(compiler["profile"]),
         "-warnings-as-errors",
         cmake_quote(compiler["warningsAsErrors"]),
+        f"-O{compiler['optimization']}",
     ]
     if compiler["target"] == "spirv":
         command.extend(["-fvk-use-entrypoint-name"])

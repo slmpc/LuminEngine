@@ -321,6 +321,19 @@ namespace lumin::render::gpu {
         result.nextMeshIndex_ = nextMeshIndex_;
         result.nextInstanceIndex_ = nextInstanceIndex_;
 
+        // RenderWorldCache returns the committed immutable snapshot on stable frames. Avoid walking and comparing
+        // every vertex/index in that snapshot: large imported meshes made this no-op planning path dominate the
+        // Debug editor frame time in Ray Tracing mode.
+        if (snapshot_ && delta.changes == world::SceneChangeMask::None && delta.snapshot == snapshot_) {
+            result.targetLayout_ = layout_;
+            result.blasDecisions_.reserve(layout_.meshes().size());
+            for (const GpuMeshBinding& binding : layout_.meshes()) {
+                result.blasDecisions_.push_back(
+                    BlasUpdateDecision{binding.gpuIndex, binding.snapshotMeshIndex, BlasUpdateMode::Reuse});
+            }
+            return result;
+        }
+
         const bool fullRebuild = result.initializesScene_ || result.changes_ == world::SceneChangeMask::All;
 
         const auto& targetMeshes = result.targetSnapshot_->meshes();

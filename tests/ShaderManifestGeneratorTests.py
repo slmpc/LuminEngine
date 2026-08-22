@@ -82,6 +82,7 @@ class ShaderManifestGeneratorTests(unittest.TestCase):
             dependency_line = next(line for line in targets.splitlines() if line.strip().startswith("DEPENDS"))
             self.assertIn("sample.slang", dependency_line)
             self.assertNotIn("shader-manifest.json", dependency_line)
+            self.assertIn(" -O3 ", targets)
 
 
 if __name__ == "__main__":

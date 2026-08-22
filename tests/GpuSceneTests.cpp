@@ -505,11 +505,13 @@ namespace {
 
         const auto delta = fixture.world.sync(fixture.level);
         const GpuSceneUpdatePlan plan = fixture.planner.plan(delta);
-        require(delta.changes == SceneChangeMask::None && !plan.hasGpuWork() && plan.geometryUploads().empty() &&
+        require(delta.snapshot == committed && delta.changes == SceneChangeMask::None && !plan.hasGpuWork() &&
+                    plan.targetSnapshot() == committed && plan.targetLayout().meshes().size() == 1 &&
+                    plan.targetLayout().instances().size() == 1 && plan.geometryUploads().empty() &&
                     plan.instancePatches().empty() && plan.lightPatches().empty() && plan.blasDecisions().size() == 1 &&
                     plan.blasDecisions()[0].mode == BlasUpdateMode::Reuse &&
                     plan.tlasDecision() == TlasUpdateMode::Reuse,
-                "An unchanged snapshot must produce a complete reuse decision with no GPU writes.");
+                "The committed immutable snapshot must take the complete reuse path with no GPU writes.");
 
         fixture.planner.commit(plan, {});
         require(fixture.planner.snapshot() == committed && fixture.planner.generation() == committedGeneration,
