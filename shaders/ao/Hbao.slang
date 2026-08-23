@@ -1,5 +1,5 @@
-float computeHbao(float2 uv, float2 pixel, float3 center, float3 normal, float radius, float bias,
-                  float randomAngle) {
+float computeHbao(float2 uv, float2 pixelPosition, float2 texelSize, float3 center, float3 normal,
+                  float radius, float bias, float randomAngle) {
     const uint directionCount = 8;
     const uint stepCount = 4;
     float pixelRadius = projectedRadiusPixels(center, radius);
@@ -12,10 +12,11 @@ float computeHbao(float2 uv, float2 pixel, float3 center, float3 normal, float r
         float horizon = 0.0;
         [unroll]
         for (uint stepIndex = 1; stepIndex <= stepCount; ++stepIndex) {
-            float stepRadius = (float(stepIndex) - 0.35 + hash12(pixel + float2(stepIndex, directionIndex))) /
+            float stepRadius = (float(stepIndex) - 0.35 +
+                                hash12(pixelPosition + float2(stepIndex, directionIndex))) /
                                float(stepCount);
             float3 neighbor;
-            if (!samplePosition(uv + direction * pixel * pixelRadius * stepRadius, neighbor)) {
+            if (!samplePosition(uv + direction * texelSize * pixelRadius * stepRadius, neighbor)) {
                 continue;
             }
             float3 delta = neighbor - center;

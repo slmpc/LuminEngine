@@ -1,5 +1,5 @@
-float computeGtao(float2 uv, float2 pixel, float3 center, float3 normal, float radius, float bias,
-                  float randomAngle) {
+float computeGtao(float2 uv, float2 pixelPosition, float2 texelSize, float3 center, float3 normal,
+                  float radius, float bias, float randomAngle) {
     const uint sliceCount = 6;
     const uint stepCount = 4;
     float pixelRadius = projectedRadiusPixels(center, radius);
@@ -23,13 +23,15 @@ float computeGtao(float2 uv, float2 pixel, float3 center, float3 normal, float r
 
         [unroll]
         for (uint stepIndex = 1; stepIndex <= stepCount; ++stepIndex) {
-            float stepRadius = (float(stepIndex) - 0.5 + hash12(pixel + float2(sliceIndex, stepIndex))) /
-                               float(stepCount);
+            float stepRadius =
+                (float(stepIndex) - 0.5 + hash12(pixelPosition + float2(sliceIndex, stepIndex))) /
+                float(stepCount);
             [unroll]
             for (uint side = 0; side < 2; ++side) {
                 float signValue = side == 0 ? -1.0 : 1.0;
                 float3 neighbor;
-                if (!samplePosition(uv + screenDirection * signValue * pixel * pixelRadius * stepRadius, neighbor)) {
+                if (!samplePosition(
+                        uv + screenDirection * signValue * texelSize * pixelRadius * stepRadius, neighbor)) {
                     continue;
                 }
                 float3 delta = neighbor - center;

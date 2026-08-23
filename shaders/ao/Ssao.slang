@@ -1,4 +1,4 @@
-float computeSsao(float2 uv, float2 pixel, float3 center, float3 normal, float radius, float bias,
+float computeSsao(float2 uv, float2 texelSize, float3 center, float3 normal, float radius, float bias,
                   float randomAngle) {
     const uint sampleCount = 12;
     float2x2 rotation = float2x2(cos(randomAngle), -sin(randomAngle),
@@ -12,7 +12,7 @@ float computeSsao(float2 uv, float2 pixel, float3 center, float3 normal, float r
         float sampleRadius = sqrt((float(sampleIndex) + 1.0) / float(sampleCount));
         float2 direction = mul(rotation, float2(cos(angle), sin(angle)));
         float3 neighbor;
-        if (!samplePosition(uv + direction * pixel * pixelRadius * sampleRadius, neighbor)) {
+        if (!samplePosition(uv + direction * texelSize * pixelRadius * sampleRadius, neighbor)) {
             continue;
         }
         float3 delta = neighbor - center;

@@ -771,6 +771,14 @@ namespace {
         require(hbao.find("const uint directionCount = 8") != std::string::npos &&
                     gtao.find("const uint sliceCount = 6") != std::string::npos,
                 "HBAO must search directional horizons and GTAO must integrate horizon slices.");
+        require(entry.find("float2 texelSize = frame.renderSize.zw") != std::string::npos &&
+                    ssao.find("direction * texelSize * pixelRadius") != std::string::npos &&
+                    hbao.find("direction * texelSize * pixelRadius") != std::string::npos &&
+                    gtao.find("screenDirection * signValue * texelSize * pixelRadius") != std::string::npos,
+                "Every screen-space AO backend must convert its pixel radius to normalized UV offsets.");
+        require(hbao.find("hash12(pixelPosition") != std::string::npos &&
+                    gtao.find("hash12(pixelPosition") != std::string::npos,
+                "HBAO and GTAO must keep pixel coordinates separate for stable screen-space sampling noise.");
 
         const std::string deferred = readSource(sourceDirectory / "shaders" / "Deferred.slang");
         require(deferred.find("Texture2D<float4> globalIlluminationTexture") != std::string::npos,
