@@ -299,12 +299,13 @@ namespace lumin::editor {
         Impl(scene::Level& levelValue, scene::Camera& cameraValue, render::RenderSettings& settingsValue,
              scripting::ScriptRuntime& scriptsValue, BackendInfoProvider backendInfoValue,
              ViewportImageProvider viewportImageValue, project::ProjectSession* projectValue,
-             EditorDialogServices dialogsValue, EditorSettingsServices settingsServicesValue)
+             EditorDialogServices dialogsValue, EditorSettingsServices settingsServicesValue,
+             FrameRateProvider frameRateValue)
             : level(levelValue), camera(cameraValue), settings(settingsValue), scripts(scriptsValue),
               backendInfo(std::move(backendInfoValue)), viewportImage(std::move(viewportImageValue)),
               projectSession(projectValue), dialogs(std::move(dialogsValue)),
               engineSettings(std::move(settingsServicesValue.settings)),
-              saveEngineSettings(std::move(settingsServicesValue.save)) {
+              saveEngineSettings(std::move(settingsServicesValue.save)), frameRate(std::move(frameRateValue)) {
             config::normalizeEngineSettings(engineSettings);
         }
 
@@ -318,6 +319,8 @@ namespace lumin::editor {
         EditorDialogServices dialogs;
         config::EngineSettings engineSettings;
         SaveEngineSettingsCallback saveEngineSettings;
+        /** 只读取 Renderer 已发布的交换链 FPS，不使用主线程 ImGui 帧率。 */
+        FrameRateProvider frameRate;
         ViewportInteractionState viewportInteraction;
         SelectionState selection = SelectionState::Empty;
         std::optional<scene::ActorHandle> actor;
@@ -1465,7 +1468,8 @@ namespace lumin::editor {
                 gizmoMode = gizmoMode == ImGuizmo::WORLD ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
             }
             char fpsLabel[32]{};
-            std::snprintf(fpsLabel, sizeof(fpsLabel), "FPS %.1f", ImGui::GetIO().Framerate);
+            const float presentedFramesPerSecond = frameRate ? std::max(frameRate(), 0.0f) : 0.0f;
+            std::snprintf(fpsLabel, sizeof(fpsLabel), "FPS %.1f", presentedFramesPerSecond);
             const float fpsWidth = ImGui::CalcTextSize(fpsLabel).x;
             const float fpsPosition = ImGui::GetWindowContentRegionMax().x - fpsWidth - style::Space2;
             const float toolbarEnd = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
@@ -1823,10 +1827,10 @@ namespace lumin::editor {
     Editor::Editor(scene::Level& level, scene::Camera& camera, render::RenderSettings& settings,
                    scripting::ScriptRuntime& scripts, BackendInfoProvider backendInfo,
                    ViewportImageProvider viewportImage, project::ProjectSession* project, EditorDialogServices dialogs,
-                   EditorSettingsServices settingsServices)
+                   EditorSettingsServices settingsServices, FrameRateProvider frameRate)
         : impl_(std::make_unique<Impl>(level, camera, settings, scripts, std::move(backendInfo),
                                        std::move(viewportImage), project, std::move(dialogs),
-                                       std::move(settingsServices))) {
+                                       std::move(settingsServices), std::move(frameRate))) {
     }
 
     Editor::~Editor() = default;

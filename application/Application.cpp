@@ -137,7 +137,11 @@ namespace lumin::core {
                     .settings = loadedSettings.settings,
                     .save = [engineSettingsPath](const config::EngineSettings& settings, std::string& error) {
                         return config::saveEngineSettings(engineSettingsPath, settings, error);
-                    }});
+                    }},
+                [this] {
+                    rendererStatusCache = renderer->status();
+                    return rendererStatusCache.presentedFramesPerSecond;
+                });
             if (startupProject.has_value()) {
                 static_cast<void>(editor->openProject(*startupProject));
             }

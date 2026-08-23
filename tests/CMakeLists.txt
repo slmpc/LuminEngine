@@ -352,6 +352,10 @@ lumin_configure_test(lumin_render_mailbox_tests)
 target_link_libraries(lumin_render_mailbox_tests PRIVATE Lumin::RenderRuntime)
 lumin_register_test(lumin_render_mailbox_tests RenderMailbox LABELS render thread unit contract)
 
+add_executable(lumin_presentation_frame_rate_tests PresentationFrameRateTrackerTests.cpp)
+lumin_configure_test(lumin_presentation_frame_rate_tests)
+lumin_register_test(lumin_presentation_frame_rate_tests PresentationFrameRateTracker LABELS render thread unit)
+
 add_executable(lumin_gpu_scene_tests GpuSceneTests.cpp)
 lumin_configure_test(lumin_gpu_scene_tests)
 target_link_libraries(lumin_gpu_scene_tests PRIVATE Lumin::GpuScene)

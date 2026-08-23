@@ -44,6 +44,8 @@ namespace lumin::editor {
 
     using BackendInfoProvider = std::function<render::gi::BackendInfo()>;
     using ViewportImageProvider = std::function<render::ImGuiViewportImage()>;
+    /** 返回渲染线程最近统计的交换链呈现帧率。 */
+    using FrameRateProvider = std::function<float()>;
     using DialogResultCallback = std::function<void(std::vector<std::filesystem::path>)>;
 
     struct EditorDialogServices {
@@ -71,10 +73,24 @@ namespace lumin::editor {
 
     class Editor final : public render::ImGuiContent {
     public:
+        /**
+         * @brief 创建绑定场景、渲染设置和项目服务的 Editor UI。
+         * @param level 被编辑场景，必须覆盖 Editor 生命周期。
+         * @param camera 被编辑相机，必须覆盖 Editor 生命周期。
+         * @param settings 可写渲染设置，必须覆盖 Editor 生命周期。
+         * @param scripts 脚本 Runtime，必须覆盖 Editor 生命周期。
+         * @param backendInfo 当前 GI backend 状态 provider。
+         * @param viewportImage 当前 Viewport 输出纹理 provider。
+         * @param project 可选项目会话，不转移所有权。
+         * @param dialogs 平台文件对话框服务。
+         * @param settingsServices Editor 持久化设置服务。
+         * @param frameRate 当前交换链呈现帧率 provider；为空时显示零。
+         */
         Editor(scene::Level& level, scene::Camera& camera, render::RenderSettings& settings,
                scripting::ScriptRuntime& scripts, BackendInfoProvider backendInfo,
                ViewportImageProvider viewportImage = {}, project::ProjectSession* project = nullptr,
-               EditorDialogServices dialogs = {}, EditorSettingsServices settingsServices = {});
+               EditorDialogServices dialogs = {}, EditorSettingsServices settingsServices = {},
+               FrameRateProvider frameRate = {});
         ~Editor() override;
 
         Editor(const Editor&) = delete;

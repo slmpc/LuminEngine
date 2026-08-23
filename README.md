@@ -92,7 +92,8 @@ Debug 配置过程还会生成 `out/build/debug/compile_commands.json`。本地 
 cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
-场景画面位于独立的 `Viewport` dock window，渲染分辨率会跟随其内容区物理像素尺寸，工具栏右端显示实时 FPS。
+场景画面位于独立的 `Viewport` dock window，渲染分辨率会跟随其内容区物理像素尺寸。工具栏右端的 FPS 由渲染线程按
+交换链 `present` 完成次数统计，不使用可能因异步丢帧而虚高的 ImGui 主线程帧率。
 鼠标悬停在 Viewport 上时，
 按住中键会隐藏并捕获鼠标，通过相对移动旋转视角；同时使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。松开中键会恢复
 普通鼠标模式。左键可拾取场景物体并通过 Move/Rotate/Scale Gizmo 编辑变换，`W`、`E`、`R` 可切换模式；右键打开

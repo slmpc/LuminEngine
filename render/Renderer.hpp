@@ -52,6 +52,10 @@ namespace lumin::render {
         std::uint64_t droppedPacketCount = 0;
         /** 未推进 GPU 历史的最小化或交换链重试 packet 数量。 */
         std::uint64_t skippedPacketCount = 0;
+        /** 已完成 GPU submit 和交换链 present 流程的帧数。 */
+        std::uint64_t presentedFrameCount = 0;
+        /** 渲染线程按最近呈现帧统计的交换链 FPS。 */
+        float presentedFramesPerSecond = 0.0f;
         /** 最近一次成功 GPU submit 的主线程帧身份。 */
         core::ClientFrameId lastSubmittedClientFrame;
         /** 是否至少存在一次成功 GPU submit。 */

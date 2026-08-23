@@ -63,7 +63,7 @@ namespace lumin::render::runtime {
 
         /**
          * @brief 消费一份完全拥有的帧 packet，并同步完成录制、submit 和 present。
-         * @return GPU submit 成功时返回 `true`；最小化或 acquire 重试返回 `false`。
+         * @return GPU submit 与随后的交换链 present 流程完成时返回 `true`；最小化或 acquire 重试返回 `false`。
          * @thread_safety 只能由拥有 session 的渲染线程调用。
          */
         [[nodiscard]] virtual bool drawFrame(core::RenderFramePacket packet) = 0;

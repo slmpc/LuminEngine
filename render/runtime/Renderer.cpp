@@ -1,6 +1,7 @@
 #include "render/Renderer.hpp"
 
 #include "render/platform/vulkan/VulkanContext.hpp"
+#include "render/runtime/PresentationFrameRateTracker.hpp"
 #include "render/runtime/RenderMailbox.hpp"
 
 #include <condition_variable>
@@ -110,6 +111,7 @@ namespace lumin::render {
                 }
                 pipelineFactory.reset();
                 publishRuntimeDetails(*session);
+                presentationFrameRate.reset(runtime::PresentationFrameRateTracker::Clock::now());
                 publishState(RendererState::Ready);
 
                 while (std::optional<runtime::RenderMailboxWork> work = mailbox.waitNext()) {
@@ -119,15 +121,25 @@ namespace lumin::render {
                                                frame->packet.surface.windowExtent.width == 0 ||
                                                frame->packet.surface.windowExtent.height == 0;
                         const bool submitted = !minimized && session->drawFrame(std::move(frame->packet));
+                        // 只计入渲染线程完成的 present 流程，避免 latest-wins 丢弃的主线程 UI packet 虚增 FPS。
+                        const runtime::PresentationFrameRateTracker::TimePoint completedAt =
+                            runtime::PresentationFrameRateTracker::Clock::now();
+                        const std::optional<float> frameRate =
+                            submitted ? presentationFrameRate.recordPresentedFrame(completedAt)
+                                      : presentationFrameRate.sample(completedAt);
                         publishRuntimeDetails(*session);
                         {
                             std::lock_guard lock{statusMutex};
                             ++currentStatus.completedPacketCount;
                             if (submitted) {
+                                ++currentStatus.presentedFrameCount;
                                 currentStatus.lastSubmittedClientFrame = clientFrame;
                                 currentStatus.hasSubmittedFrame = true;
                             } else {
                                 ++currentStatus.skippedPacketCount;
+                            }
+                            if (frameRate.has_value()) {
+                                currentStatus.presentedFramesPerSecond = *frameRate;
                             }
                         }
                         // 消费序号在全部 Runtime 状态更新后推进，flush 才能观察到完整结果。
@@ -252,6 +264,8 @@ namespace lumin::render {
         core::UiFontAtlas uiFontAtlas;
         std::unique_ptr<runtime::IRenderPipelineSessionFactory> pipelineFactory;
         runtime::RenderMailbox mailbox;
+        /** 仅由渲染线程更新，结果通过 `statusMutex` 发布。 */
+        runtime::PresentationFrameRateTracker presentationFrameRate;
         mutable std::mutex statusMutex;
         std::condition_variable statusChanged;
         RendererStatusSnapshot currentStatus;
