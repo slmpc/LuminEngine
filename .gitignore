@@ -15,6 +15,3 @@ compile_commands.json
 *.exe
 *.dll
 *.lib
-
-assets/generated/
-assets/materials/
