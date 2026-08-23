@@ -96,7 +96,8 @@ cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 交换链 `present` 完成次数统计。
 鼠标悬停在 Viewport 上时，
 按住中键会隐藏并捕获鼠标，通过相对移动旋转视角；同时使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。松开中键会恢复
-普通鼠标模式。左键可拾取场景物体并通过 Move/Rotate/Scale Gizmo 编辑变换，`W`、`E`、`R` 可切换模式；右键打开
+普通鼠标模式。Viewport Camera 在渲染主线程按实际渲染帧间隔更新，不受项目 `logicTickHz` 限制；Picking、Gizmo 和
+渲染帧使用同一份即时 Camera。左键可拾取场景物体并通过 Move/Rotate/Scale Gizmo 编辑变换，`W`、`E`、`R` 可切换模式；右键打开
 物体上下文菜单和 `Details`。编辑器面板可选择 Actor 或模型、修改变换与材质，并在 Render 面板通过下拉框选择
 `Legacy` 或 `Ray Tracing`。Legacy 提供 SSAO/HBAO/GTAO、AO 半径/强度/偏置、CSM、级联分割权重与最大阴影距离设置；Ray Tracing 提供 SHARC 与
 NRD 开关；TAA 是两条路径共用的选项。面板还可调整相机、曝光和太阳方向，并在 Lua 控制台执行表达式
@@ -123,7 +124,7 @@ NRD 开关；TAA 是两条路径共用的选项。面板还可调整相机、曝
 创建模型 Actor、纹理拖放到材质槽，以及资源重命名和引用保护删除。项目清单、场景、`.lumin` 和普通文件只读。每个 Actor
 可以在 `Details` 中绑定多个 Lua 脚本，调整执行顺序、启用状态、热重载或移除。项目场景保存通用 Actor、资源引用、
 材质、脚本组件、环境、编辑器相机和项目设置。`Project Settings` 面板可在 `15-240 Hz` 范围内修改固定逻辑频率，
-默认值为 `60 Hz`；修改后逻辑线程立即按新频率调度。完整目录和生命周期约定见
+默认值为 `60 Hz`；修改后逻辑线程立即按新频率调度 `Game`、`Level` 与脚本，Viewport Camera 仍按渲染帧率更新。完整目录和生命周期约定见
 [`docs/project-editor.md`](docs/project-editor.md)。
 
 示例材质位于 `assets/materials/aerial_asphalt_01`。base color 按 sRGB 解码，OpenGL normal

@@ -147,6 +147,7 @@ namespace lumin::core {
                 Clock::time_point nextTick = Clock::now() + tickPeriod(activeTickRate);
                 while (true) {
                     std::deque<PendingCommand> localCommands;
+                    std::optional<scene::Camera> pendingCamera;
                     {
                         std::unique_lock lock{mutex};
                         changed.wait_until(lock, nextTick, [this] {
@@ -156,9 +157,17 @@ namespace lumin::core {
                             break;
                         }
                         localCommands.swap(commands);
+                        if (publishedCameraGeneration != consumedCameraGeneration) {
+                            pendingCamera = latestCamera;
+                            consumedCameraGeneration = publishedCameraGeneration;
+                        }
                     }
 
-                    bool stateChanged = false;
+                    // Camera 由渲染主线程逐帧更新；逻辑线程仅在命令和 Tick 前同步镜像。
+                    bool stateChanged = pendingCamera.has_value();
+                    if (pendingCamera.has_value()) {
+                        camera = std::move(*pendingCamera);
+                    }
                     for (PendingCommand& pending : localCommands) {
                         editor::EditorCommandOutcome outcome;
                         try {
@@ -184,16 +193,6 @@ namespace lumin::core {
                         {
                             std::lock_guard lock{mutex};
                             input = latestInput;
-                            if (input.camera.has_value()) {
-                                input.camera->lookDeltaX = accumulatedLookX;
-                                input.camera->lookDeltaY = accumulatedLookY;
-                                accumulatedLookX = 0.0f;
-                                accumulatedLookY = 0.0f;
-                            }
-                        }
-                        if (input.camera.has_value()) {
-                            scene::CameraController::update(camera, *input.camera,
-                                                            1.0f / static_cast<float>(activeTickRate));
                         }
                         game::advanceGameFrame(*game, gameContext, input.game,
                                                1.0f / static_cast<float>(activeTickRate));
@@ -277,8 +276,10 @@ namespace lumin::core {
         std::deque<PendingCommand> commands;
         std::vector<editor::EditorCommandResult> results;
         LogicInputState latestInput;
-        float accumulatedLookX = 0.0f;
-        float accumulatedLookY = 0.0f;
+        /** 渲染线程最近发布的 Camera 值及其 latest-wins 同步代数。 */
+        scene::Camera latestCamera;
+        std::uint64_t publishedCameraGeneration = 0;
+        std::uint64_t consumedCameraGeneration = 0;
         bool stopRequested = false;
         editor::EditorCommandId nextCommandId = 1;
         std::uint64_t nextSnapshotRevision = 1;
@@ -310,16 +311,13 @@ namespace lumin::core {
 
     void LogicRuntime::publishInput(LogicInputState input) {
         std::lock_guard lock{impl_->mutex};
-        if (input.camera.has_value()) {
-            impl_->accumulatedLookX += input.camera->lookDeltaX;
-            impl_->accumulatedLookY += input.camera->lookDeltaY;
-            input.camera->lookDeltaX = 0.0f;
-            input.camera->lookDeltaY = 0.0f;
-        } else {
-            impl_->accumulatedLookX = 0.0f;
-            impl_->accumulatedLookY = 0.0f;
-        }
         impl_->latestInput = std::move(input);
+    }
+
+    void LogicRuntime::publishCamera(scene::Camera camera) {
+        std::lock_guard lock{impl_->mutex};
+        impl_->latestCamera = std::move(camera);
+        ++impl_->publishedCameraGeneration;
     }
 
     LogicRuntimeStatus LogicRuntime::status() const {

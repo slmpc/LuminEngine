@@ -80,12 +80,15 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 ## Application
 
 `application/Application.cpp` 是组合层，不属于 Core 或 Render 的内部实现。它启动 `LogicRuntime`，后者在独立逻辑线程
-独占 `Game`、`Level`、`Camera`、`ScriptRuntime` 与 `ProjectSession`，并向渲染主线程发布不可变
-`EditorLogicSnapshot`。Editor 修改通过有序命令队列返回逻辑线程，按键采用 latest-wins 状态，相对鼠标位移在 Tick 前累积。
+独占 `Game`、`Level`、Camera 镜像、`ScriptRuntime` 与 `ProjectSession`，并向渲染主线程发布不可变
+`EditorLogicSnapshot`。Editor 修改通过有序命令队列返回逻辑线程，Game 按键采用 latest-wins 状态。Camera 镜像也采用
+latest-wins，但发布不会唤醒逻辑线程，并在下一次固定 Tick 或 Editor 命令前同步，供 `GameContext` 与项目保存使用。
 
 渲染主线程创建并持有窗口、SDL backend、ImGui context、`RenderFramePacketBuilder`、settings adapter、`Renderer`、
-`VulkanContext`、device、NvRHI 与 swapchain。每个 UI 帧只读取一次逻辑快照，同一份快照同时供 Editor 与
-`RenderFramePacketBuilder` 使用；`Renderer::drawFrame()` 在当前线程立即记录、提交并呈现，不读取活动逻辑对象。
+`VulkanContext`、device、NvRHI、swapchain 与权威 Viewport Camera。Camera 依据 SDL 输入和真实渲染 delta 逐帧更新，
+不受项目 `logicTickHz` 限制；Renderer、Picking、ImGuizmo、拖放和 Camera 面板共享该实例。每个 UI 帧只读取一次逻辑
+快照，`RenderFramePacketBuilder` 组合其中的世界快照与渲染线程 Camera；`Renderer::drawFrame()` 在当前线程立即记录、
+提交并呈现，不读取活动逻辑对象。
 `Lumin::Application`（兼容名
 `Lumin::GameEngine`）链接 `Lumin::Core` 与 `Lumin::Render`；Render 不反向链接 Application。
 

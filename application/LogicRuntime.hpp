@@ -2,7 +2,7 @@
 
 #include "game/Game.hpp"
 #include "render/editor/EditorLogic.hpp"
-#include "scene/CameraController.hpp"
+#include "scene/Camera.hpp"
 
 #include <filesystem>
 #include <memory>
@@ -22,12 +22,10 @@ namespace lumin::core {
         std::optional<std::filesystem::path> startupProject;
     };
 
-    /** 渲染主线程发布给逻辑线程的最新输入状态。 */
+    /** 渲染主线程发布给逻辑线程的最新游戏输入状态。 */
     struct LogicInputState {
         /** 游戏输入；空值表示当前帧不向 `Game` 派发输入。 */
         std::optional<game::GameInput> game;
-        /** 相机输入；相对视角位移会在逻辑 Tick 前累积。 */
-        std::optional<scene::CameraInput> camera;
     };
 
     /** 逻辑 Runtime 的稳定生命周期状态。 */
@@ -83,8 +81,17 @@ namespace lumin::core {
         [[nodiscard]] editor::EditorCommandId submit(editor::EditorLogicCommand command);
         /** 取走当前已经完成的命令结果。 */
         [[nodiscard]] std::vector<editor::EditorCommandResult> drainResults();
-        /** 覆盖最新按键状态并累积相对鼠标位移。 */
+        /** 覆盖逻辑线程下一次固定 Tick 使用的最新游戏输入状态。 */
         void publishInput(LogicInputState input);
+        /**
+         * @brief 发布渲染主线程拥有的最新 Viewport Camera 镜像。
+         * @param camera
+         * 按值复制的相机状态；逻辑线程在下一次 Tick 或命令前消费。
+         *
+         *
+         * 该调用不会唤醒逻辑线程，因而渲染帧率不会改变固定逻辑调度频率。
+         */
+        void publishCamera(scene::Camera camera);
         /** 返回线程安全的 Runtime 状态副本。 */
         [[nodiscard]] LogicRuntimeStatus status() const;
         /** 若逻辑线程失败则重新抛出原始异常。 */

@@ -145,11 +145,39 @@ namespace {
                 "Stopping Logic Runtime must join the logic thread deterministically.");
     }
 
+    void testRenderCameraIsMirroredBeforeEditorCommands() {
+        TemporaryDirectory temporary;
+        auto gameTicks = std::make_shared<std::atomic_uint64_t>(0);
+        lumin::core::LogicRuntime runtime({.scriptRoot = temporary.path}, std::make_unique<CountingGame>(gameTicks));
+
+        lumin::scene::Camera camera;
+        camera.setPosition({7.0f, 8.0f, 9.0f});
+        camera.setOrientation(35.0f, -12.0f);
+        camera.setMoveSpeed(11.0f);
+        camera.markCut();
+        runtime.publishCamera(camera);
+        const auto command = runtime.submit([](lumin::scene::Level&, lumin::scene::Camera&,
+                                               lumin::scripting::ScriptRuntime&, lumin::project::ProjectSession&) {
+            return lumin::editor::EditorCommandOutcome{};
+        });
+        waitForCommand(runtime, command);
+
+        const auto snapshot = runtime.snapshot();
+        require(snapshot != nullptr && snapshot->camera.position() == camera.position() &&
+                    snapshot->camera.yawDegrees() == camera.yawDegrees() &&
+                    snapshot->camera.pitchDegrees() == camera.pitchDegrees() &&
+                    snapshot->camera.moveSpeed() == camera.moveSpeed() &&
+                    snapshot->camera.cutEpoch() == camera.cutEpoch(),
+                "Logic Runtime must consume the latest render Camera mirror before an Editor command.");
+        runtime.stop();
+    }
+
 } // namespace
 
 int main() {
     try {
         testProjectTickRateControlsLogicRuntime();
+        testRenderCameraIsMirroredBeforeEditorCommands();
         return 0;
     } catch (const std::exception& exception) {
         return exception.what()[0] == '\0' ? 2 : 1;

@@ -140,12 +140,18 @@ namespace {
     lumin::editor::Editor makeEditor(lumin::scene::Level& level, lumin::scene::Camera& camera,
                                      lumin::render::RenderSettings& settings, lumin::scripting::ScriptRuntime& runtime,
                                      lumin::editor::ViewportImageProvider viewportImage = {},
-                                     lumin::project::ProjectSession* project = nullptr) {
-        return lumin::editor::Editor{makeLogicServices(level, camera, runtime, project), settings,
+                                     lumin::project::ProjectSession* project = nullptr,
+                                     lumin::editor::EditorCameraServices cameraServices = {}) {
+        return lumin::editor::Editor{makeLogicServices(level, camera, runtime, project),
+                                     settings,
                                      [] {
                                          return lumin::render::gi::BackendInfo{"SSAO", false, false};
                                      },
-                                     std::move(viewportImage)};
+                                     std::move(viewportImage),
+                                     {},
+                                     {},
+                                     {},
+                                     std::move(cameraServices)};
     }
 
     void testEmptyAndStaleSelection() {
@@ -462,6 +468,35 @@ namespace {
                 "Inspector model materials must use the Level mutation API.");
     }
 
+    void testCameraControlsUseRenderThreadService() {
+        lumin::scene::Level level;
+        lumin::scene::Camera logicCamera;
+        lumin::scene::Camera viewportCamera;
+        lumin::render::RenderSettings settings;
+        lumin::scripting::ScriptRuntime runtime;
+        std::uint32_t cameraUpdates = 0;
+        auto editor = makeEditor(
+            level, logicCamera, settings, runtime, {}, nullptr,
+            lumin::editor::EditorCameraServices{.snapshot =
+                                                    [&viewportCamera] {
+                                                        return viewportCamera;
+                                                    },
+                                                .update =
+                                                    [&viewportCamera, &cameraUpdates](lumin::scene::Camera camera) {
+                                                        viewportCamera = std::move(camera);
+                                                        ++cameraUpdates;
+                                                    }});
+
+        editor.setCameraSpeed(9.0f);
+        editor.setCameraPosition({3.0f, 4.0f, 5.0f});
+        require(nearlyEqual(viewportCamera.moveSpeed(), 9.0f) &&
+                    viewportCamera.position() == glm::vec3(3.0f, 4.0f, 5.0f) && viewportCamera.cutEpoch() == 1 &&
+                    cameraUpdates == 2,
+                "Camera controls must update the render-thread Camera service immediately.");
+        require(!nearlyEqual(logicCamera.moveSpeed(), 9.0f) && logicCamera.position() != glm::vec3(3.0f, 4.0f, 5.0f),
+                "Camera controls must not mutate the stale logic snapshot when a render Camera service exists.");
+    }
+
     void testProjectNavigatorAndPersistedWindowVisibility() {
         TemporaryDirectory temporary;
         ImGui::CreateContext();
@@ -546,6 +581,7 @@ int main() {
         testFailedCommandAppearsOnce();
         testUninitializedFrontendHasNoThreadState();
         testSettingsAndSelectionMutation();
+        testCameraControlsUseRenderThreadService();
         testProjectNavigatorAndPersistedWindowVisibility();
         std::cout << "Editor PASS\n";
         return 0;

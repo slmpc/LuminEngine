@@ -307,11 +307,12 @@ namespace lumin::editor {
         Impl(EditorLogicServices logicValue, render::RenderSettings& settingsValue,
              BackendInfoProvider backendInfoValue, ViewportImageProvider viewportImageValue,
              EditorDialogServices dialogsValue, EditorSettingsServices settingsServicesValue,
-             FrameRateProvider frameRateValue)
+             FrameRateProvider frameRateValue, EditorCameraServices cameraServicesValue)
             : logic(std::move(logicValue)), settings(settingsValue), backendInfo(std::move(backendInfoValue)),
               viewportImage(std::move(viewportImageValue)), dialogs(std::move(dialogsValue)),
               engineSettings(std::move(settingsServicesValue.settings)),
-              saveEngineSettings(std::move(settingsServicesValue.save)), frameRate(std::move(frameRateValue)) {
+              saveEngineSettings(std::move(settingsServicesValue.save)), frameRate(std::move(frameRateValue)),
+              cameraServices(std::move(cameraServicesValue)) {
             config::normalizeEngineSettings(engineSettings);
             refreshLogicSnapshot();
         }
@@ -326,6 +327,8 @@ namespace lumin::editor {
         SaveEngineSettingsCallback saveEngineSettings;
         /** 只读取 Renderer 已发布的交换链 FPS，不使用主线程 ImGui 帧率。 */
         FrameRateProvider frameRate;
+        /** Viewport Camera 在渲染主线程上的即时访问入口。 */
+        EditorCameraServices cameraServices;
         ViewportInteractionState viewportInteraction;
         SelectionState selection = SelectionState::Empty;
         std::optional<scene::ActorHandle> actor;
@@ -367,6 +370,10 @@ namespace lumin::editor {
 
         [[nodiscard]] const EditorLogicSnapshot& snapshot() const noexcept {
             return *logicSnapshot;
+        }
+
+        [[nodiscard]] scene::Camera cameraSnapshot() const {
+            return cameraServices.snapshot ? cameraServices.snapshot() : snapshot().camera;
         }
 
         [[nodiscard]] bool hasProject() const noexcept {
@@ -1714,10 +1721,11 @@ namespace lumin::editor {
             viewportInteraction.hovered = ImGui::IsItemHovered();
             const ImVec2 imageMinimum = ImGui::GetItemRectMin();
             const ImVec2 imageMaximum = ImGui::GetItemRectMax();
+            const scene::Camera viewportCamera = cameraSnapshot();
             const auto pickAtMouse = [&]() -> std::optional<ViewportPickResult> {
                 const ImVec2 mouse = ImGui::GetIO().MousePos;
                 const ViewportRay ray =
-                    makeViewportRay(snapshot().camera, mouse.x - imageMinimum.x, mouse.y - imageMinimum.y,
+                    makeViewportRay(viewportCamera, mouse.x - imageMinimum.x, mouse.y - imageMinimum.y,
                                     imageMaximum.x - imageMinimum.x, imageMaximum.y - imageMinimum.y);
                 return snapshot().renderWorld != nullptr ? pickViewportModel(*snapshot().renderWorld, ray)
                                                          : std::nullopt;
@@ -1748,8 +1756,8 @@ namespace lumin::editor {
             }
             if (hasSelectedTransform) {
                 glm::mat4 transformMatrix = selectedTransform.matrix();
-                const glm::mat4 view = snapshot().camera.viewMatrix();
-                const glm::mat4 projection = snapshot().camera.projectionMatrix(
+                const glm::mat4 view = viewportCamera.viewMatrix();
+                const glm::mat4 projection = viewportCamera.projectionMatrix(
                     std::max(imageMaximum.x - imageMinimum.x, 1.0f) / std::max(imageMaximum.y - imageMinimum.y, 1.0f));
                 ImGuizmo::SetOrthographic(false);
                 ImGuizmo::SetDrawlist();
@@ -1813,7 +1821,7 @@ namespace lumin::editor {
                     const auto picked = pickAtMouse();
                     transform.position = picked.has_value()
                                              ? picked->worldPosition
-                                             : snapshot().camera.position() + snapshot().camera.forward() * 3.0f;
+                                             : viewportCamera.position() + viewportCamera.forward() * 3.0f;
                     static_cast<void>(
                         submitCommand([asset, transform](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
                                                          project::ProjectSession& projectSession) {
@@ -1828,6 +1836,17 @@ namespace lumin::editor {
         }
 
         void updateCameraSpeed(float speed) {
+            if (cameraServices.update) {
+                scene::Camera camera = cameraSnapshot();
+                camera.setMoveSpeed(speed);
+                cameraServices.update(std::move(camera));
+                static_cast<void>(submitCommand([](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
+                                                   project::ProjectSession& projectSession) {
+                    projectSession.markDirty();
+                    return EditorCommandOutcome{};
+                }));
+                return;
+            }
             static_cast<void>(submitCommand([speed](scene::Level&, scene::Camera& camera, scripting::ScriptRuntime&,
                                                     project::ProjectSession& projectSession) {
                 camera.setMoveSpeed(speed);
@@ -1837,6 +1856,18 @@ namespace lumin::editor {
         }
 
         void updateCameraPosition(const glm::vec3& position) {
+            if (cameraServices.update) {
+                scene::Camera camera = cameraSnapshot();
+                camera.setPosition(position);
+                camera.markCut();
+                cameraServices.update(std::move(camera));
+                static_cast<void>(submitCommand([](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
+                                                   project::ProjectSession& projectSession) {
+                    projectSession.markDirty();
+                    return EditorCommandOutcome{};
+                }));
+                return;
+            }
             static_cast<void>(submitCommand([position](scene::Level&, scene::Camera& camera, scripting::ScriptRuntime&,
                                                        project::ProjectSession& projectSession) {
                 camera.setPosition(position);
@@ -1849,12 +1880,13 @@ namespace lumin::editor {
         void drawRenderSettings() {
             ImGui::Begin("Render / GI", &engineSettings.windows.renderSettings);
             section("Camera");
-            float speed = snapshot().camera.moveSpeed();
+            const scene::Camera viewportCamera = cameraSnapshot();
+            float speed = viewportCamera.moveSpeed();
             propertyLabel("Move speed");
             if (ImGui::DragFloat("##cameraSpeed", &speed, 0.05f, 0.1f, 20.0f)) {
                 updateCameraSpeed(speed);
             }
-            glm::vec3 position = snapshot().camera.position();
+            glm::vec3 position = viewportCamera.position();
             propertyLabel("Position");
             if (ImGui::DragFloat3("##cameraPosition", &position.x, 0.05f)) {
                 updateCameraPosition(position);
@@ -1917,7 +1949,7 @@ namespace lumin::editor {
                     ImGui::SliderFloat("##csmSplitLambda", &settings.shadows.splitLambda, 0.0f, 1.0f, "%.2f");
                     propertyLabel("Max distance");
                     ImGui::SliderFloat("##csmMaxDistance", &settings.shadows.maxDistance, 1.0f,
-                                       std::max(snapshot().camera.farPlane(), 1.0f), "%.1f");
+                                       std::max(viewportCamera.farPlane(), 1.0f), "%.1f");
                 }
             } else {
                 ImGui::Checkbox("SHARC", &settings.globalIllumination.sharcEnabled);
@@ -2136,9 +2168,11 @@ namespace lumin::editor {
 
     Editor::Editor(EditorLogicServices logic, render::RenderSettings& settings, BackendInfoProvider backendInfo,
                    ViewportImageProvider viewportImage, EditorDialogServices dialogs,
-                   EditorSettingsServices settingsServices, FrameRateProvider frameRate)
+                   EditorSettingsServices settingsServices, FrameRateProvider frameRate,
+                   EditorCameraServices cameraServices)
         : impl_(std::make_unique<Impl>(std::move(logic), settings, std::move(backendInfo), std::move(viewportImage),
-                                       std::move(dialogs), std::move(settingsServices), std::move(frameRate))) {
+                                       std::move(dialogs), std::move(settingsServices), std::move(frameRate),
+                                       std::move(cameraServices))) {
     }
 
     Editor::~Editor() = default;

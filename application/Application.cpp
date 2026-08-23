@@ -10,7 +10,10 @@
 #include "render/platform/RenderDocAttachment.hpp"
 #include "render/platform/Window.hpp"
 #include "render/platform/vulkan/VulkanContext.hpp"
+#include "scene/CameraController.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -22,6 +25,8 @@
 
 namespace lumin::core {
     namespace {
+
+        using Clock = std::chrono::steady_clock;
 
         std::filesystem::path preferenceFilePath(std::string_view filename) {
             char* preferencePath = SDL_GetPrefPath("Lumin", "LuminEngine");
@@ -84,6 +89,10 @@ namespace lumin::core {
             if (frameLogicSnapshot == nullptr || frameLogicSnapshot->renderWorld == nullptr) {
                 throw std::runtime_error("Logic Runtime did not publish an initial world snapshot.");
             }
+            viewportCamera = frameLogicSnapshot->camera;
+            observedProjectOpen = frameLogicSnapshot->project.open;
+            observedProjectFile = frameLogicSnapshot->project.projectFile;
+            logic->publishCamera(viewportCamera);
 
             const std::filesystem::path shaderDirectory =
 #if defined(LUMIN_SHADER_DIR)
@@ -151,17 +160,36 @@ namespace lumin::core {
                 [this] {
                     rendererStatusCache = renderer->status();
                     return rendererStatusCache.presentedFramesPerSecond;
-                });
+                },
+                editor::EditorCameraServices{.snapshot =
+                                                 [this] {
+                                                     return viewportCamera;
+                                                 },
+                                             .update =
+                                                 [this](scene::Camera camera) {
+                                                     viewportCamera = std::move(camera);
+                                                     logic->publishCamera(viewportCamera);
+                                                 }});
 
             rendererStatusCache = renderer->status();
             std::cout << "Renderer ready: models=" << rendererStatusCache.modelCount
                       << " mdiDraws=" << rendererStatusCache.mdiDrawCount
                       << " gbuffer=position+normalRoughness+albedoMetallic+motion csm=4 ssao=on taa=on\n";
 
+            Clock::time_point previousCameraUpdate = Clock::now();
             while (!window.shouldClose()) {
                 logic->rethrowIfFailed();
                 if (std::shared_ptr<const editor::EditorLogicSnapshot> latest = logic->snapshot(); latest != nullptr) {
                     frameLogicSnapshot = std::move(latest);
+                    const bool projectChanged = observedProjectOpen != frameLogicSnapshot->project.open ||
+                                                observedProjectFile != frameLogicSnapshot->project.projectFile;
+                    if (projectChanged) {
+                        // 项目边界以内由渲染线程持续拥有 Camera；只在打开、关闭或切换项目时接受逻辑初值。
+                        viewportCamera = frameLogicSnapshot->camera;
+                        observedProjectOpen = frameLogicSnapshot->project.open;
+                        observedProjectFile = frameLogicSnapshot->project.projectFile;
+                        logic->publishCamera(viewportCamera);
+                    }
                 }
 
                 window.pollEvents();
@@ -220,14 +248,25 @@ namespace lumin::core {
                 }
                 const platform::MouseDelta mouseDelta =
                     routing.updateCamera && viewportLookActive ? window.mouseDelta() : platform::MouseDelta{};
+                const Clock::time_point cameraUpdateTime = Clock::now();
+                const float cameraDeltaSeconds = std::clamp(
+                    std::chrono::duration<float>{cameraUpdateTime - previousCameraUpdate}.count(), 0.0f, 0.1f);
+                previousCameraUpdate = cameraUpdateTime;
+                if (routing.updateCamera) {
+                    const std::uint64_t cameraRevision = viewportCamera.revision();
+                    scene::CameraController::update(viewportCamera,
+                                                    {.forward = gameInput.forward,
+                                                     .right = gameInput.right,
+                                                     .up = gameInput.up,
+                                                     .lookDeltaX = mouseDelta.x,
+                                                     .lookDeltaY = mouseDelta.y},
+                                                    cameraDeltaSeconds);
+                    if (viewportCamera.revision() != cameraRevision) {
+                        logic->publishCamera(viewportCamera);
+                    }
+                }
                 logic->publishInput(LogicInputState{
-                    .game = routing.dispatchGameInput ? std::optional<game::GameInput>{gameInput} : std::nullopt,
-                    .camera = routing.updateCamera ? std::optional<scene::CameraInput>{{.forward = gameInput.forward,
-                                                                                        .right = gameInput.right,
-                                                                                        .up = gameInput.up,
-                                                                                        .lookDeltaX = mouseDelta.x,
-                                                                                        .lookDeltaY = mouseDelta.y}}
-                                                   : std::nullopt});
+                    .game = routing.dispatchGameInput ? std::optional<game::GameInput>{gameInput} : std::nullopt});
 
                 const VkExtent2D framebufferExtent = window.framebufferExtent();
                 const bool framebufferResized = window.framebufferResized();
@@ -241,7 +280,7 @@ namespace lumin::core {
                 }
                 static_cast<void>(renderer->drawFrame(
                     framePacketBuilder.build(
-                        frameLogicSnapshot->renderWorld, frameLogicSnapshot->camera, renderSettingsAdapter.snapshot(),
+                        frameLogicSnapshot->renderWorld, viewportCamera, renderSettingsAdapter.snapshot(),
                         render::core::SurfaceState{
                             .windowExtent = {framebufferExtent.width, framebufferExtent.height},
                             .viewportExtent = viewportExtent,
@@ -269,6 +308,11 @@ namespace lumin::core {
         render::core::RenderExtent viewportExtent{1280, 720};
         std::unique_ptr<LogicRuntime> logic;
         std::shared_ptr<const editor::EditorLogicSnapshot> frameLogicSnapshot;
+        /** 渲染主线程逐帧更新并用于 Viewport、Picking 与渲染 packet 的权威 Camera。 */
+        scene::Camera viewportCamera;
+        /** 最近一次用于初始化 Viewport Camera 的项目身份。 */
+        bool observedProjectOpen = false;
+        std::filesystem::path observedProjectFile;
         std::unique_ptr<render::ImGuiFrontend> ui;
         std::unique_ptr<render::Renderer> renderer;
         render::RendererStatusSnapshot rendererStatusCache;

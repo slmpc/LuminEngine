@@ -12,9 +12,11 @@ SDL、NvRHI 或渲染器；Render 只读取 Core 的场景和资产接口，Appl
 `RenderSettingsPanelAdapter`、同步 `Renderer` 和 `Editor`。它创建 `VulkanSurfaceBootstrap` 后在同一线程构造
 `VulkanContext`、物理/逻辑设备、NvRHI、交换链及全部 Feature 资源；`Renderer::drawFrame()` 也在该线程同步执行。
 
-`LogicRuntime` 在独立逻辑线程拥有 `Game`、`Level`、`Camera`、`ScriptRuntime` 和 `ProjectSession`。渲染主线程
-只读取它发布的不可变 `EditorLogicSnapshot`，Editor 写操作通过命令队列返回逻辑线程。项目级 `logicTickHz` 控制固定
-Tick，范围为 `15-240 Hz`、默认 `60 Hz`；修改后重新安排下一个 deadline，过载时不追算积压。
+`LogicRuntime` 在独立逻辑线程拥有 `Game`、`Level`、Camera 镜像、`ScriptRuntime` 和 `ProjectSession`。渲染主线程
+拥有权威 Viewport Camera，并只读取逻辑线程发布的其他不可变 `EditorLogicSnapshot` 数据；Editor 逻辑写操作通过命令
+队列返回逻辑线程。项目级 `logicTickHz` 控制固定 Game/Level/脚本 Tick，范围为 `15-240 Hz`、默认 `60 Hz`；修改后
+重新安排下一个 deadline，过载时不追算积压。Camera 镜像采用 latest-wins，在下一次逻辑 Tick 或 Editor 命令前同步，
+但发布 Camera 不会唤醒逻辑线程。
 具体游戏通过 `GameContext` 只接收 `Level`、`Camera` 与 `ScriptRuntime`，因此场景初始化和逐帧逻辑可以脱离 Vulkan
 测试。`apps/editor` 使用无行为的 `Game` 宿主，不创建演示场景；项目内容只由 `ProjectSession` 创建或加载。
 
@@ -56,12 +58,16 @@ resize 和 shutdown 在安全边界按逆序通知，使消费者先释放对上
 
 `Application` 先在渲染主线程读取一次最新逻辑快照，再处理 SDL 事件并调用
 `ImGuiFrontend::beginFrame(editor)` 构建当前 ImGui 帧，然后读取当前帧 capture 状态。
-只有项目已打开且 UI 未捕获输入时才发布相机和 `GameInput`；独立逻辑线程按项目固定频率调用 `Game::tick` 与
-`Level::tick(deltaSeconds)`，不会受渲染帧率影响。
+只有项目已打开且 UI 未捕获输入时才派发相机控制和 `GameInput`。`GameInput` 以 latest-wins 状态发布给逻辑线程；
+独立逻辑线程按项目固定频率调用 `Game::tick` 与 `Level::tick(deltaSeconds)`，不会受渲染帧率影响。
 Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mouse mode；该模式隐藏并约束鼠标，以帧内相对位移
-更新相机 yaw/pitch，同时继续使用 `WASD`、`Space` 和 `Left Ctrl` 平移。松开中键后立即恢复普通鼠标模式。
+在渲染主线程逐帧更新相机 yaw/pitch，同时继续使用 `WASD`、`Space` 和 `Left Ctrl` 平移。平移使用真实渲染帧间隔并
+将暂停后的单帧间隔限制为 `0.1s`；鼠标相对位移不乘 delta。松开中键后立即恢复普通鼠标模式。
 因此，即使编辑器捕获输入，游戏模拟、Actor 与 Lua 生命周期仍会推进。逻辑线程从活动场景生成
-`RenderWorldSnapshot`；渲染主线程使用同一份 `EditorLogicSnapshot` 中的世界和相机值构建 `RenderFramePacket`。
+`RenderWorldSnapshot`；渲染主线程使用逻辑世界快照与自身的即时 Camera 构建 `RenderFramePacket`。Picking、ImGuizmo、
+拖放落点和 Camera 面板通过 `EditorCameraServices` 读取同一 Camera；面板修改会先更新并发布 Camera 镜像，再提交 dirty
+命令，保证随后保存项目时使用最新值。逻辑快照只在打开、关闭或切换项目时重新初始化渲染 Camera，普通 Tick 快照不会
+覆盖它。
 `ImGuiFrontend::finishFrame()` 返回当前 ImGui context 的 `ImDrawData`，并由 `Renderer::drawFrame()` 在下一次
 `beginFrame()` 前同步消费。Renderer 不访问活动场景、相机、SDL backend 或 Editor。场景变化相对最近成功提交的世界
 快照重新比较，即使逻辑快照在两次渲染间被替换，也不会漏掉拓扑变化或错误推进历史。
@@ -252,7 +258,7 @@ Scene 面板同样只读取 Actor/Model 值快照。每个渲染帧由 Applicati
 
 Application 从 SDL 首选目录加载版本化 `engine-settings.json`，并把设置快照及保存回调注入 Editor。没有项目时 Editor
 绘制全工作区 `Project Navigator`；有项目时才构建 dockspace。`File > Configuration` 修改启动目标，`View` 和面板标题栏
-修改六个面板的全局可见性。缺失或损坏的上次项目不会阻止启动，而是清除该路径并回退到导航器。
+修改七个面板的全局可见性。缺失或损坏的上次项目不会阻止启动，而是清除该路径并回退到导航器。
 
 ## 级联阴影
 

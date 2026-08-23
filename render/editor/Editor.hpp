@@ -61,6 +61,14 @@ namespace lumin::editor {
         SaveEngineSettingsCallback save;
     };
 
+    /** 渲染主线程拥有的 Viewport Camera 访问服务。 */
+    struct EditorCameraServices {
+        /** 返回当前渲染帧使用的 Camera 值快照。 */
+        std::function<scene::Camera()> snapshot;
+        /** 在渲染主线程立即替换 Camera，并负责发布逻辑镜像。 */
+        std::function<void(scene::Camera)> update;
+    };
+
     struct ViewportInteractionState {
         std::uint32_t width = 0;
         std::uint32_t height = 0;
@@ -72,26 +80,25 @@ namespace lumin::editor {
         }
     };
 
+    // clang-format off
     class Editor final : public render::ImGuiContent {
     public:
         /**
          * @brief 创建通过不可变快照和异步命令访问逻辑状态的 Editor UI。
-         * @param logic
-         * 线程安全的逻辑快照、命令提交与结果服务。
+         * @param logic 线程安全的逻辑快照、命令提交与结果服务。
          * @param settings 可写渲染设置，必须覆盖 Editor 生命周期。
-
-         * * @param backendInfo 当前 GI backend 状态 provider。
-         * @param viewportImage 当前 Viewport 输出纹理
-         * provider。
+         * @param backendInfo 当前 GI backend 状态 provider。
+         * @param viewportImage 当前 Viewport 输出纹理 provider。
          * @param dialogs 平台文件对话框服务。
-         * @param settingsServices Editor
-         * 持久化设置服务。
+         * @param settingsServices Editor 持久化设置服务。
          * @param frameRate 当前交换链呈现帧率 provider；为空时显示零。
-
+         * @param camera 渲染主线程 Viewport Camera 服务；为空时回退到逻辑快照与命令。
          */
         Editor(EditorLogicServices logic, render::RenderSettings& settings, BackendInfoProvider backendInfo,
                ViewportImageProvider viewportImage = {}, EditorDialogServices dialogs = {},
-               EditorSettingsServices settingsServices = {}, FrameRateProvider frameRate = {});
+               EditorSettingsServices settingsServices = {}, FrameRateProvider frameRate = {},
+               EditorCameraServices camera = {});
+        // clang-format on
         ~Editor() override;
 
         Editor(const Editor&) = delete;

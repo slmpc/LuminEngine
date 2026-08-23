@@ -72,12 +72,13 @@ namespace lumin::render::core {
         RenderFramePacketBuilder() = default;
 
         /**
-         * @brief 从逻辑值快照构建一帧消息。
-         * @param world 逻辑线程发布的不可变渲染世界。
-         * @param
-         * camera 与 `world` 来自同一逻辑快照的相机值。
-         * @param settings 已完成校验的不可变 Feature
-         * 设置快照。
+         * @brief 从逻辑世界与渲染线程 Camera 值构建一帧消息。
+         * @param world
+         * 逻辑线程发布的不可变渲染世界。
+
+         * * @param camera 渲染主线程当前帧使用的 Viewport Camera 值。
+         * @param settings
+         * 已完成校验的不可变 Feature 设置快照。
          * @param surface 当前窗口与 Viewport 的值状态。
          * @throws std::invalid_argument Viewport 尺寸无效或设置快照不完整时抛出。
          * @throws std::overflow_error 主线程帧序号耗尽时抛出。

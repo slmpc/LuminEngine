@@ -272,6 +272,20 @@ namespace {
         }
     }
 
+    void verifyViewportCameraThreadOwnership(const fs::path& root) {
+        const std::string application = stripCommentsAndLiterals(readFile(root / "application/Application.cpp"));
+        const std::string logicRuntime = stripCommentsAndLiterals(readFile(root / "application/LogicRuntime.cpp"));
+        const std::string editor = stripCommentsAndLiterals(readFile(root / "render/editor/Editor.cpp"));
+        if (application.find("scene::CameraController::update(viewportCamera") == std::string::npos ||
+            application.find("frameLogicSnapshot->renderWorld, viewportCamera") == std::string::npos ||
+            logicRuntime.find("CameraController::update") != std::string::npos ||
+            editor.find("makeViewportRay(viewportCamera") == std::string::npos ||
+            editor.find("viewportCamera.viewMatrix()") == std::string::npos) {
+            throw std::runtime_error(
+                "Viewport Camera input, rendering, picking, and gizmos must share the render-main-thread Camera");
+        }
+    }
+
     void verifyScannerAdversarialCases(const fs::path& root) {
         const std::string decoys =
             "// vkCreateForbidden(); commitBarriers();\nconst char* text = \"VkRenderPass\";\n"
@@ -319,6 +333,7 @@ int main() {
             return 1;
         }
         verifySubmissionAndLifetime(root);
+        verifyViewportCameraThreadOwnership(root);
         std::cout << "PASS: enumerated " << sources.size()
                   << " renderer source files; VulkanContext is the only native Vulkan boundary.\n";
         std::cout << "PASS: FrameGraph owns runtime barriers; only dedicated initialization uploads enable automatic "
