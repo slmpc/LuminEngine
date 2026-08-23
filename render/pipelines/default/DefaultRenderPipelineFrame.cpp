@@ -176,7 +176,6 @@ namespace lumin::render {
         // resize 防抖期间 packet 的请求尺寸可能领先于当前 GPU 资源，投影必须以实际提交尺寸重新计算。
         const glm::mat4 unjitteredProjection = glm::perspective(
             glm::radians(camera.fieldOfViewDegrees), std::max(aspectRatio, 0.001f), camera.nearPlane, camera.farPlane);
-        const glm::mat4 unjitteredViewProjection = unjitteredProjection * view;
         glm::mat4 projection = unjitteredProjection;
         glm::vec2 jitter{0.0f};
         if (settings.temporalAa.enabled) {
@@ -224,7 +223,7 @@ namespace lumin::render {
         };
         PostProcessPassData postProcess;
         postProcess.historyReadSlot = historyReadIndex;
-        postProcess.uniforms.inverseViewProjection = glm::inverse(unjitteredViewProjection);
+        postProcess.uniforms.inverseViewProjection = glm::inverse(viewProjection);
         postProcess.uniforms.viewProjection = viewProjection;
         postProcess.uniforms.cascadeViewProjections = shadows.viewProjections;
         postProcess.uniforms.cascadeSplits = shadows.splits;
@@ -234,6 +233,12 @@ namespace lumin::render {
         postProcess.uniforms.renderSize =
             glm::vec4{static_cast<float>(width), static_cast<float>(height), 1.0f / static_cast<float>(width),
                       1.0f / static_cast<float>(height)};
+        const glm::vec2 currentJitterUv{-jitter.x / static_cast<float>(width), jitter.y / static_cast<float>(height)};
+        const glm::vec2 previousJitter = hasSubmittedFrame_ ? previousJitter_ : jitter;
+        const glm::vec2 previousJitterUv{-previousJitter.x / static_cast<float>(width),
+                                         previousJitter.y / static_cast<float>(height)};
+        postProcess.uniforms.temporalOptions =
+            glm::vec4{currentJitterUv.x, currentJitterUv.y, previousJitterUv.x, previousJitterUv.y};
         postProcess.uniforms.renderOptions = glm::vec4{0.0f, settings.globalIllumination.ssaoEnabled ? 1.0f : 0.0f,
                                                        settings.shadows.enabled && sun.castsShadows ? 1.0f : 0.0f,
                                                        settings.temporalAa.enabled ? 1.0f : 0.0f};
@@ -351,6 +356,7 @@ namespace lumin::render {
             hybridData.surface.directRadiance = indirectLighting.combined.graphResource;
         }
 #endif
+        sceneHdr.position = hybridPathActive ? rtSurface.worldPositionHitDistance : rasterSurface.position;
         sceneHdr.motion = hybridPathActive ? rtSurface.motion : rasterSurface.motion;
         sceneHdr.depth = hybridPathActive ? rtSurface.viewDepth : rasterSurface.depth;
         core::TemporalOutputData temporalOutput;

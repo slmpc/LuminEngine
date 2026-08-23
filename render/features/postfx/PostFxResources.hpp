@@ -26,7 +26,7 @@ namespace lumin::render {
 
     /** 与内置 Raster/PostFX shader 共享的逐帧常量 ABI。 */
     struct alignas(16) PostProcessUniforms {
-        /// 当前非抖动 view-projection 的逆矩阵。
+        /// 当前带 TAA jitter 的 view-projection 逆矩阵。
         glm::mat4 inverseViewProjection{1.0f};
         /// 当前带 TAA jitter 的 view-projection。
         glm::mat4 viewProjection{1.0f};
@@ -48,6 +48,8 @@ namespace lumin::render {
         glm::vec4 tonemapOptions{1.0f, 0.0f, 0.0f, 0.0f};
         /// x 为 AO mode，y 为世界半径，z 为强度，w 为几何偏置。
         glm::vec4 ambientOcclusionOptions{0.0f, 1.0f, 1.0f, 0.08f};
+        /// xy 为当前帧 screen-UV jitter，zw 为上一成功提交帧的 screen-UV jitter。
+        glm::vec4 temporalOptions{0.0f};
     };
 
     static_assert(sizeof(PostProcessUniforms) % 16 == 0);

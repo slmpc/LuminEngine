@@ -115,10 +115,17 @@ namespace {
         };
         const float previousV = logicalScreenV(0.0f);
         const float currentV = logicalScreenV(0.2f);
-        const float motionV = currentV - previousV;
-        require(nearlyEqual(previousV, 0.5f) && nearlyEqual(currentV, 0.4f) && nearlyEqual(motionV, -0.1f) &&
-                    nearlyEqual(currentV - motionV, previousV),
-                "NvRHI motion must be current minus previous screen UV and reproject to the previous sample.");
+        const float motionV = previousV - currentV;
+        require(nearlyEqual(previousV, 0.5f) && nearlyEqual(currentV, 0.4f) && nearlyEqual(motionV, 0.1f) &&
+                    nearlyEqual(currentV + motionV, previousV),
+                "NvRHI motion must be previous minus current screen UV and reproject to the previous sample.");
+
+        constexpr float currentJitterUv = 0.25f / renderHeight;
+        constexpr float previousJitterUv = -0.125f / renderHeight;
+        const float rawStaticMotion = previousJitterUv - currentJitterUv;
+        const float stableStaticMotion = rawStaticMotion + currentJitterUv - previousJitterUv;
+        require(nearlyEqual(stableStaticMotion, 0.0f),
+                "TAA must remove current/previous projection jitter from static-geometry motion.");
     }
 
     void testCameraRenderRevisionAndExplicitCut() {

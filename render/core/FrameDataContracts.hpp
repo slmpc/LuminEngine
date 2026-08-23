@@ -210,6 +210,8 @@ namespace lumin::render::core {
     struct SceneHdrData {
         /// 线性 HDR 场景颜色。
         TextureFrameData color;
+        /// 与 HDR 颜色对应的世界空间位置；`w > 0` 表示几何像素。
+        TextureFrameData position;
         /// 与 HDR 颜色对应的运动矢量。
         TextureFrameData motion;
         /// 与 HDR 颜色对应的场景深度。

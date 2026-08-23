@@ -20,7 +20,7 @@ CMake 对每个 entry 启用 `-warnings-as-errors all`，并把 Slang `-depfile`
 capability 在 manifest 中逐项列出；不要使用 `-ignore-capabilities` 或全局关闭 capability 诊断。
 
 `include/PostProcessUniforms.slang` 是全屏通道共享的 GPU ABI 定义。其布局必须与 CPU
-`lumin::render::PostProcessUniforms` 保持一致：总大小为 512 字节，字段 offset 由生成 manifest、Slang
+`lumin::render::PostProcessUniforms` 保持一致：总大小为 528 字节，字段 offset 由生成 manifest、Slang
 reflection 校验和 `ShaderCpuAbi` 测试共同锁定。
 
 可单独构建并重复运行 ABI 校验：

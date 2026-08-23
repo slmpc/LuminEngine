@@ -378,6 +378,31 @@ namespace {
         std::cout << "HYBRID_MOTION=RTDI-jitter-once;NRD=non-jittered-previous-minus-current\n";
     }
 
+    void verifyStableTaaContract(const std::string& level) {
+        const std::string taa = readSource("shaders/Taa.slang");
+        require(taa.find("[[vk::binding(0, 0)]] Texture2D<float4> positionTexture;") != std::string::npos &&
+                    level.find("sceneHdr.position = hybridPathActive ? rtSurface.worldPositionHitDistance : ") !=
+                        std::string::npos &&
+                    level.find("sceneHdr.position.graphResource") != std::string::npos,
+                "TAA must consume the active Raster/Hybrid position signal through the FrameGraph.");
+        require(
+            taa.find("float2 jitteredUv = stableUv + frame.temporalOptions.xy;") != std::string::npos &&
+                taa.find("float2 stableMotion = rawMotion + frame.temporalOptions.xy - frame.temporalOptions.zw;") !=
+                    std::string::npos &&
+                taa.find("float2 previousUv = input.uv + stableMotion;") != std::string::npos,
+            "TAA must reconstruct current geometry and history in stable screen UVs.");
+        require(level.find("postProcess.uniforms.inverseViewProjection = glm::inverse(viewProjection)") !=
+                        std::string::npos &&
+                    taa.find("lightingTexture.SampleLevel(renderSampler, jitteredUv, 0.0)") != std::string::npos &&
+                    taa.find("if (!geometry)") != std::string::npos,
+                "TAA must stabilize the jittered sky while rejecting its unavailable history motion.");
+        require(level.find("action != core::HistoryAction::Keep") != std::string::npos &&
+                    level.find("postProcess.uniforms.temporalOptions.z = postProcess.uniforms.temporalOptions.x") !=
+                        std::string::npos,
+                "TAA history invalidation must reset the previous jitter coordinate baseline.");
+        std::cout << "TAA_COORDINATES=stable;MOTION=de-jittered;BACKGROUND=stabilized-current-only\n";
+    }
+
     void verifyFsr1RcasIntegration(const std::string& level) {
         const std::string postProcess = readSource("shaders/PostProcess.slang");
         const std::string rcas = readSource("shaders/include/Fsr1Rcas.slang");
@@ -434,6 +459,7 @@ int main() {
         verifySynchronousRuntime(renderer);
         verifyNvrhiYCoordinateConvention(level);
         verifyHybridMotionContract();
+        verifyStableTaaContract(level);
         verifyFsr1RcasIntegration(level);
         verifyHybridRaySidednessContract();
         std::cout << "DEFAULT_PIPELINE_SESSION=PASS\n";

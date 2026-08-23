@@ -14,7 +14,7 @@
     "structs": [
       {
         "name": "PostProcessUniforms",
-        "size": 512,
+        "size": 528,
         "fields": [
           {
             "name": "inverseViewProjection",
@@ -69,6 +69,11 @@
           {
             "name": "ambientOcclusionOptions",
             "offset": 496,
+            "size": 16
+          },
+          {
+            "name": "temporalOptions",
+            "offset": 512,
             "size": 16
           }
         ]

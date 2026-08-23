@@ -976,6 +976,11 @@ namespace lumin::render {
         postProcess.uniforms.renderOptions.x =
             action == core::HistoryAction::Keep && postFxResources_.historyValid(postProcess.historyReadSlot) ? 1.0f
                                                                                                               : 0.0f;
+        if (action != core::HistoryAction::Keep) {
+            // 历史失效时统一两帧 jitter 基线，避免坐标约定切换或 camera cut 携带旧抖动差。
+            postProcess.uniforms.temporalOptions.z = postProcess.uniforms.temporalOptions.x;
+            postProcess.uniforms.temporalOptions.w = postProcess.uniforms.temporalOptions.y;
+        }
         postFxResources_.updateUniforms(frameIndex, postProcess.uniforms);
 
         graph.addPass(
@@ -990,8 +995,9 @@ namespace lumin::render {
         graph.addPass(
             "TAA resolve", FrameGraphPassType::Graphics,
             [&sceneHdr, &temporal](FrameGraphBuilder& builder) {
-                for (FrameGraphResourceHandle input : {sceneHdr.color.graphResource, sceneHdr.motion.graphResource,
-                                                       temporal.historyRead.graphResource}) {
+                for (FrameGraphResourceHandle input :
+                     {sceneHdr.color.graphResource, sceneHdr.position.graphResource, sceneHdr.motion.graphResource,
+                      temporal.historyRead.graphResource}) {
                     builder.readTexture(input, nvrhi::ResourceStates::ShaderResource);
                 }
                 builder.writeTexture(temporal.color.graphResource, nvrhi::ResourceStates::RenderTarget);

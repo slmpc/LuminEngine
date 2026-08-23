@@ -274,11 +274,16 @@ Vulkan 后端通过负物理 viewport 高度将正 NDC Y 映射到较小的屏�
 `(0.5 + 0.5 * x, 0.5 - 0.5 * y)`，全屏三角形则使用 `(2 * u - 1, 1 - 2 * v)` 生成裁剪坐标。
 
 `ObjectData` 包含当前及上一帧模型矩阵，以及用于非均匀缩放的逆转置法线矩阵。G-buffer 的帧 uniform 包含当前及
-上一帧带抖动的视图投影矩阵。运动附件存储 `currentUv - previousUv`；TAA 以 `currentUv - motion`
-重建上一帧的采样位置。
+上一帧带抖动的视图投影矩阵。Raster 与 Hybrid surface 的运动附件统一存储带投影抖动的
+`previousUv - currentUv`。TAA 先以当前 screen-UV jitter 将几何颜色恢复到稳定像素网格，再使用
+`stableMotion = rawMotion + currentJitterUv - previousJitterUv` 移除两帧抖动差，并以
+`previousStableUv = stableUv + stableMotion` 读取稳定历史。
 
 启用 TAA 时，使用以 2 和 3 为底、包含八个样本的 Halton 序列抖动相机投影。每个帧槽写入自己的历史图像并读取
-另一个槽位的历史图像，从而在有序图形队列上实现真正的上一帧乒乓缓冲。
+另一个槽位的历史图像，从而在有序图形队列上实现真正的上一帧乒乓缓冲。Raster 程序化天空与 Hybrid primary miss
+都使用带 jitter 的逆投影生成，使整张 HDR 输入采用同一坐标；TAA 对当前颜色统一反抖动。surface background 没有
+可靠运动矢量，因此背景使用反抖动后的当前颜色并跳过历史混合；几何与背景通过 `position.w > 0` 区分。历史失效时
+previous jitter 基线同步到 current jitter，第一个有效帧只执行当前帧的稳定重建。
 
 TAA resolve 在 tone mapping 阶段经过 AMD FSR1 RCAS 恢复高频细节。RCAS 使用五点十字邻域、噪声抑制和
 `0..1` 锐度参数；先将每个 HDR 样本映射到 ACES 的 `[0, 1]` 线性显示域，锐化后才执行可选的 sRGB 编码。

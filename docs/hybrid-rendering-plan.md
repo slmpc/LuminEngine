@@ -209,9 +209,9 @@ G-buffer，也不得由 raster pass 生成。
 
 - `worldPositionHitT.w` 是从相机到 primary hit 的 world-space 距离；miss 使用负值，不能用最大浮点数混充。
 - `viewZ`、normal encoding、roughness 和 hit-distance 必须严格符合当前 NRD `LibraryDesc`。
-- motion 在整个引擎中统一为 `previousUv - currentUv`，单位为 screen UV，已移除 current/previous jitter。
-  TAA 统一使用 `previousUv = currentUv + motion`；现有 raster fallback、G-buffer shader 和测试在同一阶段完成
-  breaking migration，禁止长期保留两套相反符号。
+- surface motion 在整个引擎中统一为 `previousUv - currentUv`，单位为 screen UV，并包含 current/previous
+  projection jitter。TAA 使用显式 jitter 差将其转换为稳定 screen-UV motion；NRD adapter 同样移除 jitter 后再按
+  NRD 契约提交。Raster fallback、Hybrid surface 和测试必须保持同一符号及抖动约定，禁止长期保留多套约定。
 - primary hit 由 barycentric、instance transform、vertex/index buffer 与 `GpuMaterialData` 重建。
 - 当前和上一成功提交的 instance transform 都进入 `GpuInstanceData`，用于真实物体运动矢量。
 - surface signals 按帧槽拥有；同一帧中通过唯一 `FrameGraphResourceHandle` 在各 Feature 间传递。
