@@ -394,6 +394,7 @@ namespace lumin::editor {
             settings.globalIllumination.sharcEnabled = value.sharc;
             settings.globalIllumination.nrdEnabled = value.nrd;
             settings.temporalAa.enabled = value.taa;
+            settings.temporalAa.sharpness = std::clamp(value.taaSharpness, 0.0f, 1.0f);
             settings.shadows.splitLambda = value.splitLambda;
             settings.shadows.maxDistance = value.shadowDistance;
             settings.toneMapping.exposure = value.exposure;
@@ -539,6 +540,7 @@ namespace lumin::editor {
                     .sharc = settings.globalIllumination.sharcEnabled,
                     .nrd = settings.globalIllumination.nrdEnabled,
                     .taa = settings.temporalAa.enabled,
+                    .taaSharpness = settings.temporalAa.sharpness,
                     .splitLambda = settings.shadows.splitLambda,
                     .shadowDistance = settings.shadows.maxDistance,
                     .exposure = settings.toneMapping.exposure};
@@ -1959,6 +1961,10 @@ namespace lumin::editor {
             ImGui::Text("Active: %.*s", static_cast<int>(backend.name.size()), backend.name.data());
             section("Temporal AA");
             ImGui::Checkbox("TAA", &settings.temporalAa.enabled);
+            if (settings.temporalAa.enabled) {
+                propertyLabel("Sharpness");
+                ImGui::SliderFloat("##taaSharpness", &settings.temporalAa.sharpness, 0.0f, 1.0f, "%.2f");
+            }
             section("Tonemap");
             propertyLabel("Exposure");
             ImGui::SliderFloat("##exposure", &settings.toneMapping.exposure, 0.1f, 4.0f);
@@ -2342,6 +2348,10 @@ namespace lumin::editor {
 
     void Editor::setTaaEnabled(bool enabled) noexcept {
         impl_->settings.temporalAa.enabled = enabled;
+    }
+
+    void Editor::setTaaSharpness(float sharpness) noexcept {
+        impl_->settings.temporalAa.sharpness = std::clamp(sharpness, 0.0f, 1.0f);
     }
 
     void Editor::setExposure(float exposure) noexcept {

@@ -127,6 +127,15 @@ namespace {
                     !core::hasAnyImpact(hotUpdate.impact, core::SettingsChangeImpact::PipelineRecompose),
                 "Exposure changes must remain hot updates.");
 
+        core::RenderSettingsStore sharpnessStore{schemas};
+        TemporalAaSettings temporalAa = defaults.get<TemporalAaSettings>(pipelines::feature_ids::temporalAa());
+        temporalAa.sharpness = 0.75f;
+        sharpnessStore.set(pipelines::feature_ids::temporalAa(), temporalAa);
+        const core::FeatureSettingsChange sharpnessChange = schemas.diff(defaults, sharpnessStore.snapshot());
+        require(core::hasAnyImpact(sharpnessChange.impact, core::SettingsChangeImpact::HotUpdate) &&
+                    sharpnessChange.historyReasons.empty(),
+                "RCAS sharpness changes must not invalidate the unsharpened TAA history.");
+
         core::RenderSettingsStore topologyStore{schemas};
         GlobalIlluminationSettings gi =
             defaults.get<GlobalIlluminationSettings>(pipelines::feature_ids::globalIllumination());
@@ -145,6 +154,13 @@ namespace {
                 topologyStore.set(pipelines::feature_ids::toneMapping(), invalid);
             },
             "Default settings validators must reject invalid public values.");
+        requireThrows<std::invalid_argument>(
+            [&] {
+                TemporalAaSettings invalid;
+                invalid.sharpness = 1.1f;
+                topologyStore.set(pipelines::feature_ids::temporalAa(), invalid);
+            },
+            "Temporal AA settings must reject RCAS sharpness outside [0, 1].");
     }
 
 } // namespace

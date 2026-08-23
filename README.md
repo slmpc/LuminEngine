@@ -9,7 +9,7 @@ Lumin Engine 是一个使用 C++23、SDL3、Slang 和动态渲染构建的紧凑
 - 包含位置、法线与粗糙度、反照率与金属度、运动矢量的 G-buffer 延迟渲染器。
 - 支持 sRGB base color、切线空间 normal 和 roughness 贴图，以及 GGX/Cook-Torrance PBR 光照。
 - 可切换的 Legacy（四级联方向光阴影与 SSAO/HBAO/GTAO）和 Ray Tracing（可选 SHARC/NRD）渲染路径，以及程序化天空盒。
-- 使用 Halton 抖动，并结合上一帧相机与模型运动矢量的 TAA。
+- 使用 Halton 抖动，并结合上一帧相机与模型运动矢量的 TAA；最终输出使用可调 FSR1 RCAS 恢复细节。
 - ACES 色调映射，以及用于编辑场景、渲染设置和 Lua 脚本的原生停靠式编辑器。
 
 ## 目录结构
@@ -100,7 +100,7 @@ cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 渲染帧使用同一份即时 Camera。左键可拾取场景物体并通过 Move/Rotate/Scale Gizmo 编辑变换，`W`、`E`、`R` 可切换模式；右键打开
 物体上下文菜单和 `Details`。编辑器面板可选择 Actor 或模型、修改变换与材质，并在 Render 面板通过下拉框选择
 `Legacy` 或 `Ray Tracing`。Legacy 提供 SSAO/HBAO/GTAO、AO 半径/强度/偏置、CSM、级联分割权重与最大阴影距离设置；Ray Tracing 提供 SHARC 与
-NRD 开关；TAA 是两条路径共用的选项。面板还可调整相机、曝光和太阳方向，并在 Lua 控制台执行表达式
+NRD 开关；TAA 与 FSR1 RCAS 锐度是两条路径共用的选项。面板还可调整相机、曝光和太阳方向，并在 Lua 控制台执行表达式
 （例如 `return 6 * 7`）。当编辑器正在接收键盘、
 鼠标或文本输入时，应用会抑制 `Escape` 和相机控制，但不会暂停 `Game::tick`、`Level::tick` 或 Lua 生命周期。
 默认布局将 `Content Browser` 与 `Script Console` 合并为中央下方页签组；`Scene Hierarchy` 位于右上角，

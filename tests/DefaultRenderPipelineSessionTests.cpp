@@ -378,6 +378,24 @@ namespace {
         std::cout << "HYBRID_MOTION=RTDI-jitter-once;NRD=non-jittered-previous-minus-current\n";
     }
 
+    void verifyFsr1RcasIntegration(const std::string& level) {
+        const std::string postProcess = readSource("shaders/PostProcess.slang");
+        const std::string rcas = readSource("shaders/include/Fsr1Rcas.slang");
+        require(postProcess.find("#include \"Fsr1Rcas.slang\"") != std::string::npos &&
+                    postProcess.find("frame.renderOptions.w >= 0.5 && frame.tonemapOptions.z > 0.0") !=
+                        std::string::npos &&
+                    postProcess.find("mapped = luminFsr1Rcas(") != std::string::npos,
+                "FSR1 RCAS must sharpen only enabled TAA output in the final linear display domain.");
+        require(rcas.find("if (sharpness <= 0.0)") != std::string::npos &&
+                    rcas.find("noise = -0.5 * noise + 1.0") != std::string::npos &&
+                    rcas.find("exp2(-2.0 * (1.0 - saturate(sharpness)))") != std::string::npos,
+                "FSR1 RCAS must preserve zero-sharpness identity, denoising, and Alpha-Piscium strength mapping.");
+        require(level.find("frame.history.texture, nvrhi::TextureSlice{}, frame.taaResolved.texture") !=
+                    std::string::npos,
+                "TAA history must copy the unsharpened resolve so RCAS cannot accumulate edge halos.");
+        std::cout << "TAA_SHARPEN=FSR1-RCAS;DOMAIN=post-ACES-linear;HISTORY=unsharpened\n";
+    }
+
     void verifyHybridRaySidednessContract() {
         const std::string gpuScene = readSource("shaders/include/GpuScene.slang");
         require(gpuScene.find("float3 luminOrientShadingNormal") != std::string::npos,
@@ -416,6 +434,7 @@ int main() {
         verifySynchronousRuntime(renderer);
         verifyNvrhiYCoordinateConvention(level);
         verifyHybridMotionContract();
+        verifyFsr1RcasIntegration(level);
         verifyHybridRaySidednessContract();
         std::cout << "DEFAULT_PIPELINE_SESSION=PASS\n";
         return 0;

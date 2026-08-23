@@ -252,13 +252,21 @@ namespace lumin::render::pipelines {
                                  .historyReasons = core::FrameChangeSet{HistoryReason::FeatureConfigurationChanged}};
             });
         registry.registerSchema<TemporalAaSettings>(
-            feature_ids::temporalAa(), TemporalAaSettings{}, {},
+            feature_ids::temporalAa(), TemporalAaSettings{},
+            [](const TemporalAaSettings& value) {
+                if (!std::isfinite(value.sharpness) || value.sharpness < 0.0f || value.sharpness > 1.0f) {
+                    throw std::invalid_argument("Temporal AA sharpness must be finite and within [0, 1].");
+                }
+            },
             [](const TemporalAaSettings& before, const TemporalAaSettings& after) {
-                return before.enabled == after.enabled
+                if (before.enabled != after.enabled) {
+                    return FeatureSettingsChange{.impact = SettingsChangeImpact::HistoryReset,
+                                                 .historyReasons =
+                                                     core::FrameChangeSet{HistoryReason::FeatureConfigurationChanged}};
+                }
+                return before.sharpness == after.sharpness
                            ? FeatureSettingsChange{}
-                           : FeatureSettingsChange{
-                                 .impact = SettingsChangeImpact::HistoryReset,
-                                 .historyReasons = core::FrameChangeSet{HistoryReason::FeatureConfigurationChanged}};
+                           : FeatureSettingsChange{.impact = SettingsChangeImpact::HotUpdate, .historyReasons = {}};
             });
         registry.registerSchema<ToneMappingSettings>(
             feature_ids::toneMapping(), ToneMappingSettings{},

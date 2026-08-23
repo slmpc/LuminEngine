@@ -95,7 +95,8 @@ namespace {
                                   .ambientOcclusionMode = lumin::project::ProjectAmbientOcclusionMode::Gtao,
                                   .ambientOcclusionRadius = 2.5f,
                                   .ambientOcclusionStrength = 1.4f,
-                                  .ambientOcclusionBias = 0.12f};
+                                  .ambientOcclusionBias = 0.12f,
+                                  .taaSharpness = 0.8f};
         project.setSettings(projectSettings);
         project.markDirty();
         require(project.save(error), error.c_str());
@@ -129,7 +130,8 @@ namespace {
                     restoredRenderSettings.ambientOcclusionMode == lumin::project::ProjectAmbientOcclusionMode::Gtao &&
                     restoredRenderSettings.ambientOcclusionRadius == 2.5f &&
                     restoredRenderSettings.ambientOcclusionStrength == 1.4f &&
-                    restoredRenderSettings.ambientOcclusionBias == 0.12f,
+                    restoredRenderSettings.ambientOcclusionBias == 0.12f &&
+                    restoredRenderSettings.taaSharpness == 0.8f,
                 "Project tick rate and render tuning must round-trip through the scene file.");
 
         require(!project.removeAsset(meshId, error) && !error.empty(),
@@ -355,6 +357,7 @@ f 1/1/1 3/3/1 4/4/1
                                    .sharc = false,
                                    .nrd = false,
                                    .taa = false,
+                                   .taaSharpness = 0.9f,
                                    .splitLambda = 0.1f,
                                    .shadowDistance = 5.0f,
                                    .exposure = 3.0f});
@@ -370,7 +373,8 @@ f 1/1/1 3/3/1 4/4/1
                     level.environment().sun.direction == defaultEnvironment.sun.direction &&
                     level.environment().sun.illuminanceLux == defaultEnvironment.sun.illuminanceLux &&
                     defaults.directLighting && defaults.shadows && defaults.rayTracing && defaults.ssao &&
-                    defaults.sharc && defaults.nrd && defaults.taa && defaults.exposure == 1.0f &&
+                    defaults.sharc && defaults.nrd && defaults.taa && defaults.taaSharpness == 0.5f &&
+                    defaults.exposure == 1.0f &&
                     project.settings().logicTickHz == lumin::project::DefaultLogicTickHz,
                 "A new empty project must reset scene, camera, environment, and all Project Settings.");
     }
@@ -404,7 +408,7 @@ f 1/1/1 3/3/1 4/4/1
         const auto& settings = project.renderSettings();
         require(!settings.ssao && settings.ambientOcclusionMode == lumin::project::ProjectAmbientOcclusionMode::Ssao &&
                     settings.ambientOcclusionRadius == 1.0f && settings.ambientOcclusionStrength == 1.0f &&
-                    settings.ambientOcclusionBias == 0.08f,
+                    settings.ambientOcclusionBias == 0.08f && settings.taaSharpness == 0.5f,
                 "Projects with only the legacy ssao flag must load with SSAO defaults.");
         require(project.settings().logicTickHz == lumin::project::DefaultLogicTickHz,
                 "Legacy projects without Project Settings must use the default logic tick rate.");
@@ -417,9 +421,10 @@ f 1/1/1 3/3/1 4/4/1
         require(settings.logicTickHz == lumin::project::MinimumLogicTickHz,
                 "Project logic tick rates below the supported range must clamp to the minimum.");
         settings.logicTickHz = 1'000;
+        settings.render.taaSharpness = 2.0f;
         lumin::project::normalizeProjectSettings(settings);
-        require(settings.logicTickHz == lumin::project::MaximumLogicTickHz,
-                "Project logic tick rates above the supported range must clamp to the maximum.");
+        require(settings.logicTickHz == lumin::project::MaximumLogicTickHz && settings.render.taaSharpness == 1.0f,
+                "Project logic tick rates and TAA sharpness must clamp to their supported maxima.");
     }
 
     void inspectProject(const std::filesystem::path& projectFile, std::size_t expectedActorCount) {

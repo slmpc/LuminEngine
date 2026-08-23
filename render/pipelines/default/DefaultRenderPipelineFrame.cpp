@@ -239,6 +239,7 @@ namespace lumin::render {
                                                        settings.temporalAa.enabled ? 1.0f : 0.0f};
         postProcess.uniforms.tonemapOptions.x = settings.toneMapping.exposure;
         postProcess.uniforms.tonemapOptions.y = context_.swapchainIsSrgb() ? 1.0f : 0.0f;
+        postProcess.uniforms.tonemapOptions.z = std::clamp(settings.temporalAa.sharpness, 0.0f, 1.0f);
         postProcess.uniforms.ambientOcclusionOptions =
             glm::vec4{static_cast<float>(settings.globalIllumination.ambientOcclusionMode),
                       std::max(settings.globalIllumination.ambientOcclusionRadius, 0.05f),

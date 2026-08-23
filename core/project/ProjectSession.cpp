@@ -387,6 +387,7 @@ namespace lumin::project {
 
     void normalizeProjectSettings(ProjectSettings& settings) noexcept {
         settings.logicTickHz = std::clamp(settings.logicTickHz, MinimumLogicTickHz, MaximumLogicTickHz);
+        settings.render.taaSharpness = std::clamp(settings.render.taaSharpness, 0.0f, 1.0f);
     }
 
     bool AssetId::isValid() const noexcept {
@@ -603,6 +604,7 @@ namespace lumin::project {
                 settings_.render.sharc = render->value("sharc", true);
                 settings_.render.nrd = render->value("nrd", true);
                 settings_.render.taa = render->value("taa", true);
+                settings_.render.taaSharpness = render->value("taaSharpness", 0.5f);
                 settings_.render.splitLambda = render->value("splitLambda", 0.68f);
                 settings_.render.shadowDistance = render->value("shadowDistance", 200.0f);
                 settings_.render.exposure = render->value("exposure", 1.0f);
@@ -734,6 +736,7 @@ namespace lumin::project {
                            {"sharc", settings_.render.sharc},
                            {"nrd", settings_.render.nrd},
                            {"taa", settings_.render.taa},
+                           {"taaSharpness", settings_.render.taaSharpness},
                            {"splitLambda", settings_.render.splitLambda},
                            {"shadowDistance", settings_.render.shadowDistance},
                            {"exposure", settings_.render.exposure}}}}},
@@ -1209,6 +1212,7 @@ namespace lumin::project {
     }
 
     void ProjectSession::setRenderSettings(ProjectRenderSettings settings) noexcept {
+        settings.taaSharpness = std::clamp(settings.taaSharpness, 0.0f, 1.0f);
         if (settings_.render != settings) {
             settings_.render = std::move(settings);
             dirty_ = true;

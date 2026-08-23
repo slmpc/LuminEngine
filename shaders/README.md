@@ -33,5 +33,8 @@ ctest --test-dir out/build/debug -R "Shader(Cpu|Reflection)Abi" --output-on-fail
 当前延迟渲染 shader 包含 `Shadow`、`GBuffer`、`ao/AmbientOcclusion`、`Sky`、`Deferred`、`Taa`、
 `PostProcess` 和 `ImGui`。
 
+`include/Fsr1Rcas.slang` 是 AMD FidelityFX FSR1 RCAS 的 Slang 移植。`PostProcess` 在 TAA resolve 之后、
+sRGB 编码之前对 ACES 线性显示颜色执行五点对比度自适应锐化；TAA 历史保持未锐化。
+
 屏幕空间 AO 位于 `shaders/ao`：`AoCommon.slang` 提供共享资源与投影辅助函数，`Ssao.slang`、`Hbao.slang`、
 `Gtao.slang` 分别实现算法，`AmbientOcclusion.slang` 只保留 shader 入口和运行时分派。

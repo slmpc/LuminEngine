@@ -44,7 +44,7 @@ namespace lumin::render {
         glm::vec4 renderSize{1.0f};
         /// Feature 开关及 TAA 历史有效性，布局由 shader ABI 文档定义。
         glm::vec4 renderOptions{0.0f};
-        /// x 为 exposure，y 表示交换链是否为 sRGB。
+        /// x 为 exposure，y 表示交换链是否为 sRGB，z 为 TAA 后 FSR1 RCAS 锐度。
         glm::vec4 tonemapOptions{1.0f, 0.0f, 0.0f, 0.0f};
         /// x 为 AO mode，y 为世界半径，z 为强度，w 为几何偏置。
         glm::vec4 ambientOcclusionOptions{0.0f, 1.0f, 1.0f, 0.08f};

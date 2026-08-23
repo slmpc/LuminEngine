@@ -60,6 +60,8 @@ namespace lumin::render {
     struct TemporalAaSettings {
         /// 为 `false` 时禁用历史混合，但仍保持统一后处理输出契约。
         bool enabled = true;
+        /// FSR1 RCAS 锐度，范围为 `[0, 1]`；零值严格禁用锐化。
+        float sharpness = 0.5f;
     };
 
     /** Tone Mapping Feature 的逐帧配置。 */

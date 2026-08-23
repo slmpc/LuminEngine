@@ -122,6 +122,8 @@ namespace lumin::project {
         bool sharc = true;
         bool nrd = true;
         bool taa = true;
+        /** FSR1 RCAS 锐度，范围为 `[0, 1]`。 */
+        float taaSharpness = 0.5f;
         float splitLambda = 0.68f;
         float shadowDistance = 200.0f;
         float exposure = 1.0f;

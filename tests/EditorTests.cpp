@@ -197,6 +197,7 @@ namespace {
         lumin::render::editor::RenderSettingsPanelAdapter adapter;
         const lumin::render::core::RenderSettingsSnapshot before = adapter.snapshot();
         adapter.editable().toneMapping.exposure = 2.5f;
+        adapter.editable().temporalAa.sharpness = 0.8f;
         adapter.editable().globalIllumination.mode = lumin::render::GlobalIlluminationMode::Legacy;
         const lumin::render::core::RenderSettingsSnapshot after = adapter.snapshot();
 
@@ -205,6 +206,9 @@ namespace {
                 "An older settings snapshot must not observe later panel edits.");
         require(after.get<lumin::render::ToneMappingSettings>(lumin::render::pipelines::feature_ids::toneMapping())
                             .exposure == 2.5f &&
+                    after.get<lumin::render::TemporalAaSettings>(
+                             lumin::render::pipelines::feature_ids::temporalAa())
+                            .sharpness == 0.8f &&
                     after.get<lumin::render::GlobalIlluminationSettings>(
                              lumin::render::pipelines::feature_ids::globalIllumination())
                             .mode == lumin::render::GlobalIlluminationMode::Legacy,
@@ -432,6 +436,7 @@ namespace {
         editor.setCsmSplitLambda(1.5f);
         editor.setCsmMaxDistance(-10.0f);
         editor.setTaaEnabled(false);
+        editor.setTaaSharpness(2.0f);
         editor.setExposure(2.25f);
         editor.setSunDirection({0.0f, -1.0f, 0.0f});
         require(nearlyEqual(camera.moveSpeed(), 8.0f) && camera.position() == glm::vec3(1.0f, 2.0f, 3.0f),
@@ -446,6 +451,7 @@ namespace {
                     !settings.globalIllumination.sharcEnabled && !settings.globalIllumination.nrdEnabled &&
                     nearlyEqual(settings.shadows.splitLambda, 1.0f) &&
                     nearlyEqual(settings.shadows.maxDistance, 1.0f) && !settings.temporalAa.enabled &&
+                    nearlyEqual(settings.temporalAa.sharpness, 1.0f) &&
                     nearlyEqual(settings.toneMapping.exposure, 2.25f) &&
                     level.environment().sun.direction == glm::vec3(0.0f, -1.0f, 0.0f) && camera.cutEpoch() == 1,
                 "Legacy/RT GI controls must mutate mode-specific settings and shared TAA state.");

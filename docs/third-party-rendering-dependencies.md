@@ -8,6 +8,7 @@
 | NRD | `thirdparty/nrd` | `v4.17.3` | `792eff196afdd350fd9c3f862119017ccb438a0e` | REBLUR/RELAX 去噪 runtime 与 shaders |
 | ShaderMake | `thirdparty/shadermake` | NRD 固定依赖 | `18f5a344e7ca8fa65daaf079d07bc8ce38453e05` | 离线生成 NRD shader blobs |
 | MathLib | `thirdparty/mathlib` | `v11` | `974e1387ba936740c7cdc494792d2641bc127e86` | NRD CPU/shader 数学公共库 |
+| AMD FidelityFX FSR1 RCAS | `shaders/include/Fsr1Rcas.slang` | SDK `v1.1.4` | `v1.1.4` | TAA 后对比度自适应锐化 |
 
 首次获取仓库后执行：
 
@@ -38,6 +39,7 @@ SHARC 与 NRD 使用各自仓库中的 NVIDIA RTX SDK License，不是开源许�
 - 不得用会强制披露或重新许可 SDK 的许可证组合方式分发受限 SDK 内容。
 
 ShaderMake 与 MathLib 使用 MIT License。二进制或源码分发时应保留各自版权与许可文本。
+FSR1 RCAS 同样使用 MIT License；Slang 移植文件头保留了 AMD 的完整版权与许可声明。
 
 本文件只记录工程约束，不构成法律意见。Lumin Engine 当前根 `LICENSE` 不是标准许可证；公开分发包含
 SHARC/NRD 的构建前，必须先明确项目许可证并完成正式许可证兼容性审查。

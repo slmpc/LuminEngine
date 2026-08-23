@@ -139,6 +139,8 @@ namespace lumin::editor {
         void setCsmSplitLambda(float splitLambda) noexcept;
         void setCsmMaxDistance(float maxDistance) noexcept;
         void setTaaEnabled(bool enabled) noexcept;
+        /** 设置 TAA 后 FSR1 RCAS 锐度，并归一化到 `[0, 1]`。 */
+        void setTaaSharpness(float sharpness) noexcept;
         void setExposure(float exposure) noexcept;
         void setSunDirection(const glm::vec3& direction);
 
