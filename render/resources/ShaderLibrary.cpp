@@ -30,65 +30,43 @@ namespace lumin::render {
             return buffer;
         }
 
-        [[nodiscard]] bool isSingleShaderType(nvrhi::ShaderType shaderType) noexcept {
-            switch (shaderType) {
-            case nvrhi::ShaderType::Compute:
-            case nvrhi::ShaderType::Vertex:
-            case nvrhi::ShaderType::Hull:
-            case nvrhi::ShaderType::Domain:
-            case nvrhi::ShaderType::Geometry:
-            case nvrhi::ShaderType::Pixel:
-            case nvrhi::ShaderType::Amplification:
-            case nvrhi::ShaderType::Mesh:
-            case nvrhi::ShaderType::RayGeneration:
-            case nvrhi::ShaderType::AnyHit:
-            case nvrhi::ShaderType::ClosestHit:
-            case nvrhi::ShaderType::Miss:
-            case nvrhi::ShaderType::Intersection:
-            case nvrhi::ShaderType::Callable:
-                return true;
-            default:
-                return false;
-            }
-        }
-
     } // namespace
 
     namespace detail {
 
-        bool isRayTracingShaderType(nvrhi::ShaderType shaderType) noexcept {
-            switch (shaderType) {
-            case nvrhi::ShaderType::RayGeneration:
-            case nvrhi::ShaderType::AnyHit:
-            case nvrhi::ShaderType::ClosestHit:
-            case nvrhi::ShaderType::Miss:
-            case nvrhi::ShaderType::Intersection:
-            case nvrhi::ShaderType::Callable:
-                return true;
-            default:
-                return false;
+        nvrhi::ShaderType toNvrhiShaderType(ShaderStage stage) noexcept {
+            switch (stage) {
+            case ShaderStage::Compute:
+                return nvrhi::ShaderType::Compute;
+            case ShaderStage::Vertex:
+                return nvrhi::ShaderType::Vertex;
+            case ShaderStage::Fragment:
+                return nvrhi::ShaderType::Pixel;
+            case ShaderStage::RayGeneration:
+                return nvrhi::ShaderType::RayGeneration;
+            case ShaderStage::Miss:
+                return nvrhi::ShaderType::Miss;
+            case ShaderStage::ClosestHit:
+                return nvrhi::ShaderType::ClosestHit;
             }
+            return nvrhi::ShaderType::None;
         }
 
-        nvrhi::ShaderDesc makeShaderDesc(const ShaderModuleDesc& desc) {
-            if (desc.fileName.empty()) {
-                throw std::invalid_argument("Shader module file name cannot be empty.");
+        nvrhi::ShaderDesc makeShaderDesc(const ShaderEntryDesc& entry) {
+            if (entry.id == ShaderId::Count || entry.output.empty() || entry.entryPoint.empty() ||
+                entry.entryPoint.find('\0') != std::string::npos) {
+                throw std::invalid_argument("Shader Catalog entry is not loadable.");
             }
-            if (!isSingleShaderType(desc.shaderType)) {
-                throw std::invalid_argument("Shader module must select exactly one supported shader stage.");
-            }
-            if (desc.entryPoint.empty() || desc.entryPoint.find('\0') != std::string::npos) {
-                throw std::invalid_argument("Shader module entry point must be non-empty and cannot contain NUL.");
-            }
-            if (desc.hlslExtensionsUAV < -1) {
-                throw std::invalid_argument("Shader HLSL extension UAV must be -1 or non-negative.");
+            const nvrhi::ShaderType shaderType = toNvrhiShaderType(entry.stage);
+            if (shaderType == nvrhi::ShaderType::None) {
+                throw std::invalid_argument("Shader Catalog entry has an unsupported stage.");
             }
 
             nvrhi::ShaderDesc shaderDesc;
-            shaderDesc.setShaderType(desc.shaderType)
-                .setEntryName(desc.entryPoint)
-                .setDebugName(desc.debugName.empty() ? desc.fileName.string() : desc.debugName)
-                .setHlslExtensionsUAV(desc.hlslExtensionsUAV);
+            shaderDesc.setShaderType(shaderType)
+                .setEntryName(entry.entryPoint)
+                .setDebugName(entry.name)
+                .setHlslExtensionsUAV(-1);
             return shaderDesc;
         }
 
@@ -96,39 +74,29 @@ namespace lumin::render {
 
     ShaderLibrary::ShaderLibrary(nvrhi::IDevice& device, std::filesystem::path shaderDirectory)
         : device_(device), shaderDirectory_(std::move(shaderDirectory)) {
+        if (shaderDirectory_.empty()) {
+            throw std::invalid_argument("Shader directory cannot be empty.");
+        }
     }
 
-    nvrhi::ShaderHandle ShaderLibrary::loadModule(const ShaderModuleDesc& desc) const {
-        const nvrhi::ShaderDesc shaderDesc = detail::makeShaderDesc(desc);
-        const std::vector<char> shaderCode = readBinaryFile(shaderDirectory_ / desc.fileName);
-        nvrhi::ShaderHandle shader = device_.createShader(shaderDesc, shaderCode.data(), shaderCode.size());
+    nvrhi::ShaderHandle ShaderLibrary::load(ShaderId id) {
+        const std::size_t index = static_cast<std::size_t>(id);
+        if (index >= cache_.size()) {
+            throw std::out_of_range("Shader ID is outside the built-in Catalog.");
+        }
+        if (cache_[index]) {
+            return cache_[index];
+        }
+
+        const ShaderEntryDesc& entry = builtinShaderCatalog().entry(id);
+        const std::vector<char> shaderCode = readBinaryFile(shaderDirectory_ / entry.output);
+        nvrhi::ShaderHandle shader =
+            device_.createShader(detail::makeShaderDesc(entry), shaderCode.data(), shaderCode.size());
         if (!shader) {
-            throw std::runtime_error("Failed to create shader: " + desc.fileName.string());
+            throw std::runtime_error("Failed to create shader: " + entry.name);
         }
+        cache_[index] = shader;
         return shader;
-    }
-
-    nvrhi::ShaderHandle ShaderLibrary::loadModule(const std::filesystem::path& fileName, nvrhi::ShaderType shaderType,
-                                                  std::string_view entryPoint) const {
-        ShaderModuleDesc desc;
-        desc.fileName = fileName;
-        desc.shaderType = shaderType;
-        desc.entryPoint = entryPoint;
-        return loadModule(desc);
-    }
-
-    nvrhi::ShaderHandle ShaderLibrary::loadComputeModule(const std::filesystem::path& fileName,
-                                                         std::string_view entryPoint) const {
-        return loadModule(fileName, nvrhi::ShaderType::Compute, entryPoint);
-    }
-
-    nvrhi::ShaderHandle ShaderLibrary::loadRayTracingModule(const std::filesystem::path& fileName,
-                                                            nvrhi::ShaderType shaderType,
-                                                            std::string_view entryPoint) const {
-        if (!detail::isRayTracingShaderType(shaderType)) {
-            throw std::invalid_argument("Ray tracing shader module requires a ray tracing shader stage.");
-        }
-        return loadModule(fileName, shaderType, entryPoint);
     }
 
 } // namespace lumin::render

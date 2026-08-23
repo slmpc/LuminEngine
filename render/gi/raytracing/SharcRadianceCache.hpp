@@ -15,6 +15,10 @@
 #include "render/gpu/GpuSceneResources.hpp"
 #include "render/resources/FrameGraph.hpp"
 
+namespace lumin::render {
+    class ShaderLibrary;
+}
+
 namespace lumin::render::gi {
 
     /** SHARC 1.6.5 每个 hash-grid 槽位的物理字节布局。 */
@@ -291,9 +295,12 @@ namespace lumin::render::gi {
         }
     };
 
+    /** 创建 SHARC cache pipeline 与持久资源所需参数。 */
     struct SharcRadianceCacheCreateInfo {
+        /** NvRHI 设备；生命周期必须覆盖 cache。 */
         nvrhi::IDevice* device = nullptr;
-        std::filesystem::path shaderDirectory;
+        /** Session 级 shader 缓存；生命周期必须覆盖创建过程。 */
+        ShaderLibrary* shaders = nullptr;
         std::uint32_t frameSlotCount = 0;
         std::uint32_t maxGeometryDescriptors = 0;
         std::uint32_t maxMaterialTextureDescriptors = 0;

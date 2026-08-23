@@ -160,21 +160,27 @@ add_test(
 )
 set_tests_properties(ShaderReflectionAbi PROPERTIES LABELS "cpu;shader;raytracing;unit;contract" TIMEOUT 30)
 
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(
-    NAME ShaderManifestIncrementalGeneration
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/ShaderManifestGeneratorTests.py"
-            "${PROJECT_SOURCE_DIR}/scripts/shader_manifest.py"
+    NAME ShaderCatalogIncrementalGeneration
+    COMMAND "${CMAKE_COMMAND}"
+            "-DLUMIN_SHADER_CATALOG_GENERATOR=${LUMIN_SHADER_CATALOG_GENERATOR}"
+            "-DLUMIN_SHADER_SOURCE_DIR=${LUMIN_SHADER_SOURCE_DIR}"
+            "-DLUMIN_SHADER_TEST_OUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/shader-catalog-generator-test"
+            "-DLUMIN_SLANGC_EXECUTABLE=${LUMIN_SLANGC_EXECUTABLE}"
+            "-DLUMIN_SHADER_ENABLE_RAY_TRACING=${LUMIN_RAY_TRACING_IMPLEMENTATION_AVAILABLE}"
+            "-DLUMIN_SHADER_ENABLE_NRD=${LUMIN_NRD_AVAILABLE}"
+            "-DLUMIN_SHADER_ENABLE_SHARC=${LUMIN_SHARC_AVAILABLE}"
+            -P "${PROJECT_SOURCE_DIR}/tests/ShaderCatalogGeneratorTests.cmake"
 )
 set_tests_properties(
-    ShaderManifestIncrementalGeneration
+    ShaderCatalogIncrementalGeneration
     PROPERTIES LABELS "cpu;shader;build;unit;contract" TIMEOUT 30
 )
 
 add_executable(lumin_render_pipeline_contract_tests
     RenderPipelineContractsTests.cpp
     "${PROJECT_SOURCE_DIR}/render/resources/PipelineFactory.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/ShaderCatalog.cpp"
     "${PROJECT_SOURCE_DIR}/render/resources/ShaderLibrary.cpp"
 )
 lumin_configure_test(lumin_render_pipeline_contract_tests)
@@ -233,6 +239,7 @@ add_executable(lumin_gi_tests
     "${PROJECT_SOURCE_DIR}/render/resources/FrameGraph.cpp"
     "${PROJECT_SOURCE_DIR}/render/gi/legacy/LegacyBackend.cpp"
     "${PROJECT_SOURCE_DIR}/render/resources/PipelineFactory.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/ShaderCatalog.cpp"
     "${PROJECT_SOURCE_DIR}/render/resources/ShaderLibrary.cpp"
 )
 lumin_configure_test(lumin_gi_tests)

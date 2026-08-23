@@ -1,3 +1,5 @@
+import AoCommon;
+
 float computeHbao(float2 uv, float2 pixelPosition, float2 texelSize, float3 center, float3 normal,
                   float radius, float bias, float randomAngle) {
     const uint directionCount = 8;

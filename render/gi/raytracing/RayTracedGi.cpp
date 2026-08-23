@@ -231,7 +231,6 @@ namespace lumin::render::gi {
               maxMaterialTextureDescriptors(createInfo.maxMaterialTextureDescriptors),
               sharcEnabled(createInfo.enableSharc), inputs(createInfo.frames.begin(), createInfo.frames.end()),
               initialized(createInfo.frames.size(), 0) {
-            ShaderLibrary shaders(device, createInfo.shaderDirectory);
             PipelineFactory pipelines(device);
             bindingLayout = device.createBindingLayout(detail::makeRayTracedGiBindingLayoutDesc(
                 maxGeometryDescriptors, sharcEnabled, maxMaterialTextureDescriptors));
@@ -239,15 +238,11 @@ namespace lumin::render::gi {
                 throw std::runtime_error("Failed to create RT GI binding layout.");
             }
 
-            const nvrhi::ShaderHandle rayGeneration =
-                shaders.loadRayTracingModule("RtGi.rgen.spv", nvrhi::ShaderType::RayGeneration, "rayGenerationMain");
-            const nvrhi::ShaderHandle radianceMiss =
-                shaders.loadRayTracingModule("RtGi.radiance.rmiss.spv", nvrhi::ShaderType::Miss, "radianceMissMain");
-            const nvrhi::ShaderHandle shadowMiss =
-                shaders.loadRayTracingModule("RtGi.shadow.rmiss.spv", nvrhi::ShaderType::Miss, "shadowMissMain");
+            const nvrhi::ShaderHandle rayGeneration = createInfo.shaders->load(ShaderId::RtGiRayGeneration);
+            const nvrhi::ShaderHandle radianceMiss = createInfo.shaders->load(ShaderId::RtGiRadianceMiss);
+            const nvrhi::ShaderHandle shadowMiss = createInfo.shaders->load(ShaderId::RtGiShadowMiss);
             const nvrhi::ShaderHandle closestHit =
-                shaders.loadRayTracingModule(sharcEnabled ? "RtGiSharc.rchit.spv" : "RtGi.rchit.spv",
-                                             nvrhi::ShaderType::ClosestHit, "closestHitMain");
+                createInfo.shaders->load(sharcEnabled ? ShaderId::RtGiSharcClosestHit : ShaderId::RtGiClosestHit);
             const std::array shaderExports = {
                 RayTracingPipelineShaderDesc{"RayGen", rayGeneration},
                 RayTracingPipelineShaderDesc{"RadianceMiss", radianceMiss},
@@ -306,10 +301,12 @@ namespace lumin::render::gi {
     };
 
     RayTracedGiPass::RayTracedGiPass(const RayTracedGiCreateInfo& createInfo) {
-        if (createInfo.device == nullptr || createInfo.width == 0 || createInfo.height == 0 ||
-            createInfo.maxGeometryDescriptors == 0 || createInfo.maxMaterialTextureDescriptors == 0 ||
-            !createInfo.atmosphereBindingLayout || createInfo.frames.empty()) {
-            throw std::invalid_argument("RT GI pass requires device, extent, geometry capacity, and frame inputs.");
+        if (createInfo.device == nullptr || createInfo.shaders == nullptr || createInfo.width == 0 ||
+            createInfo.height == 0 || createInfo.maxGeometryDescriptors == 0 ||
+            createInfo.maxMaterialTextureDescriptors == 0 || !createInfo.atmosphereBindingLayout ||
+            createInfo.frames.empty()) {
+            throw std::invalid_argument(
+                "RT GI pass requires device, shader library, extent, geometry capacity, and frame inputs.");
         }
         for (const RayTracedGiFrameInputs& inputs : createInfo.frames) {
             if (!complete(inputs)) {

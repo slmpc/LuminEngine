@@ -16,6 +16,10 @@
 #include "render/gpu/GpuSceneResources.hpp"
 #include "render/resources/FrameGraph.hpp"
 
+namespace lumin::render {
+    class ShaderLibrary;
+}
+
 namespace lumin::render::gi {
 
     /** 与 `shaders/RtDi.slang` 同构的 primary-ray direct-lighting 常量。 */
@@ -89,8 +93,10 @@ namespace lumin::render::gi {
     class RayTracedDirectLightingPass final {
     public:
         struct CreateInfo {
+            /** NvRHI 设备；生命周期必须覆盖 pass。 */
             nvrhi::IDevice* device = nullptr;
-            std::filesystem::path shaderDirectory;
+            /** Session 级 shader 缓存；生命周期必须覆盖创建过程。 */
+            ShaderLibrary* shaders = nullptr;
             std::uint32_t width = 0;
             std::uint32_t height = 0;
             std::uint32_t maxGeometryDescriptors = 0;

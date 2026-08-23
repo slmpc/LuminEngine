@@ -23,13 +23,8 @@ namespace {
         { factory.createRayTracingShaderTable(pipeline, tableDesc) } -> std::same_as<nvrhi::rt::ShaderTableHandle>;
     });
 
-    static_assert(requires(const lumin::render::ShaderLibrary& library, const std::filesystem::path& path,
-                           const lumin::render::ShaderModuleDesc& desc) {
-        { library.loadModule(desc) } -> std::same_as<nvrhi::ShaderHandle>;
-        { library.loadComputeModule(path, std::string_view{"computeMain"}) } -> std::same_as<nvrhi::ShaderHandle>;
-        {
-            library.loadRayTracingModule(path, nvrhi::ShaderType::RayGeneration, std::string_view{"rayGenerationMain"})
-        } -> std::same_as<nvrhi::ShaderHandle>;
+    static_assert(requires(lumin::render::ShaderLibrary& library, lumin::render::ShaderId id) {
+        { library.load(id) } -> std::same_as<nvrhi::ShaderHandle>;
     });
 
     void require(bool condition, const char* message) {
@@ -87,39 +82,31 @@ namespace {
         return nvrhi::ShaderHandle(new FakeShader(type));
     }
 
-    void testShaderModuleDescription() {
-        lumin::render::ShaderModuleDesc desc;
-        desc.fileName = "gi.comp.spv";
-        desc.shaderType = nvrhi::ShaderType::Compute;
-        desc.entryPoint = "computeMain";
-        desc.debugName = "GI dispatch";
-        desc.hlslExtensionsUAV = 7;
-
-        const nvrhi::ShaderDesc nativeDesc = lumin::render::detail::makeShaderDesc(desc);
+    void testShaderCatalogDescription() {
+        const lumin::render::ShaderCatalog& catalog = lumin::render::builtinShaderCatalog();
+        require(catalog.entries.size() == static_cast<std::size_t>(lumin::render::ShaderId::Count),
+                "Shader Catalog must contain exactly one entry for every stable ID.");
+        const lumin::render::ShaderEntryDesc& entry = catalog.entry(lumin::render::ShaderId::GiCompositeCompute);
+        const nvrhi::ShaderDesc nativeDesc = lumin::render::detail::makeShaderDesc(entry);
         require(nativeDesc.shaderType == nvrhi::ShaderType::Compute, "Shader stage was not preserved.");
-        require(nativeDesc.entryName == "computeMain", "Shader entry point was not preserved.");
-        require(nativeDesc.debugName == "GI dispatch", "Shader debug name was not preserved.");
-        require(nativeDesc.hlslExtensionsUAV == 7, "Shader extension UAV was not preserved.");
-        require(lumin::render::detail::isRayTracingShaderType(nvrhi::ShaderType::RayGeneration),
-                "Ray-generation must be recognized as an RT shader stage.");
-        require(!lumin::render::detail::isRayTracingShaderType(nvrhi::ShaderType::Compute),
-                "Compute must not be recognized as an RT shader stage.");
-        require(!lumin::render::detail::isRayTracingShaderType(nvrhi::ShaderType::AllRayTracing),
-                "An RT stage mask must not be accepted as a single shader stage.");
+        require(nativeDesc.entryName == entry.entryPoint, "Shader entry point was not preserved.");
+        require(nativeDesc.debugName == entry.name, "Catalog debug name was not preserved.");
+        require(entry.output == "GiComposite.comp.spv", "Catalog output path is not stable.");
 
-        desc.entryPoint.clear();
+        lumin::render::ShaderEntryDesc invalid = entry;
+        invalid.entryPoint.clear();
         requireInvalidArgument(
             [&] {
-                (void)lumin::render::detail::makeShaderDesc(desc);
+                (void)lumin::render::detail::makeShaderDesc(invalid);
             },
             "Empty shader entry points must be rejected.");
-        desc.entryPoint = "computeMain";
-        desc.shaderType = nvrhi::ShaderType::AllRayTracing;
+        invalid = entry;
+        invalid.id = lumin::render::ShaderId::Count;
         requireInvalidArgument(
             [&] {
-                (void)lumin::render::detail::makeShaderDesc(desc);
+                (void)lumin::render::detail::makeShaderDesc(invalid);
             },
-            "Shader stage masks must be rejected.");
+            "The ShaderId sentinel must not be loadable.");
     }
 
     void testComputePipelineDescription() {
@@ -274,7 +261,7 @@ namespace {
 
 int main() {
     try {
-        testShaderModuleDescription();
+        testShaderCatalogDescription();
         testComputePipelineDescription();
         testRayTracingPipelineDescription();
         testRayTracingShaderTableDescription();

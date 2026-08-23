@@ -489,8 +489,8 @@ LUMIN_ENABLE_VOLUMETRIC_CLOUDS=ON|OFF
 - 完整 Hybrid runtime mode 要求五项全部启用；不完整组合只构建诊断/测试路径。
 - atmosphere 关闭时 RT miss 使用显式 constant-environment shader variant，不保留悬空 set。
 
-每个 shader companion JSON 为入口声明 `requires`、binding、ABI struct、include directory、capability 和输出；
-构建目录中的 `shader-manifest.json` 由 `scripts/shader_manifest.py` 临时生成。
+每个 shader 入口通过 C++ `ShaderCatalogBuilder` 声明 `requires`、binding、ABI struct、搜索目录、capability 和输出；
+构建目录中的 `shader-manifest.json` 由 `ShaderCatalogGenerator` 临时生成。
 新增 ABI 测试必须检查：
 
 - RTDI 完全没有 G-buffer/CSM binding。

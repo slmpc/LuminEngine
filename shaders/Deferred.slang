@@ -1,5 +1,5 @@
-#include "PostProcessUniforms.slang"
-#include "GpuScene.slang"
+import PostProcessUniforms;
+import GpuScene;
 
 [[vk::binding(0, 0)]] Texture2D<float4> positionTexture;
 [[vk::binding(1, 0)]] Texture2D<float4> normalTexture;

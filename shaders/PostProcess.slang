@@ -1,5 +1,5 @@
-#include "PostProcessUniforms.slang"
-#include "Fsr1Rcas.slang"
+import PostProcessUniforms;
+import Fsr1Rcas;
 
 [[vk::binding(7, 0)]] Texture2D<float4> resolvedTexture;
 [[vk::binding(12, 0)]] SamplerState renderSampler;

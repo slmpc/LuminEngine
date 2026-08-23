@@ -11,6 +11,10 @@
 #include "render/atmosphere/AtmosphereGpuConstants.hpp"
 #include "render/atmosphere/AtmosphereLutPassPlan.hpp"
 
+namespace lumin::render {
+    class ShaderLibrary;
+}
+
 namespace lumin::render::atmosphere {
 
     /** 单个大气 LUT compute 入口的线程组尺寸。 */
@@ -54,8 +58,8 @@ namespace lumin::render::atmosphere {
     struct AtmosphereLutGpuCreateInfo {
         /// NvRHI 设备；生命周期必须覆盖 GPU owner。
         nvrhi::IDevice* device = nullptr;
-        /// CMake 生成的 SPIR-V 根目录。
-        std::filesystem::path shaderDirectory;
+        /// Session 级 shader 缓存；生命周期必须覆盖 GPU owner 的创建过程。
+        ShaderLibrary* shaders = nullptr;
         /// 可同时在途的帧槽数量；每槽拥有独立常量缓冲。
         std::uint32_t frameSlotCount = 0;
         /// LUT 尺寸与格式质量档。

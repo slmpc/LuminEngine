@@ -1,7 +1,7 @@
 #ifndef LUMIN_ATMOSPHERE_COMMON_SLANG
 #define LUMIN_ATMOSPHERE_COMMON_SLANG
 
-#include "AtmosphereUniforms.slang"
+import AtmosphereUniforms;
 
 // 本实现依据 Hillaire EGSR 2020 与 Bruneton 公开论文中的解析公式独立编写。
 // 仅参考公开的物理模型和参数化，未复制、翻译或改写 Alpha-Piscium 的 GPLv3 shader 源码。

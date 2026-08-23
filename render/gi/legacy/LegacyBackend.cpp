@@ -19,9 +19,7 @@ namespace lumin::render::gi {
 
         class LegacyBackend final : public GlobalIlluminationBackend {
         public:
-            explicit LegacyBackend(std::filesystem::path shaderDirectory)
-                : shaderDirectory_(std::move(shaderDirectory)) {
-            }
+            LegacyBackend() = default;
 
             ~LegacyBackend() override {
                 destroy();
@@ -39,9 +37,10 @@ namespace lumin::render::gi {
 #else
                     false;
 #endif
-                if ((!hasTestDriver && createInfo.device == nullptr) || createInfo.extent.width == 0 ||
-                    createInfo.extent.height == 0 || createInfo.outputFormat == nvrhi::Format::UNKNOWN ||
-                    !createInfo.sampler || createInfo.frames.empty()) {
+                if ((!hasTestDriver && (createInfo.device == nullptr || createInfo.shaders == nullptr)) ||
+                    createInfo.extent.width == 0 || createInfo.extent.height == 0 ||
+                    createInfo.outputFormat == nvrhi::Format::UNKNOWN || !createInfo.sampler ||
+                    createInfo.frames.empty()) {
                     throw std::invalid_argument("Legacy backend requires complete render resources.");
                 }
                 for (const FrameResources& frame : createInfo.frames) {
@@ -52,13 +51,13 @@ namespace lumin::render::gi {
                 }
 
                 device_ = createInfo.device;
+                shaders_ = createInfo.shaders;
                 frames_.assign(createInfo.frames.begin(), createInfo.frames.end());
 #if defined(LUMIN_GI_TESTING)
                 creationDriver_ = createInfo.creationDriver;
                 recordProbe_ = createInfo.recordProbe;
 #endif
                 if (!hasTestDriver) {
-                    shaders_ = std::make_unique<ShaderLibrary>(*device_, shaderDirectory_);
                     pipelineFactory_ = std::make_unique<PipelineFactory>(*device_);
                 }
 
@@ -89,7 +88,7 @@ namespace lumin::render::gi {
                 bindingLayout_.Reset();
                 frames_.clear();
                 pipelineFactory_.reset();
-                shaders_.reset();
+                shaders_ = nullptr;
                 device_ = nullptr;
 #if defined(LUMIN_GI_TESTING)
                 creationDriver_ = nullptr;
@@ -275,23 +274,20 @@ namespace lumin::render::gi {
                     return;
                 }
 #endif
-                const nvrhi::ShaderHandle vertexShader =
-                    shaders_->loadModule("AmbientOcclusion.vert.spv", nvrhi::ShaderType::Vertex, "vertexMain");
-                const nvrhi::ShaderHandle fragmentShader =
-                    shaders_->loadModule("AmbientOcclusion.frag.spv", nvrhi::ShaderType::Pixel, "fragmentMain");
+                const nvrhi::ShaderHandle vertexShader = shaders_->load(ShaderId::AmbientOcclusionVertex);
+                const nvrhi::ShaderHandle fragmentShader = shaders_->load(ShaderId::AmbientOcclusionFragment);
                 desc.vertexShader = vertexShader;
                 desc.fragmentShader = fragmentShader;
                 pipeline_ = pipelineFactory_->createGraphicsPipeline(desc);
             }
 
-            std::filesystem::path shaderDirectory_;
             nvrhi::IDevice* device_ = nullptr;
             std::vector<FrameResources> frames_;
             nvrhi::BindingLayoutHandle bindingLayout_;
             std::vector<nvrhi::BindingSetHandle> bindingSets_;
             std::vector<nvrhi::FramebufferHandle> framebuffers_;
             nvrhi::GraphicsPipelineHandle pipeline_;
-            std::unique_ptr<ShaderLibrary> shaders_;
+            ShaderLibrary* shaders_ = nullptr;
             std::unique_ptr<PipelineFactory> pipelineFactory_;
 #if defined(LUMIN_GI_TESTING)
             LegacyCreationDriver* creationDriver_ = nullptr;
@@ -301,8 +297,8 @@ namespace lumin::render::gi {
 
     } // namespace
 
-    std::unique_ptr<GlobalIlluminationBackend> makeLegacyBackend(std::filesystem::path shaderDirectory) {
-        return std::make_unique<LegacyBackend>(std::move(shaderDirectory));
+    std::unique_ptr<GlobalIlluminationBackend> makeLegacyBackend() {
+        return std::make_unique<LegacyBackend>();
     }
 
 } // namespace lumin::render::gi

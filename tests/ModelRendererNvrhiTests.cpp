@@ -1,5 +1,5 @@
-#include "render/resources/DescriptorIndexingLimits.hpp"
 #include "render/ModelRenderer.hpp"
+#include "render/resources/DescriptorIndexingLimits.hpp"
 #include "render/world/RenderWorld.hpp"
 
 #include <array>
@@ -95,8 +95,8 @@ namespace {
         static_assert(std::same_as<typename lumin::render::ModelBatch::Command, nvrhi::DrawIndexedIndirectArguments>);
         static_assert(requires(lumin::render::VulkanContext& context,
                                const lumin::render::world::RenderWorldSnapshot& world,
-                               std::filesystem::path shaderDirectory, std::span<const nvrhi::Format> colorFormats) {
-            lumin::render::ModelRenderer(context, world, shaderDirectory, colorFormats, nvrhi::Format::RGBA8_UNORM,
+                               lumin::render::ShaderLibrary& shaders, std::span<const nvrhi::Format> colorFormats) {
+            lumin::render::ModelRenderer(context, world, shaders, colorFormats, nvrhi::Format::RGBA8_UNORM,
                                          nvrhi::Format::D32, 2, lumin::render::ModelRendererCapabilities{});
         });
         static_assert(requires(lumin::render::ModelRenderer& renderer, nvrhi::ICommandList& commandList,

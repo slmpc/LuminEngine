@@ -1,7 +1,8 @@
 #ifndef LUMIN_ATMOSPHERE_BINDINGS_SLANG
 #define LUMIN_ATMOSPHERE_BINDINGS_SLANG
 
-#include "AtmosphereCommon.slang"
+import AtmosphereCommon;
+import AtmosphereUniforms;
 
 // descriptor set 2 是 raster sky、RT miss 与 GI 共用的大气只读 ABI。
 [[vk::binding(0, 2)]] ConstantBuffer<AtmosphereGpuConstants> atmosphere;

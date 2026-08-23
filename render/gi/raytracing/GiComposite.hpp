@@ -15,6 +15,10 @@
 #include "render/gpu/GpuMaterial.hpp"
 #include "render/resources/FrameGraph.hpp"
 
+namespace lumin::render {
+    class ShaderLibrary;
+}
+
 namespace lumin::render::gi {
 
     /** 与 `shaders/GiComposite.slang` 同构的逐帧常量。 */
@@ -67,10 +71,15 @@ namespace lumin::render::gi {
         bool frameSlotFenceWaited = false;
     };
 
+    /** 创建 GI composite pipeline 与逐帧槽常量所需参数。 */
     struct GiCompositeCreateInfo {
+        /** NvRHI 设备；生命周期必须覆盖 pass。 */
         nvrhi::IDevice* device = nullptr;
-        std::filesystem::path shaderDirectory;
+        /** Session 级 shader 缓存；生命周期必须覆盖创建过程。 */
+        ShaderLibrary* shaders = nullptr;
+        /** 固定输出尺寸。 */
         core::RenderExtent extent;
+        /** 可同时在途的帧槽数量。 */
         std::uint32_t frameSlotCount = 0;
     };
 

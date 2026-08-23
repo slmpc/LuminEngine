@@ -206,7 +206,7 @@ namespace lumin::render {
 
         nvrhi::IDevice& device;
         GpuResourceManager resources;
-        ShaderLibrary shaders;
+        ShaderLibrary& shaders;
         PipelineFactory pipelineFactory;
         std::vector<scene::PbrTextureSet> textureSets;
         std::vector<LoadedPbrTextureSet> loadedTextureSets;
@@ -242,15 +242,13 @@ namespace lumin::render {
         bool hasPreviousModels = false;
         bool hasPendingModels = false;
 
-        Impl(VulkanContext& context, const world::RenderWorldSnapshot& worldSnapshot,
-             std::filesystem::path shaderDirectory, std::span<const nvrhi::Format> colorFormats,
-             nvrhi::Format depthFormat, nvrhi::Format shadowDepthFormat, std::uint32_t frameCountValue,
-             ModelRendererCapabilities capabilities)
-            : device(*context.rhiDevice()), resources(device), shaders(device, std::move(shaderDirectory)),
-              pipelineFactory(device), textureSets(collectTextureSets(worldSnapshot)),
-              batch(ModelRenderer::buildBatch(worldSnapshot)), frameCount(frameCountValue),
-              limits(detail::toDescriptorIndexingLimits(capabilities)), frameSlotReadiness(frameCountValue),
-              materialBufferInitialized(frameCountValue, false) {
+        Impl(VulkanContext& context, const world::RenderWorldSnapshot& worldSnapshot, ShaderLibrary& shaderLibrary,
+             std::span<const nvrhi::Format> colorFormats, nvrhi::Format depthFormat, nvrhi::Format shadowDepthFormat,
+             std::uint32_t frameCountValue, ModelRendererCapabilities capabilities)
+            : device(*context.rhiDevice()), resources(device), shaders(shaderLibrary), pipelineFactory(device),
+              textureSets(collectTextureSets(worldSnapshot)), batch(ModelRenderer::buildBatch(worldSnapshot)),
+              frameCount(frameCountValue), limits(detail::toDescriptorIndexingLimits(capabilities)),
+              frameSlotReadiness(frameCountValue), materialBufferInitialized(frameCountValue, false) {
             if (batch.commands.empty()) {
                 throw std::invalid_argument("ModelRenderer requires at least one model.");
             }
@@ -525,10 +523,8 @@ namespace lumin::render {
 
         void createPipelines(std::span<const nvrhi::Format> colorFormats, nvrhi::Format depthFormat,
                              nvrhi::Format shadowDepthFormat) {
-            const nvrhi::ShaderHandle gbufferVertex =
-                shaders.loadModule("GBuffer.vert.spv", nvrhi::ShaderType::Vertex, "vertexMain");
-            const nvrhi::ShaderHandle gbufferFragment =
-                shaders.loadModule("GBuffer.frag.spv", nvrhi::ShaderType::Pixel, "fragmentMain");
+            const nvrhi::ShaderHandle gbufferVertex = shaders.load(ShaderId::GBufferVertex);
+            const nvrhi::ShaderHandle gbufferFragment = shaders.load(ShaderId::GBufferFragment);
             const auto attributes = vertexAttributes();
             gbufferInputLayout = device.createInputLayout(attributes.data(),
                                                           static_cast<std::uint32_t>(attributes.size()), gbufferVertex);
@@ -546,8 +542,7 @@ namespace lumin::render {
             gbufferDesc.cullMode = nvrhi::RasterCullMode::None;
             gbufferPipeline = pipelineFactory.createGraphicsPipeline(gbufferDesc);
 
-            const nvrhi::ShaderHandle shadowVertex =
-                shaders.loadModule("Shadow.vert.spv", nvrhi::ShaderType::Vertex, "vertexMain");
+            const nvrhi::ShaderHandle shadowVertex = shaders.load(ShaderId::ShadowVertex);
             const std::array<nvrhi::VertexAttributeDesc, 1> shadowAttributes = {attributes[0]};
             shadowInputLayout = device.createInputLayout(
                 shadowAttributes.data(), static_cast<std::uint32_t>(shadowAttributes.size()), shadowVertex);
@@ -653,11 +648,11 @@ namespace lumin::render {
     }
 
     ModelRenderer::ModelRenderer(VulkanContext& context, const world::RenderWorldSnapshot& worldSnapshot,
-                                 std::filesystem::path shaderDirectory, std::span<const nvrhi::Format> colorFormats,
+                                 ShaderLibrary& shaders, std::span<const nvrhi::Format> colorFormats,
                                  nvrhi::Format depthFormat, nvrhi::Format shadowDepthFormat, std::uint32_t frameCount,
                                  ModelRendererCapabilities capabilities)
-        : impl_(std::make_unique<Impl>(context, worldSnapshot, std::move(shaderDirectory), colorFormats, depthFormat,
-                                       shadowDepthFormat, frameCount, capabilities)) {
+        : impl_(std::make_unique<Impl>(context, worldSnapshot, shaders, colorFormats, depthFormat, shadowDepthFormat,
+                                       frameCount, capabilities)) {
     }
 
     ModelRenderer::~ModelRenderer() = default;

@@ -1,5 +1,5 @@
-#include "GpuScene.slang"
-#include "atmosphere/AtmosphereBindings.slang"
+import GpuScene;
+import atmosphere.AtmosphereBindings;
 
 struct RayTracedDiConstants {
     float4x4 inverseViewProjection;

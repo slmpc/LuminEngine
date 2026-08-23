@@ -455,16 +455,11 @@ namespace lumin::render::gi {
                 throw std::runtime_error("Failed to create SHARC binding layouts.");
             }
 
-            ShaderLibrary shaders(device, createInfo.shaderDirectory);
             PipelineFactory pipelines(device);
-            const nvrhi::ShaderHandle rayGeneration = shaders.loadRayTracingModule(
-                "SharcUpdate.rgen.spv", nvrhi::ShaderType::RayGeneration, "sharcUpdateRayGenerationMain");
-            const nvrhi::ShaderHandle radianceMiss = shaders.loadRayTracingModule(
-                "SharcUpdate.radiance.rmiss.spv", nvrhi::ShaderType::Miss, "sharcUpdateRadianceMissMain");
-            const nvrhi::ShaderHandle shadowMiss = shaders.loadRayTracingModule(
-                "SharcUpdate.shadow.rmiss.spv", nvrhi::ShaderType::Miss, "sharcUpdateShadowMissMain");
-            const nvrhi::ShaderHandle closestHit = shaders.loadRayTracingModule(
-                "SharcUpdate.rchit.spv", nvrhi::ShaderType::ClosestHit, "sharcUpdateClosestHitMain");
+            const nvrhi::ShaderHandle rayGeneration = createInfo.shaders->load(ShaderId::SharcUpdateRayGeneration);
+            const nvrhi::ShaderHandle radianceMiss = createInfo.shaders->load(ShaderId::SharcUpdateRadianceMiss);
+            const nvrhi::ShaderHandle shadowMiss = createInfo.shaders->load(ShaderId::SharcUpdateShadowMiss);
+            const nvrhi::ShaderHandle closestHit = createInfo.shaders->load(ShaderId::SharcUpdateClosestHit);
             const std::array shaderExports = {
                 RayTracingPipelineShaderDesc{"SharcUpdateRayGen", rayGeneration},
                 RayTracingPipelineShaderDesc{"SharcUpdateRadianceMiss", radianceMiss},
@@ -497,8 +492,7 @@ namespace lumin::render::gi {
             tableDesc.debugName = "SHARC sparse update shader table";
             updateShaderTable = pipelines.createRayTracingShaderTable(updatePipeline, tableDesc);
 
-            const nvrhi::ShaderHandle resolveShader =
-                shaders.loadComputeModule("SharcResolve.comp.spv", "sharcResolveMain");
+            const nvrhi::ShaderHandle resolveShader = createInfo.shaders->load(ShaderId::SharcResolveCompute);
             const std::array resolveLayouts = {resolveBindingLayout};
             resolvePipeline = pipelines.createComputePipeline({resolveShader, resolveLayouts});
 
@@ -525,7 +519,7 @@ namespace lumin::render::gi {
     };
 
     SharcRadianceCache::SharcRadianceCache(const SharcRadianceCacheCreateInfo& createInfo) {
-        if (createInfo.device == nullptr || createInfo.shaderDirectory.empty() || createInfo.frameSlotCount == 0 ||
+        if (createInfo.device == nullptr || createInfo.shaders == nullptr || createInfo.frameSlotCount == 0 ||
             createInfo.maxGeometryDescriptors == 0 || createInfo.maxMaterialTextureDescriptors == 0 ||
             createInfo.frames.size() != createInfo.frameSlotCount || !createInfo.atmosphereBindingLayout ||
             !validateSharcRadianceCacheConfig(createInfo.config)) {

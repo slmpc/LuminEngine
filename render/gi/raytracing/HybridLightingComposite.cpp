@@ -71,7 +71,6 @@ namespace lumin::render::gi {
 
         explicit Impl(const HybridLightingCompositeCreateInfo& createInfo)
             : device(*createInfo.device), extent(createInfo.extent), constants(createInfo.frameSlotCount) {
-            ShaderLibrary shaders(device, createInfo.shaderDirectory);
             PipelineFactory pipelines(device);
             bindingLayout =
                 device.createBindingLayout(nvrhi::BindingLayoutDesc()
@@ -89,8 +88,7 @@ namespace lumin::render::gi {
             if (!bindingLayout) {
                 throw std::runtime_error("Failed to create Hybrid lighting composite binding layout.");
             }
-            const nvrhi::ShaderHandle shader =
-                shaders.loadComputeModule("HybridLightingComposite.comp.spv", "compositeMain");
+            const nvrhi::ShaderHandle shader = createInfo.shaders->load(ShaderId::HybridLightingCompositeCompute);
             const std::array layouts = {bindingLayout};
             pipeline = pipelines.createComputePipeline(
                 ComputePipelineDesc{.computeShader = shader, .bindingLayouts = layouts});
@@ -101,10 +99,10 @@ namespace lumin::render::gi {
     };
 
     HybridLightingCompositePass::HybridLightingCompositePass(const HybridLightingCompositeCreateInfo& createInfo) {
-        if (createInfo.device == nullptr || createInfo.shaderDirectory.empty() || createInfo.extent.isEmpty() ||
+        if (createInfo.device == nullptr || createInfo.shaders == nullptr || createInfo.extent.isEmpty() ||
             createInfo.frameSlotCount == 0) {
             throw std::invalid_argument(
-                "Hybrid lighting composite requires device, extent, shader directory, and slots.");
+                "Hybrid lighting composite requires device, extent, shader library, and slots.");
         }
         impl_ = std::make_unique<Impl>(createInfo);
     }

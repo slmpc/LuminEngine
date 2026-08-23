@@ -282,9 +282,8 @@ namespace lumin::render::gi {
                 throw std::runtime_error("Failed to create the GI composite binding layout.");
             }
 
-            ShaderLibrary shaders(device, createInfo.shaderDirectory);
             PipelineFactory pipelineFactory(device);
-            const nvrhi::ShaderHandle compute = shaders.loadComputeModule("GiComposite.comp.spv", "compositeMain");
+            const nvrhi::ShaderHandle compute = createInfo.shaders->load(ShaderId::GiCompositeCompute);
             const std::array layouts = {bindingLayout};
             pipeline = pipelineFactory.createComputePipeline({compute, layouts});
 
@@ -300,9 +299,9 @@ namespace lumin::render::gi {
     };
 
     GiCompositePass::GiCompositePass(const GiCompositeCreateInfo& createInfo) {
-        if (createInfo.device == nullptr || createInfo.shaderDirectory.empty() || createInfo.extent.isEmpty() ||
+        if (createInfo.device == nullptr || createInfo.shaders == nullptr || createInfo.extent.isEmpty() ||
             createInfo.frameSlotCount == 0) {
-            throw std::invalid_argument("GI composite requires a device, shader directory, extent, and frame slots.");
+            throw std::invalid_argument("GI composite requires a device, shader library, extent, and frame slots.");
         }
         impl_ = std::make_unique<Impl>(createInfo);
     }

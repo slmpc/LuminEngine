@@ -406,7 +406,7 @@ namespace {
     void verifyFsr1RcasIntegration(const std::string& level) {
         const std::string postProcess = readSource("shaders/PostProcess.slang");
         const std::string rcas = readSource("shaders/include/Fsr1Rcas.slang");
-        require(postProcess.find("#include \"Fsr1Rcas.slang\"") != std::string::npos &&
+        require(postProcess.find("import Fsr1Rcas;") != std::string::npos &&
                     postProcess.find("frame.renderOptions.w >= 0.5 && frame.tonemapOptions.z > 0.0") !=
                         std::string::npos &&
                     postProcess.find("mapped = luminFsr1Rcas(") != std::string::npos,

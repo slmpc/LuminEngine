@@ -124,7 +124,7 @@ namespace {
     }
 
     void testLegacyBackendInfo() {
-        const std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend("unused");
+        const std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend();
         const BackendInfo info = backend->info();
         require(info.name == "SSAO / HBAO / GTAO",
                 "The default GI backend must advertise every supported screen-space AO algorithm.");
@@ -426,7 +426,7 @@ namespace {
             const nvrhi::SamplerHandle sampler = nvrhi::SamplerHandle::Create(new FakeSampler);
             const std::array<lumin::render::gi::FrameResources, 1> frames = {lumin::render::gi::FrameResources{
                 .position = position, .normalRoughness = normal, .uniformBuffer = nullptr, .output = output}};
-            std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend("unused");
+            std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend();
             const CreateInfo createInfo{.extent = {16, 16},
                                         .outputFormat = nvrhi::Format::RGBA16_FLOAT,
                                         .sampler = sampler,
@@ -471,7 +471,7 @@ namespace {
         const nvrhi::SamplerHandle sampler = nvrhi::SamplerHandle::Create(new FakeSampler);
         const std::array<lumin::render::gi::FrameResources, 1> frames = {lumin::render::gi::FrameResources{
             .position = position, .normalRoughness = normal, .uniformBuffer = nullptr, .output = output}};
-        std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend("unused");
+        std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend();
         backend->create(CreateInfo{.extent = {16, 16},
                                    .outputFormat = nvrhi::Format::RGBA16_FLOAT,
                                    .sampler = sampler,
@@ -577,7 +577,7 @@ namespace {
         FakeCreationDriver driver;
 
         const auto expectCreateInvalid = [](const CreateInfo& info) {
-            std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend("unused");
+            std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend();
             bool rejected = false;
             try {
                 backend->create(info);
@@ -616,7 +616,7 @@ namespace {
                                        .frames = incomplete,
                                        .creationDriver = &driver});
 
-        std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend("unused");
+        std::unique_ptr<GlobalIlluminationBackend> backend = lumin::render::gi::makeLegacyBackend();
         backend->create(CreateInfo{.extent = {16, 16},
                                    .outputFormat = nvrhi::Format::RGBA16_FLOAT,
                                    .sampler = sampler,

@@ -1,6 +1,6 @@
-#include "GpuScene.slang"
+import GpuScene;
 #include "NRD.hlsli"
-#include "atmosphere/AtmosphereBindings.slang"
+import atmosphere.AtmosphereBindings;
 
 #ifndef LUMIN_ENABLE_SHARC
 #define LUMIN_ENABLE_SHARC 0

@@ -1,7 +1,7 @@
 include_guard(GLOBAL)
 
-# shader_manifest.py 负责 JSON 校验、feature 过滤和 slangc custom command 生成；
-# CMake 这里只保留工具发现，避免在脚本语言中重复实现 JSON 解析。
+# C++ ShaderCatalogGenerator 负责类型化配置、feature 过滤和 slangc custom command 生成；
+# CMake 这里只保留工具发现与配置期启动。
 find_program(LUMIN_SLANGC_EXECUTABLE
     NAMES slangc
     HINTS

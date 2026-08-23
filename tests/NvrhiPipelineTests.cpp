@@ -19,10 +19,8 @@
 namespace {
 
     static_assert(std::constructible_from<lumin::render::ShaderLibrary, nvrhi::IDevice&, std::filesystem::path>);
-    static_assert(requires(const lumin::render::ShaderLibrary& shaders, const std::filesystem::path& fileName) {
-        {
-            shaders.loadModule(fileName, nvrhi::ShaderType::Vertex, std::string_view{"vertexMain"})
-        } -> std::same_as<nvrhi::ShaderHandle>;
+    static_assert(requires(lumin::render::ShaderLibrary& shaders, lumin::render::ShaderId id) {
+        { shaders.load(id) } -> std::same_as<nvrhi::ShaderHandle>;
     });
 
     static_assert(std::same_as<decltype(lumin::render::GraphicsPipelineDesc::vertexShader), nvrhi::ShaderHandle>);
@@ -44,7 +42,9 @@ namespace {
 
     static_assert(requires(const lumin::render::FullscreenPipelineFactory& factory,
                            std::span<const nvrhi::BindingLayoutHandle> layouts, nvrhi::Format format) {
-        { factory.create("Taa", format, layouts) } -> std::same_as<nvrhi::GraphicsPipelineHandle>;
+        {
+            factory.create(lumin::render::ShaderId::TaaVertex, lumin::render::ShaderId::TaaFragment, format, layouts)
+        } -> std::same_as<nvrhi::GraphicsPipelineHandle>;
     });
 
     std::string spirvEntryPoint(const std::filesystem::path& path) {
@@ -93,15 +93,16 @@ namespace {
     void testFullscreenPipelineDescriptorIsWindingIndependent() {
         const std::array<nvrhi::BindingLayoutHandle, 1> layouts = {nullptr};
         std::vector<nvrhi::RasterCullMode> cullModes;
-        auto loadModule = [](const std::string&, nvrhi::ShaderType) {
+        auto loadModule = [](lumin::render::ShaderId) {
             return nvrhi::ShaderHandle{};
         };
         auto createPipeline = [&cullModes](const lumin::render::GraphicsPipelineDesc& desc) {
             cullModes.push_back(desc.cullMode);
         };
 
-        lumin::render::detail::createFullscreenPipeline("taa", nvrhi::Format::RGBA16_FLOAT, layouts, loadModule,
-                                                        createPipeline);
+        lumin::render::detail::createFullscreenPipeline(
+            lumin::render::ShaderId::TaaVertex, lumin::render::ShaderId::TaaFragment, nvrhi::Format::RGBA16_FLOAT,
+            layouts, loadModule, createPipeline);
 
         if (cullModes != std::vector{nvrhi::RasterCullMode::None}) {
             throw std::runtime_error(

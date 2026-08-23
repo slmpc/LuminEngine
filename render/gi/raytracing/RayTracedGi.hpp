@@ -15,6 +15,10 @@
 #include "render/gpu/GpuSceneResources.hpp"
 #include "render/resources/FrameGraph.hpp"
 
+namespace lumin::render {
+    class ShaderLibrary;
+}
+
 namespace lumin::render::gi {
 
     /** 与 `shaders/RtGi.slang` 同构的逐帧常量。 */
@@ -113,9 +117,12 @@ namespace lumin::render::gi {
         FrameGraphPassHandle tracePass;
     };
 
+    /** 创建 RTGI pipeline、shader table 与信号纹理所需参数。 */
     struct RayTracedGiCreateInfo {
+        /** NvRHI 设备；生命周期必须覆盖 pass。 */
         nvrhi::IDevice* device = nullptr;
-        std::filesystem::path shaderDirectory;
+        /** Session 级 shader 缓存；生命周期必须覆盖创建过程。 */
+        ShaderLibrary* shaders = nullptr;
         std::uint32_t width = 0;
         std::uint32_t height = 0;
         std::uint32_t maxGeometryDescriptors = 0;

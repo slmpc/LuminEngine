@@ -270,12 +270,13 @@ namespace {
                     gpu.surfaceParameters.z == -1.0f && gpu.surfaceParameters.w == 0.0f,
                 "Blinn-Phong GPU packing must preserve direct-lighting data and derive canonical NRD roughness.");
 
-        lumin::scene::Material incompleteTextures;
-        incompleteTextures.textures = lumin::scene::PbrTextureSet{.baseColor = "base-color.png"};
-        const GpuMaterialData incompleteGpu = lumin::render::gpu::packGpuMaterial(incompleteTextures, 17U);
-        require(incompleteGpu.metadata.y == 0U && incompleteGpu.metadata.z == 0U &&
-                    incompleteGpu.surfaceParameters.z == 1.0f,
-                "Incomplete texture sets must not expose a descriptor or normal-map convention to shaders.");
+        lumin::scene::Material partialTextures;
+        partialTextures.textures = lumin::scene::PbrTextureSet{.baseColor = "base-color.png"};
+        const GpuMaterialData partialGpu = lumin::render::gpu::packGpuMaterial(partialTextures, 17U);
+        require(
+            partialGpu.metadata.y == 17U && partialGpu.metadata.z == 1U && partialGpu.surfaceParameters.z == -1.0f,
+            "Partial texture sets must preserve their descriptor and normal-map convention while missing channels use "
+            "fallback images.");
     }
 
     void testSurfaceModelChangesPatchOnlyMaterialData() {

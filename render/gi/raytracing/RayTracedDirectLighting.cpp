@@ -211,7 +211,6 @@ namespace lumin::render::gi {
                 }
             }
 
-            ShaderLibrary shaders(device, createInfo.shaderDirectory);
             PipelineFactory pipelines(device);
             bindingLayout = device.createBindingLayout(
                 detail::makeRayTracedDiBindingLayoutDesc(maxGeometryDescriptors, maxMaterialTextureDescriptors));
@@ -219,14 +218,10 @@ namespace lumin::render::gi {
                 throw std::runtime_error("Failed to create RT surface binding layout.");
             }
 
-            const nvrhi::ShaderHandle rayGeneration =
-                shaders.loadRayTracingModule("RtDi.rgen.spv", nvrhi::ShaderType::RayGeneration, "rayGenerationMain");
-            const nvrhi::ShaderHandle radianceMiss =
-                shaders.loadRayTracingModule("RtDi.radiance.rmiss.spv", nvrhi::ShaderType::Miss, "primaryMissMain");
-            const nvrhi::ShaderHandle shadowMiss =
-                shaders.loadRayTracingModule("RtDi.shadow.rmiss.spv", nvrhi::ShaderType::Miss, "shadowMissMain");
-            const nvrhi::ShaderHandle closestHit =
-                shaders.loadRayTracingModule("RtDi.rchit.spv", nvrhi::ShaderType::ClosestHit, "primaryClosestHitMain");
+            const nvrhi::ShaderHandle rayGeneration = createInfo.shaders->load(ShaderId::RtDiRayGeneration);
+            const nvrhi::ShaderHandle radianceMiss = createInfo.shaders->load(ShaderId::RtDiRadianceMiss);
+            const nvrhi::ShaderHandle shadowMiss = createInfo.shaders->load(ShaderId::RtDiShadowMiss);
+            const nvrhi::ShaderHandle closestHit = createInfo.shaders->load(ShaderId::RtDiClosestHit);
             const std::array shaderExports = {
                 RayTracingPipelineShaderDesc{"RayGen", rayGeneration},
                 RayTracingPipelineShaderDesc{"PrimaryMiss", radianceMiss},
@@ -265,11 +260,11 @@ namespace lumin::render::gi {
     };
 
     RayTracedDirectLightingPass::RayTracedDirectLightingPass(const CreateInfo& createInfo) {
-        if (createInfo.device == nullptr || createInfo.shaderDirectory.empty() || createInfo.width == 0 ||
+        if (createInfo.device == nullptr || createInfo.shaders == nullptr || createInfo.width == 0 ||
             createInfo.height == 0 || createInfo.maxGeometryDescriptors == 0 ||
             createInfo.maxMaterialTextureDescriptors == 0 || !createInfo.atmosphereBindingLayout ||
             createInfo.frames.empty()) {
-            throw std::invalid_argument("RT surface pass requires device, shader directory, extent, geometry capacity, "
+            throw std::invalid_argument("RT surface pass requires device, shader library, extent, geometry capacity, "
                                         "atmosphere, and frames.");
         }
         impl_ = std::make_unique<Impl>(createInfo);

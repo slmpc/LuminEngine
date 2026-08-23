@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <filesystem>
 #include <memory>
 #include <span>
 #include <vector>
@@ -24,6 +23,7 @@ namespace lumin::render::world {
 
 namespace lumin::render {
 
+    class ShaderLibrary;
     class VulkanContext;
 
     struct alignas(16) ObjectData {
@@ -67,9 +67,13 @@ namespace lumin::render {
 
     class ModelRenderer {
     public:
-        ModelRenderer(VulkanContext& context, const world::RenderWorldSnapshot& world,
-                      std::filesystem::path shaderDirectory, std::span<const nvrhi::Format> colorFormats,
-                      nvrhi::Format depthFormat, nvrhi::Format shadowDepthFormat, std::uint32_t frameCount,
+        /**
+         * 创建模型 raster 资源；`shaders` 是 session 级缓存，生命周期必须覆盖本对象。
+
+         */
+        ModelRenderer(VulkanContext& context, const world::RenderWorldSnapshot& world, ShaderLibrary& shaders,
+                      std::span<const nvrhi::Format> colorFormats, nvrhi::Format depthFormat,
+                      nvrhi::Format shadowDepthFormat, std::uint32_t frameCount,
                       ModelRendererCapabilities capabilities);
         ~ModelRenderer();
 

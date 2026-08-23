@@ -34,13 +34,13 @@ namespace lumin::render {
           rasterResources_(*context.rhiDevice().Get(), frameSlotCount),
           postFxResources_(*context.rhiDevice().Get(), frameSlotCount), resourceFactory_(*context.rhiDevice().Get()),
           shaderLibrary_(*context.rhiDevice().Get(), shaderDirectory_), pipelineFactory_(*context.rhiDevice().Get()),
-          fullscreenPipelineFactory_(*context.rhiDevice().Get(), shaderDirectory_),
+          fullscreenPipelineFactory_(*context.rhiDevice().Get(), shaderLibrary_),
           globalIllumination_(std::move(globalIllumination)), currentWorld_(std::move(initialWorld)) {
         if (currentWorld_ == nullptr) {
             throw std::invalid_argument("Default pipeline session requires a non-empty initial render-world snapshot.");
         }
         if (globalIllumination_ == nullptr) {
-            globalIllumination_ = gi::makeLegacyBackend(shaderDirectory_);
+            globalIllumination_ = gi::makeLegacyBackend();
         }
         pipelines::registerDefaultRenderSettings(settingsSchemas_);
         renderExtent_ = core::RenderExtent{context_.swapchainWidth(), context_.swapchainHeight()};
@@ -48,7 +48,7 @@ namespace lumin::render {
         createRenderResources();
         // 先创建 RT 资源，再根据真实的 device/scene capability 选择固定的帧图拓扑。
         createRenderFeaturePipeline();
-        presentation_.initialize(context_, *uiFontAtlas_, shaderDirectory_);
+        presentation_.initialize(context_, *uiFontAtlas_, shaderLibrary_);
         presentation_.setViewportTexture(viewportOutput_.texture);
         swapchainGeneration_ = context_.swapchainGeneration();
     }

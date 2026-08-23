@@ -4,7 +4,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <unordered_map>
 #include <vector>
 
@@ -15,14 +14,16 @@ struct ImFontAtlas;
 
 namespace lumin::render {
 
+    class ShaderLibrary;
+
     /// 描述 UiRenderer 创建持久 GPU 资源所需的显式输入。
     struct UiRendererConfig {
         /// 渲染主线程独占的 NvRHI 设备。
         nvrhi::IDevice* device = nullptr;
         /// 交换链颜色格式。
         nvrhi::Format colorFormat = nvrhi::Format::UNKNOWN;
-        /// 编译后 shader 根目录。
-        std::filesystem::path shaderDirectory;
+        /// Session 级 shader 缓存；生命周期必须覆盖初始化调用。
+        ShaderLibrary* shaders = nullptr;
         /// 动态顶点/索引 buffer 的帧槽数量。
         std::uint32_t frameSlotCount = 2;
         /// 交换链采样数。
@@ -124,7 +125,7 @@ namespace lumin::render {
                             nvrhi::IBindingSet& textureBinding);
 
         nvrhi::IDevice* device_ = nullptr;
-        std::filesystem::path shaderDirectory_;
+        ShaderLibrary* shaders_ = nullptr;
         nvrhi::TextureHandle fontTexture_;
         nvrhi::SamplerHandle fontSampler_;
         nvrhi::BindingLayoutHandle bindingLayout_;

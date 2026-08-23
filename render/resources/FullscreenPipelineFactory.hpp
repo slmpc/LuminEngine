@@ -4,9 +4,7 @@
 #include "render/resources/ShaderLibrary.hpp"
 
 #include <array>
-#include <filesystem>
 #include <span>
-#include <string>
 
 #include <nvrhi/nvrhi.h>
 
@@ -16,19 +14,21 @@ namespace lumin::render {
 
         /**
          * @brief 使用调用方提供的 shader 加载器和创建器构造全屏 graphics pipeline 描述。
-         * @param shaderName 不含 stage 后缀的 shader 模块名。
+         * @param vertexShader 顶点入口的类型化 ID。
+         * @param fragmentShader 片元入口的类型化 ID。
+         *
          * @param colorFormat 唯一颜色附件的格式。
          * @param bindingLayouts pipeline 使用的 descriptor layout 列表。
          * @param loadModule 可调用的 shader 加载器。
          * @param createPipeline 可调用的 pipeline 创建器。
          */
         template <typename LoadModule, typename CreatePipeline>
-        void createFullscreenPipeline(const std::string& shaderName, nvrhi::Format colorFormat,
+        void createFullscreenPipeline(ShaderId vertexShader, ShaderId fragmentShader, nvrhi::Format colorFormat,
                                       std::span<const nvrhi::BindingLayoutHandle> bindingLayouts,
                                       LoadModule& loadModule, CreatePipeline& createPipeline) {
             GraphicsPipelineDesc desc;
-            desc.vertexShader = loadModule(shaderName + ".vert.spv", nvrhi::ShaderType::Vertex);
-            desc.fragmentShader = loadModule(shaderName + ".frag.spv", nvrhi::ShaderType::Pixel);
+            desc.vertexShader = loadModule(vertexShader);
+            desc.fragmentShader = loadModule(fragmentShader);
             const std::array<nvrhi::Format, 1> colors = {colorFormat};
             desc.bindingLayouts = bindingLayouts;
             desc.colorFormats = colors;
@@ -50,26 +50,29 @@ namespace lumin::render {
     class FullscreenPipelineFactory final {
     public:
         /**
-         * @brief 绑定设备和 shader 输出目录。
-         * @param device 生命周期必须覆盖 Factory 及其创建的 pipeline。
-         * @param shaderDirectory 编译后 SPIR-V 所在目录。
+         * @brief 绑定设备和 session 级 shader 缓存。
+         * @param device 生命周期必须覆盖 Factory 及其创建的
+         * pipeline。
+         * @param shaders 生命周期必须覆盖 Factory。
          */
-        FullscreenPipelineFactory(nvrhi::IDevice& device, std::filesystem::path shaderDirectory);
+        FullscreenPipelineFactory(nvrhi::IDevice& device, ShaderLibrary& shaders);
 
         /**
          * @brief 创建一个全屏 graphics pipeline 并把所有权交给返回 handle。
-         * @param shaderName 不含 `.vert.spv`/`.frag.spv` 后缀的模块名。
+         * @param vertexShader 顶点入口的类型化 ID。
+         * @param fragmentShader 片元入口的类型化 ID。
+         *
          * @param colorFormat 唯一颜色附件格式。
          * @param bindingLayouts pipeline descriptor layouts；只在调用期间读取。
          * @return 新创建的 NvRHI pipeline handle。
          * @throws std::runtime_error shader 加载或 pipeline 创建失败时抛出。
          */
         [[nodiscard]] nvrhi::GraphicsPipelineHandle
-        create(std::string shaderName, nvrhi::Format colorFormat,
+        create(ShaderId vertexShader, ShaderId fragmentShader, nvrhi::Format colorFormat,
                std::span<const nvrhi::BindingLayoutHandle> bindingLayouts) const;
 
     private:
-        ShaderLibrary shaders_;
+        ShaderLibrary& shaders_;
         PipelineFactory factory_;
     };
 

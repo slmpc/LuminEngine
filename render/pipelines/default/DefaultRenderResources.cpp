@@ -35,7 +35,7 @@ namespace lumin::render {
         createDirectLightingBindingLayout();
         atmosphereLutGpu_ = std::make_unique<atmosphere::AtmosphereLutGpu>(atmosphere::AtmosphereLutGpuCreateInfo{
             .device = context_.rhiDevice(),
-            .shaderDirectory = shaderDirectory_,
+            .shaders = &shaderLibrary_,
             .frameSlotCount = frameSlotCount,
             .quality = {},
         });
@@ -45,13 +45,15 @@ namespace lumin::render {
                                                                            directLightingBindingLayout_};
         const std::array<nvrhi::BindingLayoutHandle, 2> skyLayouts = {postFxResources_.bindingLayout(),
                                                                       atmosphereConsumerBindingLayout_};
-        skyPipeline_ = fullscreenPipelineFactory_.create("Sky", postFxResources_.lightingFormat(), skyLayouts);
-        directLightingPipeline_ =
-            fullscreenPipelineFactory_.create("Deferred", postFxResources_.lightingFormat(), lightingLayouts);
-        temporalAaPipeline_ =
-            fullscreenPipelineFactory_.create("Taa", postFxResources_.lightingFormat(), fullscreenLayouts);
+        skyPipeline_ = fullscreenPipelineFactory_.create(ShaderId::SkyVertex, ShaderId::SkyFragment,
+                                                         postFxResources_.lightingFormat(), skyLayouts);
+        directLightingPipeline_ = fullscreenPipelineFactory_.create(
+            ShaderId::DeferredVertex, ShaderId::DeferredFragment, postFxResources_.lightingFormat(), lightingLayouts);
+        temporalAaPipeline_ = fullscreenPipelineFactory_.create(ShaderId::TaaVertex, ShaderId::TaaFragment,
+                                                                postFxResources_.lightingFormat(), fullscreenLayouts);
         toneMappingPipeline_ =
-            fullscreenPipelineFactory_.create("PostProcess", context_.swapchainRhiFormat(), fullscreenLayouts);
+            fullscreenPipelineFactory_.create(ShaderId::PostProcessVertex, ShaderId::PostProcessFragment,
+                                              context_.swapchainRhiFormat(), fullscreenLayouts);
 
         std::array<gi::FrameResources, frameSlotCount> giFrames{};
         for (std::uint32_t frameIndex = 0; frameIndex < giFrames.size(); ++frameIndex) {
@@ -65,11 +67,12 @@ namespace lumin::render {
             giFrames[frameIndex].uniformBuffer = postFx.uniforms.buffer;
             giFrames[frameIndex].output = postFx.globalIllumination.texture;
         }
-        globalIllumination_->create(gi::CreateInfo{context_.rhiDevice(),
-                                                   {width, height},
-                                                   postFxResources_.globalIlluminationFormat(),
-                                                   postFxResources_.sampler(),
-                                                   giFrames});
+        globalIllumination_->create(gi::CreateInfo{.device = context_.rhiDevice(),
+                                                   .shaders = &shaderLibrary_,
+                                                   .extent = {width, height},
+                                                   .outputFormat = postFxResources_.globalIlluminationFormat(),
+                                                   .sampler = postFxResources_.sampler(),
+                                                   .frames = giFrames});
         atmosphereForceRebuild_ = true;
         createModelRenderer();
         createHybridGiResources();
@@ -109,7 +112,7 @@ namespace lumin::render {
             rasterResources_.positionFormat(), rasterResources_.normalFormat(), rasterResources_.albedoFormat(),
             rasterResources_.motionFormat(), rasterResources_.materialIdFormat()};
         modelRenderer_ = std::make_unique<ModelRenderer>(
-            context_, *snapshot, shaderDirectory_, colorFormats, rasterResources_.depthFormat(),
+            context_, *snapshot, shaderLibrary_, colorFormats, rasterResources_.depthFormat(),
             rasterResources_.shadowDepthFormat(), frameSlotCount, context_.modelRendererCapabilities());
         createDirectLightingBindingSets();
     }
@@ -218,7 +221,7 @@ namespace lumin::render {
             runtime->directLighting =
                 std::make_unique<gi::RayTracedDirectLightingPass>(gi::RayTracedDirectLightingPass::CreateInfo{
                     .device = context_.rhiDevice(),
-                    .shaderDirectory = shaderDirectory_,
+                    .shaders = &shaderLibrary_,
                     .width = renderExtent_.width,
                     .height = renderExtent_.height,
                     .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
@@ -246,7 +249,7 @@ namespace lumin::render {
 
             runtime->sharc = std::make_unique<gi::SharcRadianceCache>(gi::SharcRadianceCacheCreateInfo{
                 .device = context_.rhiDevice(),
-                .shaderDirectory = shaderDirectory_,
+                .shaders = &shaderLibrary_,
                 .frameSlotCount = frameSlotCount,
                 .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
                 .maxMaterialTextureDescriptors = materialTextureDescriptorCapacity,
@@ -256,7 +259,7 @@ namespace lumin::render {
             });
             runtime->rayTracedGi = std::make_unique<gi::RayTracedGiPass>(gi::RayTracedGiCreateInfo{
                 .device = context_.rhiDevice(),
-                .shaderDirectory = shaderDirectory_,
+                .shaders = &shaderLibrary_,
                 .width = renderExtent_.width,
                 .height = renderExtent_.height,
                 .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
@@ -275,14 +278,14 @@ namespace lumin::render {
             }
             runtime->composite = std::make_unique<gi::GiCompositePass>(gi::GiCompositeCreateInfo{
                 .device = context_.rhiDevice(),
-                .shaderDirectory = shaderDirectory_,
+                .shaders = &shaderLibrary_,
                 .extent = renderExtent_,
                 .frameSlotCount = frameSlotCount,
             });
             runtime->lightingComposite =
                 std::make_unique<gi::HybridLightingCompositePass>(gi::HybridLightingCompositeCreateInfo{
                     .device = context_.rhiDevice(),
-                    .shaderDirectory = shaderDirectory_,
+                    .shaders = &shaderLibrary_,
                     .extent = renderExtent_,
                     .frameSlotCount = frameSlotCount,
                 });
@@ -375,7 +378,7 @@ namespace lumin::render {
             destroyRenderResources();
             createRenderResources();
         }
-        presentation_.initialize(context_, *uiFontAtlas_, shaderDirectory_);
+        presentation_.initialize(context_, *uiFontAtlas_, shaderLibrary_);
         presentation_.setViewportTexture(viewportOutput_.texture);
         swapchainGeneration_ = context_.swapchainGeneration();
     }

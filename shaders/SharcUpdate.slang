@@ -1,5 +1,5 @@
-#include "GpuScene.slang"
-#include "atmosphere/AtmosphereBindings.slang"
+import GpuScene;
+import atmosphere.AtmosphereBindings;
 #define LUMIN_SHARC_UPDATE 1
 #include "SharcRuntime.slang"
 

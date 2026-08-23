@@ -1,7 +1,7 @@
 #ifndef LUMIN_AO_COMMON_SLANG
 #define LUMIN_AO_COMMON_SLANG
 
-#include "PostProcessUniforms.slang"
+import PostProcessUniforms;
 
 [[vk::binding(0, 0)]] Texture2D<float4> positionTexture;
 [[vk::binding(1, 0)]] Texture2D<float4> normalTexture;
@@ -13,8 +13,7 @@ struct VertexOutput {
     [[vk::location(0)]] float2 uv : TEXCOORD0;
 };
 
-[shader("vertex")]
-VertexOutput vertexMain(uint vertexId : SV_VertexID) {
+VertexOutput makeAmbientOcclusionVertex(uint vertexId) {
     float2 triangleUv = float2((vertexId << 1) & 2, vertexId & 2);
     VertexOutput output;
     output.position = float4(triangleUv.x * 2.0 - 1.0, 1.0 - triangleUv.y * 2.0, 0.0, 1.0);

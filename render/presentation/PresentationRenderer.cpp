@@ -11,13 +11,12 @@ namespace lumin::render {
         shutdown();
     }
 
-    void PresentationRenderer::initialize(VulkanContext& context, ImFontAtlas& fontAtlas,
-                                          std::filesystem::path shaderDirectory) {
+    void PresentationRenderer::initialize(VulkanContext& context, ImFontAtlas& fontAtlas, ShaderLibrary& shaders) {
         shutdown();
         renderer_.initialize(UiRendererConfig{
             .device = context.rhiDevice(),
             .colorFormat = context.swapchainRhiFormat(),
-            .shaderDirectory = std::move(shaderDirectory),
+            .shaders = &shaders,
             .frameSlotCount = 2,
             .sampleCount = 1,
             .outputIsSrgb = context.swapchainIsSrgb(),

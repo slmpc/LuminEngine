@@ -1,4 +1,4 @@
-#include "PostProcessUniforms.slang"
+import PostProcessUniforms;
 
 [[vk::binding(0, 0)]] Texture2D<float4> positionTexture;
 [[vk::binding(3, 0)]] Texture2D<float2> motionTexture;

@@ -4,7 +4,6 @@
 #include "render/presentation/UiRenderer.hpp"
 
 #include <cstdint>
-#include <filesystem>
 #include <vector>
 
 #include <nvrhi/nvrhi.h>
@@ -15,6 +14,7 @@ struct ImFontAtlas;
 namespace lumin::render {
 
     class VulkanContext;
+    class ShaderLibrary;
 
     /**
      * @brief 拥有交换链 framebuffer、UI renderer 和逻辑纹理解析的 Presentation 资源。
@@ -37,7 +37,7 @@ namespace lumin::render {
          * @throws std::invalid_argument 字体图集无效时抛出。
          * @throws std::runtime_error NvRHI 资源创建失败时抛出。
          */
-        void initialize(VulkanContext& context, ImFontAtlas& fontAtlas, std::filesystem::path shaderDirectory);
+        void initialize(VulkanContext& context, ImFontAtlas& fontAtlas, ShaderLibrary& shaders);
 
         /// 幂等释放 Presentation 资源。
         void shutdown() noexcept;

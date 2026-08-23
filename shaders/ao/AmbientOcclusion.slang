@@ -1,7 +1,12 @@
-#include "AoCommon.slang"
-#include "Ssao.slang"
-#include "Hbao.slang"
-#include "Gtao.slang"
+import AoCommon;
+import Ssao;
+import Hbao;
+import Gtao;
+
+[shader("vertex")]
+VertexOutput vertexMain(uint vertexId : SV_VertexID) {
+    return makeAmbientOcclusionVertex(vertexId);
+}
 
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target {

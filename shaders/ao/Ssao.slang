@@ -1,3 +1,5 @@
+import AoCommon;
+
 float computeSsao(float2 uv, float2 texelSize, float3 center, float3 normal, float radius, float bias,
                   float randomAngle) {
     const uint sampleCount = 12;

@@ -37,6 +37,7 @@ add_library(lumin_render_rhi STATIC
     resources/FrameGraphResourceImporter.cpp
     resources/FullscreenPipelineFactory.cpp
     resources/PipelineFactory.cpp
+    resources/ShaderCatalog.cpp
     resources/ShaderLibrary.cpp
     resources/VulkanResources.cpp
 )

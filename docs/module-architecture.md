@@ -98,26 +98,28 @@ latest-wins，但发布不会唤醒逻辑线程，并在下一次固定 Tick 或
 
 - `core/CMakeLists.txt`：Core 的全部源文件和依赖；
 - `render/CMakeLists.txt`：RenderCore、RHI、Vulkan backend、Feature 域、Runtime、Pipelines、Presentation 和 Editor；
-- `shaders/CMakeLists.txt`：调用 Python shader generator 并注册 shader targets；
+- `shaders/CMakeLists.txt`：编译并调用 C++ Shader Catalog generator，注册 shader targets；
 - `apps/editor/CMakeLists.txt`、`tests/CMakeLists.txt`：应用与验证目标。
 
 Feature target 必须能够独立编译和测试。新增源码应加入实际拥有它的 target，禁止为绕过链接错误将源码重复放入多个
-静态库，也禁止重新建立多个名称指向同一库的伪模块。新增 shader 只需要添加 companion JSON，不需要编辑 CMake JSON
-解析逻辑。
+静态库，也禁止重新建立多个名称指向同一库的伪模块。新增 shader 入口应扩展 `ShaderId` 并在集中 Catalog 中配置，
+不需要编辑 CMake 或手写 JSON。
 
 ## Shader 配置
 
-每个 shader 入口 `.slang` 都有同名 `.json`，例如 `RtDi.slang`/`RtDi.json`。shader 源文件、companion JSON 与
-生成产物的 stem 统一使用大驼峰。JSON 记录该源文件的入口、stage、输出、
-reflection、depfile、capability、binding 和 `requires` feature。公共 ABI 与默认 compiler 选项放在
-`shaders/shader-abi.json`。
+所有入口由 `render/resources/ShaderCatalog.cpp` 的 `ShaderCatalogBuilder` 集中声明。`ShaderId` 提供稳定运行时身份，
+module builder 复用源文件、feature、capability、binding 和 ABI 结构配置，并为每个入口生成 SPIR-V、reflection 与
+depfile 路径。
 
-配置阶段由 `scripts/shader_manifest.py generate` 扫描并校验所有 companion JSON，然后在 build tree 写入
-临时 `shader-manifest.json` 和 `shader-targets.cmake`。CMake 不再解析 JSON，也不再维护入口列表；它只
-include 生成文件并定义 `lumin_shader_abi` / `lumin_shaders` 两个 target。`LUMIN_RAY_TRACING`、
+配置阶段会用标准 C++23 编译并运行 `ShaderCatalogGenerator`，在 build tree 写入临时 `shader-manifest.json` 和
+`shader-targets.cmake`。CMake 不解析 JSON，也不维护入口列表；它只 include 生成文件并定义
+`lumin_shader_abi` / `lumin_shaders` 两个 target。`LUMIN_RAY_TRACING`、
 `LUMIN_ENABLE_NRD` 和 `LUMIN_ENABLE_SHARC` 会在生成阶段过滤对应 entry。
 
-`.slang` 源码和其 include 依赖由 `slangc` depfile 在构建阶段跟踪，保存源码不会触发 CMake 重新配置；
-companion JSON、`shader-abi.json` 或生成脚本变化时才重新生成构建描述。生成内容未变化时会保留文件时间戳，
+`.slang` 源码和其 `import`/`include` 依赖由 `slangc` depfile 在构建阶段跟踪，保存源码不会触发 CMake 重新配置；
+Catalog 头、实现或生成器变化时才重新生成构建描述。生成内容未变化时会保留文件时间戳，
 并且每个编译命令只依赖自身源码，因此普通配置刷新和单个 shader 修改都不会导致全量 shader 重编译；
 shader ABI 校验同样只在 manifest、reflection 或校验器发生变化后运行。
+
+项目自有的稳定 Slang 模块使用 `import`；厂商头、SHARC 头和依赖调用方宏特化的文本包装器保留 `#include`。
+运行时由默认 pipeline session 持有唯一 `ShaderLibrary`，所有 Feature 使用 `ShaderId` 共享 shader handle 缓存。

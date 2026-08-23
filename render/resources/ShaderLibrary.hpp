@@ -1,62 +1,50 @@
 #pragma once
 
+#include "render/resources/ShaderCatalog.hpp"
+
+#include <array>
+#include <cstddef>
 #include <filesystem>
-#include <string>
-#include <string_view>
 
 #include <nvrhi/nvrhi.h>
 
 namespace lumin::render {
 
-    /// 描述一个从磁盘加载并交给 NvRHI 创建的着色器模块。
-    struct ShaderModuleDesc {
-        /// 相对于 ShaderLibrary 根目录的二进制文件路径。
-        std::filesystem::path fileName;
-        /// 单一着色器阶段；不能使用阶段掩码。
-        nvrhi::ShaderType shaderType = nvrhi::ShaderType::None;
-        /// 二进制模块中的入口点名称。
-        std::string entryPoint;
-        /// 调试器中显示的名称；为空时使用 `fileName`。
-        std::string debugName;
-        /// NvAPI HLSL 扩展使用的 UAV 槽；`-1` 表示禁用。
-        int hlslExtensionsUAV = -1;
-    };
-
     namespace detail {
 
-        /// 校验引擎模块描述并生成不持有外部字符串指针的 NvRHI 描述。
-        [[nodiscard]] nvrhi::ShaderDesc makeShaderDesc(const ShaderModuleDesc& desc);
+        /** 将 Catalog stage 转换为单一 NvRHI shader stage。 */
+        [[nodiscard]] nvrhi::ShaderType toNvrhiShaderType(ShaderStage stage) noexcept;
 
-        /// 返回阶段是否是一个可独立创建的光线追踪着色器阶段。
-        [[nodiscard]] bool isRayTracingShaderType(nvrhi::ShaderType shaderType) noexcept;
+        /** 由类型化 Catalog 入口生成不持有外部字符串指针的 NvRHI 描述。 */
+        [[nodiscard]] nvrhi::ShaderDesc makeShaderDesc(const ShaderEntryDesc& entry);
 
     } // namespace detail
 
-    /// 从统一目录加载着色器二进制并创建 NvRHI 着色器对象。
-    class ShaderLibrary {
+    /**
+     * 按内置 `ShaderId` 加载并缓存 NvRHI shader 的 device/session 级资源库。
+     *
+     * 设备与 shader 目录必须覆盖本对象生命周期。该对象只能在拥有 NvRHI device 的渲染主线程使用；相同 ID
+     * 在库生命周期内只读盘并调用一次 `createShader()`，返回 handle 与缓存共享所有权。
+     */
+    class ShaderLibrary final {
     public:
-        /// 创建着色器库；设备与目录必须在加载调用期间保持有效。
+        /** 绑定设备和 CMake 生成的 SPIR-V 根目录。 */
         ShaderLibrary(nvrhi::IDevice& device, std::filesystem::path shaderDirectory);
 
-        /// 按完整描述加载模块；文件或描述无效、设备创建失败时抛出异常。
-        [[nodiscard]] nvrhi::ShaderHandle loadModule(const ShaderModuleDesc& desc) const;
-
-        /// 兼容现有调用的简化加载接口。
-        [[nodiscard]] nvrhi::ShaderHandle loadModule(const std::filesystem::path& fileName,
-                                                     nvrhi::ShaderType shaderType, std::string_view entryPoint) const;
-
-        /// 加载计算着色器；`entryPoint` 必须非空。
-        [[nodiscard]] nvrhi::ShaderHandle loadComputeModule(const std::filesystem::path& fileName,
-                                                            std::string_view entryPoint) const;
-
-        /// 加载单一光线追踪阶段；传入非 RT 阶段时抛出 `std::invalid_argument`。
-        [[nodiscard]] nvrhi::ShaderHandle loadRayTracingModule(const std::filesystem::path& fileName,
-                                                               nvrhi::ShaderType shaderType,
-                                                               std::string_view entryPoint) const;
+        /**
+         * 按稳定 ID 返回 shader；首次访问时从 Catalog 描述创建并缓存。
+         *
+         * @throws std::out_of_range ID 不属于内置 Catalog 时抛出。
+         * @throws std::runtime_error 文件读取或设备创建失败时抛出。
+         */
+        [[nodiscard]] nvrhi::ShaderHandle load(ShaderId id);
 
     private:
+        static constexpr std::size_t shaderCount = static_cast<std::size_t>(ShaderId::Count);
+
         nvrhi::IDevice& device_;
         std::filesystem::path shaderDirectory_;
+        std::array<nvrhi::ShaderHandle, shaderCount> cache_{};
     };
 
 } // namespace lumin::render

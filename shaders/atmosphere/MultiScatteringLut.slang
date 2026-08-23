@@ -1,4 +1,5 @@
-#include "AtmosphereCommon.slang"
+import AtmosphereCommon;
+import AtmosphereUniforms;
 
 [[vk::binding(0, 0)]] ConstantBuffer<AtmosphereGpuConstants> atmosphere;
 [[vk::binding(1, 0)]] Texture2D<float4> transmittanceLut;

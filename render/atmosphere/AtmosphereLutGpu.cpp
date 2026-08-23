@@ -41,21 +41,16 @@ namespace lumin::render::atmosphere {
             throw std::invalid_argument("Atmosphere LUT is invalid.");
         }
 
-        struct AtmosphereLutShaderInfo {
-            const char* fileName = nullptr;
-            const char* entryPoint = nullptr;
-        };
-
-        [[nodiscard]] AtmosphereLutShaderInfo shaderInfo(AtmosphereLut lut) {
+        [[nodiscard]] ShaderId shaderId(AtmosphereLut lut) {
             switch (lut) {
             case AtmosphereLut::Transmittance:
-                return {"TransmittanceLut.comp.spv", "transmittanceMain"};
+                return ShaderId::AtmosphereTransmittance;
             case AtmosphereLut::MultiScattering:
-                return {"MultiScatteringLut.comp.spv", "multiScatteringMain"};
+                return ShaderId::AtmosphereMultiScattering;
             case AtmosphereLut::SkyView:
-                return {"SkyViewLut.comp.spv", "skyViewMain"};
+                return ShaderId::AtmosphereSkyView;
             case AtmosphereLut::AerialPerspective:
-                return {"AerialPerspectiveLut.comp.spv", "aerialPerspectiveMain"};
+                return ShaderId::AtmosphereAerialPerspective;
             case AtmosphereLut::Count:
                 break;
             }
@@ -310,7 +305,6 @@ namespace lumin::render::atmosphere {
                 throw std::runtime_error("Failed to create the atmosphere LUT sampler.");
             }
 
-            ShaderLibrary shaders(device, createInfo.shaderDirectory);
             PipelineFactory pipelineFactory(device);
             for (std::size_t index = 0; index < atmosphereLutResourceCount; ++index) {
                 const AtmosphereLut target = static_cast<AtmosphereLut>(index);
@@ -318,8 +312,7 @@ namespace lumin::render::atmosphere {
                 if (!bindingLayouts[index]) {
                     throw std::runtime_error("Failed to create an atmosphere LUT binding layout.");
                 }
-                const AtmosphereLutShaderInfo shader = shaderInfo(target);
-                const nvrhi::ShaderHandle compute = shaders.loadComputeModule(shader.fileName, shader.entryPoint);
+                const nvrhi::ShaderHandle compute = createInfo.shaders->load(shaderId(target));
                 const std::array layouts = {bindingLayouts[index]};
                 pipelines[index] = pipelineFactory.createComputePipeline({compute, layouts});
             }
@@ -346,10 +339,10 @@ namespace lumin::render::atmosphere {
     };
 
     AtmosphereLutGpu::AtmosphereLutGpu(const AtmosphereLutGpuCreateInfo& createInfo) {
-        if (createInfo.device == nullptr || createInfo.shaderDirectory.empty() || createInfo.frameSlotCount == 0 ||
+        if (createInfo.device == nullptr || createInfo.shaders == nullptr || createInfo.frameSlotCount == 0 ||
             !validateAtmosphereLutQuality(createInfo.quality)) {
             throw std::invalid_argument(
-                "Atmosphere LUT GPU owner requires a device, shader directory, frame slots, and valid quality.");
+                "Atmosphere LUT GPU owner requires a device, shader library, frame slots, and valid quality.");
         }
         impl_ = std::make_unique<Impl>(createInfo);
     }

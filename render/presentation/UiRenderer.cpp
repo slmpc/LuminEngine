@@ -31,12 +31,12 @@ namespace lumin::render {
 
     void UiRenderer::initialize(const UiRendererConfig& config) {
         shutdown();
-        if (config.device == nullptr || config.colorFormat == nvrhi::Format::UNKNOWN || config.frameSlotCount == 0 ||
-            config.fontAtlas == nullptr) {
+        if (config.device == nullptr || config.shaders == nullptr || config.colorFormat == nvrhi::Format::UNKNOWN ||
+            config.frameSlotCount == 0 || config.fontAtlas == nullptr) {
             throw std::invalid_argument("Invalid UiRenderer configuration.");
         }
         device_ = config.device;
-        shaderDirectory_ = config.shaderDirectory;
+        shaders_ = config.shaders;
         outputIsSrgb_ = config.outputIsSrgb;
         try {
             createRendererResources(config);
@@ -57,16 +57,15 @@ namespace lumin::render {
         bindingLayout_ = nullptr;
         fontSampler_ = nullptr;
         fontTexture_ = nullptr;
-        shaderDirectory_.clear();
+        shaders_ = nullptr;
         device_ = nullptr;
         outputIsSrgb_ = false;
         initialized_ = false;
     }
 
     void UiRenderer::createRendererResources(const UiRendererConfig& config) {
-        ShaderLibrary shaders(*device_, shaderDirectory_);
-        vertexShader_ = shaders.loadModule("ImGui.vert.spv", nvrhi::ShaderType::Vertex, "vertexMain");
-        fragmentShader_ = shaders.loadModule("ImGui.frag.spv", nvrhi::ShaderType::Pixel, "fragmentMain");
+        vertexShader_ = shaders_->load(ShaderId::ImGuiVertex);
+        fragmentShader_ = shaders_->load(ShaderId::ImGuiFragment);
 
         const nvrhi::VertexAttributeDesc attributes[] = {
             nvrhi::VertexAttributeDesc()

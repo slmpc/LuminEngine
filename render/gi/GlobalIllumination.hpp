@@ -15,7 +15,8 @@ namespace lumin::render::world {
 
 namespace lumin::render {
     struct GraphicsPipelineDesc;
-}
+    class ShaderLibrary;
+} // namespace lumin::render
 
 namespace lumin::render::gi {
 
@@ -70,7 +71,10 @@ namespace lumin::render::gi {
 #endif
 
     struct CreateInfo {
+        /** NvRHI 设备；生产路径必须提供。 */
         nvrhi::IDevice* device = nullptr;
+        /** Session 级 shader 缓存；生产路径必须提供且覆盖 backend 创建过程。 */
+        ShaderLibrary* shaders = nullptr;
         RenderExtent extent{};
         nvrhi::Format outputFormat = nvrhi::Format::UNKNOWN;
         nvrhi::SamplerHandle sampler;

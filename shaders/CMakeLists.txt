@@ -1,20 +1,51 @@
 include(LuminShaders)
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
-file(GLOB_RECURSE _lumin_shader_configs CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/*.json"
+set(_lumin_shader_catalog_sources
+    "${PROJECT_SOURCE_DIR}/render/resources/ShaderCatalog.hpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/ShaderCatalog.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/ShaderCatalogGenerator.cpp"
+)
+set(_lumin_shader_catalog_compile_sources
+    "${PROJECT_SOURCE_DIR}/render/resources/ShaderCatalog.cpp"
+    "${PROJECT_SOURCE_DIR}/render/resources/ShaderCatalogGenerator.cpp"
 )
 # Shader sources and includes are build inputs tracked by each slangc depfile. Only
-# metadata changes need to regenerate the CMake custom commands.
+# the typed C++ catalog changes need to regenerate the CMake custom commands.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    ${_lumin_shader_configs}
-    "${PROJECT_SOURCE_DIR}/scripts/shader_manifest.py"
+    ${_lumin_shader_catalog_sources}
 )
 
 set(LUMIN_SHADER_MANIFEST "${LUMIN_SHADER_OUTPUT_DIR}/shader-manifest.json")
+set(_lumin_shader_catalog_tool_dir "${LUMIN_SHADER_OUTPUT_DIR}/catalog-tool")
+set(_lumin_shader_catalog_tool "${_lumin_shader_catalog_tool_dir}/LuminShaderCatalogGenerator${CMAKE_EXECUTABLE_SUFFIX}")
+file(MAKE_DIRECTORY "${_lumin_shader_catalog_tool_dir}")
+
+# Catalog generator only depends on the C++ standard library. Building it during configure keeps
+# per-entry custom commands visible to CMake without introducing Python or handwritten JSON.
+set(_lumin_shader_catalog_compile_definitions)
+if(MSVC)
+    list(APPEND _lumin_shader_catalog_compile_definitions /utf-8 /W4 /permissive-)
+endif()
+try_compile(_lumin_shader_catalog_compiled
+    "${_lumin_shader_catalog_tool_dir}/build"
+    SOURCES ${_lumin_shader_catalog_compile_sources}
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    COMPILE_DEFINITIONS ${_lumin_shader_catalog_compile_definitions}
+    COPY_FILE "${_lumin_shader_catalog_tool}"
+    OUTPUT_VARIABLE _lumin_shader_catalog_compile_output
+)
+if(NOT _lumin_shader_catalog_compiled)
+    message(FATAL_ERROR
+        "Failed to compile the C++ shader catalog generator:\n${_lumin_shader_catalog_compile_output}"
+    )
+endif()
+set(LUMIN_SHADER_CATALOG_GENERATOR "${_lumin_shader_catalog_tool}" CACHE INTERNAL
+    "Configure-time C++ shader Catalog generator"
+)
+
 execute_process(
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/shader_manifest.py"
-            generate
+    COMMAND "${_lumin_shader_catalog_tool}"
             --source-dir "${LUMIN_SHADER_SOURCE_DIR}"
             --output-dir "${LUMIN_SHADER_OUTPUT_DIR}"
             --slangc "${LUMIN_SLANGC_EXECUTABLE}"
@@ -27,7 +58,7 @@ execute_process(
 )
 if(NOT _lumin_shader_generate_result EQUAL 0)
     message(FATAL_ERROR
-        "shader_manifest.py failed with ${_lumin_shader_generate_result}:\n"
+        "ShaderCatalogGenerator failed with ${_lumin_shader_generate_result}:\n"
         "${_lumin_shader_generate_stdout}${_lumin_shader_generate_stderr}"
     )
 endif()
@@ -51,7 +82,7 @@ add_custom_command(
     DEPENDS
         ${LUMIN_SHADER_REFLECTIONS}
         "${LUMIN_SHADER_MANIFEST}"
-        "${PROJECT_SOURCE_DIR}/scripts/shader_manifest.py"
+        ${_lumin_shader_catalog_sources}
         "${LUMIN_SHADER_ABI_VALIDATOR}"
     COMMENT "Validating shader reflection ABI"
     VERBATIM

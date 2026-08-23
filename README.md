@@ -25,7 +25,7 @@ Lumin Engine 是一个使用 C++23、SDL3、Slang 和动态渲染构建的紧凑
 - `cmake`：仅保留依赖策略、目标公共设置和 shader 工具发现等少量 CMake 辅助模块。
 - `docs`：简要架构说明。
 
-模块边界、target alias、CMake 入口和 shader companion JSON 约定见
+模块边界、target alias、CMake 入口和 C++ Shader Catalog 约定见
 [`docs/module-architecture.md`](docs/module-architecture.md)。
 新增渲染模块和设置项分别遵循 [`docs/render-feature-development.md`](docs/render-feature-development.md) 与
 [`docs/render-settings-guide.md`](docs/render-settings-guide.md)。

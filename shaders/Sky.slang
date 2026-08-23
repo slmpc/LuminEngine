@@ -1,5 +1,5 @@
-#include "PostProcessUniforms.slang"
-#include "atmosphere/AtmosphereBindings.slang"
+import PostProcessUniforms;
+import atmosphere.AtmosphereBindings;
 
 [[vk::binding(13, 0)]] ConstantBuffer<PostProcessUniforms> frame;
 

@@ -1,4 +1,4 @@
-#include "GpuScene.slang"
+import GpuScene;
 #include "NRD.hlsli"
 
 struct GiCompositeConstants {
