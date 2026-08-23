@@ -197,6 +197,11 @@ namespace {
                                                           0.0F, {0.0F, 0.0F, 1.0F}, {0.0F, 0.0F, 1.0F}, blinn);
         require(nearlyEqual(blinnResult, {1.1F, 0.7F, 0.6F}),
                 "Blinn-Phong GI must apply base color and explicit specular color after NRD.");
+        const glm::vec3 blinnFloor = lumin::render::gi::detail::modulateGiRadiance(
+            {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, {0.5F, 0.25F, 0.1F}, 0.0F, {0.0F, 0.0F, 1.0F},
+            {0.0F, 0.0F, 1.0F}, blinn);
+        require(nearlyEqual(blinnFloor, {0.068F, 0.046F, 0.044F}),
+                "Unconverged Blinn-Phong GI must retain the Raster material ambient floor.");
 
         lumin::render::gpu::GpuMaterialData pbr;
         pbr.metadata.x = 0U;
@@ -205,6 +210,11 @@ namespace {
                                                           0.0F, {0.0F, 0.0F, 1.0F}, {0.0F, 0.0F, 1.0F}, pbr);
         require(nearlyEqual(dielectricResult, {0.808F, 0.52F, 0.232F}),
                 "PBR dielectric GI must apply energy-conserving diffuse and F0 specular modulation.");
+        const glm::vec3 dielectricFloor = lumin::render::gi::detail::modulateGiRadiance(
+            {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, {0.8F, 0.5F, 0.2F}, 0.0F, {0.0F, 0.0F, 1.0F},
+            {0.0F, 0.0F, 1.0F}, pbr);
+        require(nearlyEqual(dielectricFloor, {0.0976F, 0.0616F, 0.0256F}),
+                "Unconverged dielectric GI must retain the Raster material ambient floor.");
 
         const glm::vec3 metalResult =
             lumin::render::gi::detail::modulateGiRadiance({10.0F, 10.0F, 10.0F}, {1.0F, 1.0F, 1.0F}, {0.8F, 0.5F, 0.2F},
@@ -333,8 +343,8 @@ namespace {
                     source.find("material.metadata.x == kBlinnPhongSurfaceModel") != std::string::npos &&
                     source.find("diffuseRadiance * albedo * diffuseWeight + specularRadiance * fresnel") !=
                         std::string::npos &&
-                    source.find("float4(indirectRadiance, 0.0)") != std::string::npos,
-                "GI composite shader must decode REBLUR signals before both material modulation paths.");
+                    source.find("float4(max(indirectRadiance, ambientFloor), 0.0)") != std::string::npos,
+                "GI composite shader must decode REBLUR signals and retain the material ambient floor.");
     }
 
 } // namespace

@@ -1,5 +1,8 @@
+#include "render/gi/raytracing/RayTracedDirectLighting.hpp"
 #include "render/gi/raytracing/RayTracedGi.hpp"
+#include "scene/Environment.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -12,6 +15,12 @@ namespace {
         }
     }
 
+    void requireNear(float actual, float expected, const char* message) {
+        if (std::abs(actual - expected) > 1.0e-5F) {
+            throw std::runtime_error(message);
+        }
+    }
+
     template <typename Callable> void requireInvalidArgument(Callable&& callable, const char* message) {
         try {
             callable();
@@ -19,6 +28,28 @@ namespace {
             return;
         }
         throw std::runtime_error(message);
+    }
+
+    void testRayTracingSunRadianceMatchesRasterReference() {
+        lumin::scene::DirectionalLight sun;
+        const glm::vec4 defaultRadiance = lumin::render::gi::makeRayTracingSunRadiance(sun, true);
+        requireNear(defaultRadiance.x, sun.color.x * 3.2F,
+                    "Default RT sun radiance must match the Raster HDR reference scale.");
+        requireNear(defaultRadiance.y, sun.color.y * 3.2F,
+                    "Default RT sun color must preserve the scene light tint.");
+        requireNear(defaultRadiance.z, sun.color.z * 3.2F,
+                    "Default RT sun color must preserve the scene light tint.");
+        requireNear(defaultRadiance.w, 1.0F, "RT environment visibility must remain enabled.");
+
+        sun.illuminanceLux *= 0.5F;
+        const glm::vec4 halfRadiance = lumin::render::gi::makeRayTracingSunRadiance(sun, true);
+        requireNear(halfRadiance.x, defaultRadiance.x * 0.5F,
+                    "RT sun radiance must respond linearly to scene illuminance.");
+
+        const glm::vec4 disabledRadiance = lumin::render::gi::makeRayTracingSunRadiance(sun, false);
+        require(disabledRadiance.x == 0.0F && disabledRadiance.y == 0.0F && disabledRadiance.z == 0.0F &&
+                    disabledRadiance.w == 1.0F,
+                "Disabling direct lighting must preserve only RT environment visibility.");
     }
 
     void testNrdSignalFormatsAndTextureUsage() {
@@ -122,6 +153,7 @@ namespace {
 
 int main() {
     try {
+        testRayTracingSunRadianceMatchesRasterReference();
         testNrdSignalFormatsAndTextureUsage();
         testBindingLayoutMatchesShaderAbi();
         testDispatchUsesFullRenderExtent();

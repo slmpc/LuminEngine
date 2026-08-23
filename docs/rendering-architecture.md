@@ -200,6 +200,8 @@ material ID 与 `GpuMaterialData` buffer。`MetallicRoughness` 路径保持 GGX�
 `GlobalIlluminationMode::Legacy` 使用 raster G-buffer、CSM、延迟光照与可选的 SSAO、HBAO 或 GTAO；
 `GlobalIlluminationMode::RayTracing` 使用 primary/direct RT 和 RT 间接光，不创建或读取 G-buffer/CSM。运行时能力不足、
 场景尚无可追踪几何，或构建时使用 `LUMIN_RAY_TRACING=OFF` 时，Ray Tracing 请求会安全回退到 Legacy 拓扑。
+在物理相机曝光尚未接入期间，RTDI、RTGI 与 SHARC 共用太阳照度转换，并把默认 `110000 lux` 映射到 Raster 已有的
+`3.2` scene-linear HDR 直射光标尺；atmosphere LUT 仍沿用自身的物理散射标尺，切换渲染拓扑不会额外改变天空曝光。
 
 Ray Tracing 模式可分别关闭 SHARC 与 NRD。关闭 SHARC 后不录制 cache update/resolve/statistics pass，RT 间接光改用
 无辐射缓存的 fallback estimate；关闭 NRD 后，原始 diffuse/specular radiance-hit-distance 直接交给 GI composite。
@@ -236,6 +238,8 @@ texture 和 AS；该回收是逐帧资源生命周期的一部分，不能仅依
 禁用全局光照时的中性值为 `{0, 0, 0, 1}`。屏幕空间 AO 后端写入 `{0, 0, 0, ao}`，延迟光照按
 `legacyAmbient * globalIllumination.a + globalIllumination.rgb` 合成环境光。该图像同时支持颜色附件、采样和存储图像
 用途，以便后续后端使用光线追踪或计算通道写入相同契约。
+Ray Tracing composite 写入 `alpha=0`，RGB 为材质调制后的追踪间接光与 Raster 同材质环境项的分量最大值；该环境项
+只作为 raw RT 单样本或 SHARC 未收敛阶段的稳定下限，不与更强的追踪结果相加。
 
 相机切换、场景拓扑变化、Legacy/Ray Tracing 模式、AO 算法或参数、Feature 开关变化以及交换链重建都会使后端历史失效。无时序历史的屏幕空间 AO 后端
 忽略失效通知；SHARC、NRD diffuse/specular 和 TAA 分域决定 keep、soft reset 或 full reset，并且都只在成功提交后

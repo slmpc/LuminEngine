@@ -111,7 +111,8 @@ namespace lumin::render::gi {
          * CPU 侧材质调制参考实现，供测试和抓帧诊断使用。
          *
          * diffuse/specular 输入已包含路径采样权重，但尚未乘主表面反射率。PBR 使用能量守恒漫反射权重与
-         * Schlick Fresnel；Blinn-Phong 使用 base color 与显式 specular color。
+         * Schlick Fresnel；Blinn-Phong 使用 base color 与显式 specular color。结果不会低于 Raster 同材质的
+         * 环境项，避免 raw RT 或 SHARC 尚未收敛时出现拓扑切换亮度断层。
          */
         [[nodiscard]] glm::vec3 modulateGiRadiance(const glm::vec3& diffuseRadiance, const glm::vec3& specularRadiance,
                                                    const glm::vec3& albedo, float metallic, const glm::vec3& normal,
@@ -140,9 +141,10 @@ namespace lumin::render::gi {
     /**
      * 将 NRD 去噪后的未调制辐亮度写入引擎现有 packed GI 纹理。
      *
-     * 有效几何写入 `float4(indirectRadiance, 0)`，从而让 deferred lighting 用真实间接光替代旧环境项；
-     * 背景或无效材质写入 neutral output `{0, 0, 0, 1}`。本 pass 不拥有时序历史，也不导入调用方资源，
-     * 因此必须同时传入物理 NvRHI 对象及其已有 FrameGraph 身份。
+     * 有效几何写入 `float4(max(indirectRadiance, materialAmbientFloor), 0)`，用追踪到的间接光替代旧环境项，
+     * 同时在 raw RT 或 SHARC 尚未收敛时保留相同材质环境基线；背景或无效材质写入 neutral output
+     * `{0, 0, 0, 1}`。本 pass 不拥有时序历史，也不导入调用方资源，因此必须同时传入物理 NvRHI 对象及其已有
+     * FrameGraph 身份。
      */
     class GiCompositePass final {
     public:

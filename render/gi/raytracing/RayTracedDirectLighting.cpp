@@ -2,6 +2,7 @@
 
 #include "render/resources/PipelineFactory.hpp"
 #include "render/resources/ShaderLibrary.hpp"
+#include "scene/Environment.hpp"
 
 #include <array>
 #include <cstring>
@@ -14,6 +15,10 @@
 
 namespace lumin::render::gi {
     namespace {
+
+        constexpr float rasterReferenceSunRadiance = 3.2F;
+        constexpr float referenceSunIlluminanceLux = 110000.0F;
+        constexpr float directLuxToRendererRadiance = rasterReferenceSunRadiance / referenceSunIlluminanceLux;
 
         constexpr std::uint32_t tlasBinding = 0;
         constexpr std::uint32_t vertexBuffersBinding = 1;
@@ -84,6 +89,12 @@ namespace lumin::render::gi {
         }
 
     } // namespace
+
+    glm::vec4 makeRayTracingSunRadiance(const scene::DirectionalLight& sun, bool directLightingEnabled) noexcept {
+        // 尚无物理相机曝光；RT 直射光必须沿用 Raster 的 HDR 标尺，避免切换拓扑时能量骤降。
+        const float directScale = directLightingEnabled ? sun.illuminanceLux * directLuxToRendererRadiance : 0.0F;
+        return glm::vec4{sun.color * directScale, 1.0F};
+    }
 
     namespace detail {
 

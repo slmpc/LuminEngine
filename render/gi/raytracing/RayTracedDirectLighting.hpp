@@ -16,7 +16,24 @@
 #include "render/gpu/GpuSceneResources.hpp"
 #include "render/resources/FrameGraph.hpp"
 
+namespace lumin::scene {
+    struct DirectionalLight;
+}
+
 namespace lumin::render::gi {
+
+    /**
+     * 将场景太阳照度转换为 Ray Tracing 使用的 scene-linear HDR 辐亮度。
+     *
+     * 在物理相机曝光接入前，该转换保持默认太阳与 Raster 路径的直射光标尺一致；`w` 始终为 1，
+     * 因此关闭直射光时 atmosphere miss 与间接光仍可读取天空。
+     *
+     * @param sun 场景拥有的方向光快照，调用期间必须有效。
+     * @param directLightingEnabled 是否输出太阳直射光。
+     * @return `rgb` 为供 RTDI、RTGI 与 SHARC 共用的太阳辐亮度，`w` 为天空亮度尺度。
+     */
+    [[nodiscard]] glm::vec4 makeRayTracingSunRadiance(const scene::DirectionalLight& sun,
+                                                      bool directLightingEnabled) noexcept;
 
     /** 与 `shaders/RtDi.slang` 同构的 primary-ray direct-lighting 常量。 */
     struct alignas(16) RayTracedDiConstants {

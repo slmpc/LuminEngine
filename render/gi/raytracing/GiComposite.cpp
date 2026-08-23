@@ -226,7 +226,10 @@ namespace lumin::render::gi {
             const glm::vec3 specular = finitePositive(specularRadiance);
             const glm::vec3 baseColor = finiteSaturate(albedo);
             if (material.metadata.x == static_cast<std::uint32_t>(scene::SurfaceModel::BlinnPhong)) {
-                return diffuse * baseColor + specular * finiteSaturate(glm::vec3{material.specularColorShininess});
+                const glm::vec3 specularColor = finiteSaturate(glm::vec3{material.specularColorShininess});
+                const glm::vec3 indirect = diffuse * baseColor + specular * specularColor;
+                const glm::vec3 ambientFloor = baseColor * 0.12F + specularColor * 0.04F;
+                return glm::max(indirect, ambientFloor);
             }
 
             const glm::vec3 surfaceNormal = safeNormalize(normal, glm::vec3{0.0F, 0.0F, 1.0F});
@@ -237,7 +240,9 @@ namespace lumin::render::gi {
             const float fresnelPower = std::pow(1.0F - normalDotView, 5.0F);
             const glm::vec3 fresnel = reflectanceAtNormal + (glm::vec3{1.0F} - reflectanceAtNormal) * fresnelPower;
             const glm::vec3 diffuseWeight = (glm::vec3{1.0F} - fresnel) * (1.0F - clampedMetallic);
-            return diffuse * baseColor * diffuseWeight + specular * fresnel;
+            const glm::vec3 indirect = diffuse * baseColor * diffuseWeight + specular * fresnel;
+            const glm::vec3 ambientFloor = baseColor * (1.0F - clampedMetallic) * 0.12F + reflectanceAtNormal * 0.04F;
+            return glm::max(indirect, ambientFloor);
         }
 
         FrameGraphPassHandle addGiCompositePass(FrameGraph& frameGraph, const GiCompositeGraphResources& resources,

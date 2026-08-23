@@ -60,10 +60,12 @@ void compositeMain(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float metallic = saturate(albedoMetallic.a);
 
     float3 indirectRadiance;
+    float3 ambientFloor;
     if (material.metadata.x == kBlinnPhongSurfaceModel) {
         // 路径采样已包含 cosine/pdf 权重；这里只恢复主表面的漫反射与传统镜面颜色。
         float3 specularColor = saturate(material.specularColorShininess.rgb);
         indirectRadiance = diffuseRadiance * albedo + specularRadiance * specularColor;
+        ambientFloor = albedo * 0.12 + specularColor * 0.04;
     } else {
         float3 normal = safeNormalize(normalRoughnessTexture.Load(int3(pixel, 0)).xyz,
                                       float3(0.0, 0.0, 1.0));
@@ -73,8 +75,10 @@ void compositeMain(uint3 dispatchThreadId : SV_DispatchThreadID) {
         float3 fresnel = fresnelSchlick(normalDotView, reflectanceAtNormal);
         float3 diffuseWeight = (1.0 - fresnel) * (1.0 - metallic);
         indirectRadiance = diffuseRadiance * albedo * diffuseWeight + specularRadiance * fresnel;
+        ambientFloor = albedo * (1.0 - metallic) * 0.12 + reflectanceAtNormal * 0.04;
     }
 
-    // alpha=0 禁用 deferred 的 legacy ambient，避免与真实间接辐亮度重复叠加。
-    globalIlluminationOutput[pixel] = float4(indirectRadiance, 0.0);
+    // 单样本 raw RT 与尚未收敛的 SHARC 可能暂时返回近零能量。取既有材质环境项作为下限，避免切换拓扑后
+    // 阴影区域骤黑；较强的真实反弹光原样保留，不与该下限重复相加。
+    globalIlluminationOutput[pixel] = float4(max(indirectRadiance, ambientFloor), 0.0);
 }
