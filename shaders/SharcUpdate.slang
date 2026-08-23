@@ -1,4 +1,5 @@
 #include "GpuScene.slang"
+#include "PhysicalLighting.slang"
 #include "atmosphere/AtmosphereBindings.slang"
 #define LUMIN_SHARC_UPDATE 1
 #include "SharcRuntime.slang"
@@ -14,6 +15,7 @@ static const uint kSharcRadianceRay = 0;
 static const uint kSharcShadowRay = 1;
 static const uint kSharcStatisticUpdate = 1;
 static const uint kSharcStatisticOverflow = 2;
+static const uint kInvalidMaterial = 0xffffffffu;
 
 [[vk::binding(0, 0)]] RaytracingAccelerationStructure sceneTlas;
 [[vk::binding(1, 0)]] Texture2D<float4> positionTexture;
@@ -32,6 +34,7 @@ static const uint kSharcStatisticOverflow = 2;
 [[vk::binding(14, 0)]] Texture2D<float4> baseColorTextures[];
 [[vk::binding(15, 0)]] Texture2D<float4> normalRoughnessTextures[];
 [[vk::binding(16, 0)]] SamplerState materialSampler;
+[[vk::binding(17, 0)]] Texture2D<uint> materialIdTexture;
 
 uint sharcHashUint(uint value) {
     value ^= value >> 16;
@@ -43,17 +46,6 @@ uint sharcHashUint(uint value) {
 
 float sharcRandom01(uint seed) {
     return float(sharcHashUint(seed) & 0x00ffffff) * (1.0 / 16777216.0);
-}
-
-float3 sharcCosineHemisphere(float3 normal, uint seed) {
-    float2 random = float2(sharcRandom01(seed), sharcRandom01(seed ^ 0x9e3779b9));
-    float radius = sqrt(random.x);
-    float angle = 6.28318530718 * random.y;
-    float3 localDirection = float3(radius * cos(angle), radius * sin(angle), sqrt(1.0 - random.x));
-    float3 tangent = normalize(abs(normal.z) < 0.999 ? cross(float3(0.0, 0.0, 1.0), normal)
-                                                      : cross(float3(0.0, 1.0, 0.0), normal));
-    float3 bitangent = cross(normal, tangent);
-    return normalize(tangent * localDirection.x + bitangent * localDirection.y + normal * localDirection.z);
 }
 
 SharcParameters sharcParameters() {
@@ -88,16 +80,27 @@ void sharcUpdateRayGenerationMain() {
 
     float4 positionSample = positionTexture.Load(int3(pixel, 0));
     // RT surface 的 position.w 是 hit distance，miss 为负值。
-    if (positionSample.w <= 0.0) {
+    uint materialId = materialIdTexture.Load(int3(pixel, 0));
+    if (positionSample.w <= 0.0 || materialId == kInvalidMaterial) {
         return;
     }
     float3 worldPosition = positionSample.xyz;
-    float3 normal = normalize(normalRoughnessTexture.Load(int3(pixel, 0)).xyz);
-    float3 albedo = max(albedoMetallicTexture.Load(int3(pixel, 0)).rgb, float3(0.0));
+    float4 normalRoughness = normalRoughnessTexture.Load(int3(pixel, 0));
+    float3 normal = normalize(normalRoughness.xyz);
+    GpuMaterialData primaryMaterial = materials[materialId];
+    primaryMaterial.baseColorMetallic = albedoMetallicTexture.Load(int3(pixel, 0));
+    primaryMaterial.surfaceParameters.x = saturate(normalRoughness.w);
+    float3 toView = luminPhysicalSafeNormalize(sharcFrame.cameraPositionSceneScale.xyz - worldPosition, normal);
+    LuminBrdfSample diffuseSample = luminSampleCookTorranceDiffuse(
+        luminMakeCookTorranceMaterial(primaryMaterial), normal, toView,
+        float2(sharcRandom01(tileSeed ^ 0x51ed270b), sharcRandom01(tileSeed ^ 0x9e3779b9)));
+    if (diffuseSample.valid == 0u) {
+        return;
+    }
 
     SharcUpdatePayload payload;
     SharcInit(payload.cacheState);
-    payload.throughput = albedo;
+    payload.throughput = diffuseSample.throughput;
     payload.rayKind = kSharcRadianceRay;
     payload.visibility = 0.0;
 
@@ -111,7 +114,7 @@ void sharcUpdateRayGenerationMain() {
 
     RayDesc ray;
     ray.Origin = worldPosition + normal * sharcFrame.traceParameters.x;
-    ray.Direction = sharcCosineHemisphere(normal, tileSeed ^ 0x51ed270b);
+    ray.Direction = diffuseSample.direction;
     ray.TMin = sharcFrame.traceParameters.x;
     ray.TMax = sharcFrame.traceParameters.y;
     TraceRay(sceneTlas, 0, 0xff, 0, 1, 0, ray, payload);
@@ -119,7 +122,7 @@ void sharcUpdateRayGenerationMain() {
 
 [shader("miss")]
 void sharcUpdateRadianceMissMain(inout SharcUpdatePayload payload) {
-    float3 skyRadiance = atmosphereSampleEnvironmentRadiance(WorldRayDirection()) * sharcFrame.sunRadiance.w;
+    float3 skyRadiance = atmosphereSampleEnvironmentRadiance(WorldRayDirection()) * sharcFrame.sunIrradiance.w;
     SharcUpdateMiss(sharcParameters(), payload.cacheState, skyRadiance);
 }
 
@@ -181,7 +184,10 @@ void sharcUpdateClosestHitMain(
     TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff, 0, 1, 1, shadowRay, shadowPayload);
 
     float noL = saturate(dot(worldNormal, toSun));
-    float3 directLighting = material.baseColorMetallic.rgb * sharcFrame.sunRadiance.rgb *
+    float3 toView = luminPhysicalSafeNormalize(-WorldRayDirection(), worldNormal);
+    LuminCookTorranceLobes lobes = luminEvaluateCookTorrance(
+        luminMakeCookTorranceMaterial(material), worldNormal, toView, toSun);
+    float3 directLighting = (lobes.diffuse + lobes.specular) * sharcFrame.sunIrradiance.rgb *
                             (noL * shadowPayload.visibility);
     SharcHitData hitData;
     hitData.positionWorld = hitPosition;

@@ -22,13 +22,5 @@ float4 fragmentMain(VertexOutput input) : SV_Target {
     float2 clipPosition = float2(input.uv.x * 2.0 - 1.0, 1.0 - input.uv.y * 2.0);
     float4 worldFar = mul(frame.inverseViewProjection, float4(clipPosition, 1.0, 1.0));
     float3 rayDirection = normalize(worldFar.xyz / max(abs(worldFar.w), 1e-5) - frame.cameraPosition.xyz);
-    float3 skyColor = atmosphereSampleEnvironmentRadiance(rayDirection);
-
-    float3 toSun = normalize(atmosphere.toSunWorld.xyz);
-    float sunAmount = saturate(dot(rayDirection, toSun));
-    float sunDisk = pow(sunAmount, 1400.0) * 18.0;
-    float sunGlow = pow(sunAmount, 24.0) * 0.8;
-    float3 sunColor = max(atmosphere.sunColorIlluminanceLux.rgb, float3(0.0));
-    skyColor += sunColor * (sunDisk + sunGlow);
-    return float4(skyColor, 1.0);
+    return float4(atmosphereSamplePrimaryEnvironmentRadiance(rayDirection), 1.0);
 }

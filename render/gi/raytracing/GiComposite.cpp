@@ -80,28 +80,12 @@ namespace lumin::render::gi {
             device.unmapBuffer(buffer);
         }
 
-        [[nodiscard]] float finiteSaturate(float value) noexcept {
-            return std::isfinite(value) ? std::clamp(value, 0.0F, 1.0F) : 0.0F;
-        }
-
-        [[nodiscard]] glm::vec3 finiteSaturate(const glm::vec3& value) noexcept {
-            return {finiteSaturate(value.x), finiteSaturate(value.y), finiteSaturate(value.z)};
-        }
-
         [[nodiscard]] glm::vec3 finitePositive(const glm::vec3& value) noexcept {
             return {
                 std::isfinite(value.x) ? std::max(value.x, 0.0F) : 0.0F,
                 std::isfinite(value.y) ? std::max(value.y, 0.0F) : 0.0F,
                 std::isfinite(value.z) ? std::max(value.z, 0.0F) : 0.0F,
             };
-        }
-
-        [[nodiscard]] glm::vec3 safeNormalize(const glm::vec3& value, const glm::vec3& fallback) noexcept {
-            const float lengthSquared = glm::dot(value, value);
-            if (!std::isfinite(lengthSquared) || lengthSquared <= 1.0e-12F) {
-                return fallback;
-            }
-            return value / std::sqrt(lengthSquared);
         }
 
     } // namespace
@@ -219,30 +203,8 @@ namespace lumin::render::gi {
             return result;
         }
 
-        glm::vec3 modulateGiRadiance(const glm::vec3& diffuseRadiance, const glm::vec3& specularRadiance,
-                                     const glm::vec3& albedo, float metallic, const glm::vec3& normal,
-                                     const glm::vec3& toView, const gpu::GpuMaterialData& material) noexcept {
-            const glm::vec3 diffuse = finitePositive(diffuseRadiance);
-            const glm::vec3 specular = finitePositive(specularRadiance);
-            const glm::vec3 baseColor = finiteSaturate(albedo);
-            if (material.metadata.x == static_cast<std::uint32_t>(scene::SurfaceModel::BlinnPhong)) {
-                const glm::vec3 specularColor = finiteSaturate(glm::vec3{material.specularColorShininess});
-                const glm::vec3 indirect = diffuse * baseColor + specular * specularColor;
-                const glm::vec3 ambientFloor = baseColor * 0.12F + specularColor * 0.04F;
-                return glm::max(indirect, ambientFloor);
-            }
-
-            const glm::vec3 surfaceNormal = safeNormalize(normal, glm::vec3{0.0F, 0.0F, 1.0F});
-            const glm::vec3 viewDirection = safeNormalize(toView, surfaceNormal);
-            const float normalDotView = finiteSaturate(glm::dot(surfaceNormal, viewDirection));
-            const float clampedMetallic = finiteSaturate(metallic);
-            const glm::vec3 reflectanceAtNormal = glm::mix(glm::vec3{0.04F}, baseColor, clampedMetallic);
-            const float fresnelPower = std::pow(1.0F - normalDotView, 5.0F);
-            const glm::vec3 fresnel = reflectanceAtNormal + (glm::vec3{1.0F} - reflectanceAtNormal) * fresnelPower;
-            const glm::vec3 diffuseWeight = (glm::vec3{1.0F} - fresnel) * (1.0F - clampedMetallic);
-            const glm::vec3 indirect = diffuse * baseColor * diffuseWeight + specular * fresnel;
-            const glm::vec3 ambientFloor = baseColor * (1.0F - clampedMetallic) * 0.12F + reflectanceAtNormal * 0.04F;
-            return glm::max(indirect, ambientFloor);
+        glm::vec3 combineGiRadiance(const glm::vec3& diffuseRadiance, const glm::vec3& specularRadiance) noexcept {
+            return finitePositive(diffuseRadiance) + finitePositive(specularRadiance);
         }
 
         FrameGraphPassHandle addGiCompositePass(FrameGraph& frameGraph, const GiCompositeGraphResources& resources,

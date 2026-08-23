@@ -17,7 +17,7 @@ struct SharcGpuConstants {
     float4 cameraPositionSceneScale;
     float4 previousCameraPositionLogarithmBase;
     float4 toSunWorldRadianceScale;
-    float4 sunRadiance;
+    float4 sunIrradiance;
     float4 traceParameters;
     uint4 cacheParameters;
     uint4 renderParameters;

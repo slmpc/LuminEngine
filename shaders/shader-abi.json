@@ -255,7 +255,7 @@
             "size": 16
           },
           {
-            "name": "sunRadiance",
+            "name": "sunIrradiance",
             "offset": 48,
             "size": 16
           },
@@ -301,7 +301,7 @@
             "size": 16
           },
           {
-            "name": "sunRadiance",
+            "name": "sunIrradiance",
             "offset": 176,
             "size": 16
           },
@@ -364,7 +364,7 @@
             "size": 16
           },
           {
-            "name": "sunRadiance",
+            "name": "sunIrradiance",
             "offset": 48,
             "size": 16
           },

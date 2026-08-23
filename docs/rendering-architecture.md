@@ -200,8 +200,17 @@ material ID 与 `GpuMaterialData` buffer。`MetallicRoughness` 路径保持 GGX�
 `GlobalIlluminationMode::Legacy` 使用 raster G-buffer、CSM、延迟光照与可选的 SSAO、HBAO 或 GTAO；
 `GlobalIlluminationMode::RayTracing` 使用 primary/direct RT 和 RT 间接光，不创建或读取 G-buffer/CSM。运行时能力不足、
 场景尚无可追踪几何，或构建时使用 `LUMIN_RAY_TRACING=OFF` 时，Ray Tracing 请求会安全回退到 Legacy 拓扑。
-在物理相机曝光尚未接入期间，RTDI、RTGI 与 SHARC 共用太阳照度转换，并把默认 `110000 lux` 映射到 Raster 已有的
-`3.2` scene-linear HDR 直射光标尺；atmosphere LUT 仍沿用自身的物理散射标尺，切换渲染拓扑不会额外改变天空曝光。
+RTDI、RTGI、SHARC 与 atmosphere LUT 共用 EV100 15、饱和归一化系数 `q=1.2` 的固定物理预曝光
+`1 / (q * 2^EV100)`。场景太阳的 `illuminanceLux` 因而始终作为入射照度线性参与计算，不再映射到 Raster 的任意
+`3.2` 常量；预曝光只负责让太阳、天空与反弹光安全落入 FP16 scene-linear 缓冲范围。天空太阳盘使用真实的
+`0.2679` 度角半径，并由入射照度除以太阳盘立体角得到辐亮度。
+
+Ray Tracing 的所有材质统一使用 Cook-Torrance BRDF：GGX 法线分布、Smith-GGX 几何遮蔽与 Schlick Fresnel。
+Metallic-Roughness 材质使用 `F0 = lerp(0.04, baseColor, metallic)`；旧 Blinn-Phong 材质在 RT 路径中把显式
+`specularColor` 解释为介质 `F0`，不再执行未归一化的 Phong 高光。RTGI 漫反射采用 cosine-weighted sampling，镜面
+采用 GGX importance sampling，两路都在写入 NRD 前应用 `BRDF * cos(theta) / PDF`。
+Cook-Torrance 的低粗糙度掠射峰值在数学上可能超过 half 范围；BRDF 计算保持不截断，仅在 FP16 scene-radiance
+纹理写入边界限制到 `65504`，防止 `Inf/NaN` 污染后续 NRD、TAA 与 tone mapping。
 
 Ray Tracing 模式可分别关闭 SHARC 与 NRD。关闭 SHARC 后不录制 cache update/resolve/statistics pass，RT 间接光改用
 无辐射缓存的 fallback estimate；关闭 NRD 后，原始 diffuse/specular radiance-hit-distance 直接交给 GI composite。
@@ -238,8 +247,9 @@ texture 和 AS；该回收是逐帧资源生命周期的一部分，不能仅依
 禁用全局光照时的中性值为 `{0, 0, 0, 1}`。屏幕空间 AO 后端写入 `{0, 0, 0, ao}`，延迟光照按
 `legacyAmbient * globalIllumination.a + globalIllumination.rgb` 合成环境光。该图像同时支持颜色附件、采样和存储图像
 用途，以便后续后端使用光线追踪或计算通道写入相同契约。
-Ray Tracing composite 写入 `alpha=0`，RGB 为材质调制后的追踪间接光与 Raster 同材质环境项的分量最大值；该环境项
-只作为 raw RT 单样本或 SHARC 未收敛阶段的稳定下限，不与更强的追踪结果相加。
+Ray Tracing composite 写入 `alpha=0`，RGB 直接合并已经完整应用 Cook-Torrance BRDF 和采样权重的 diffuse/specular
+出射辐亮度。Composite 不再二次乘材质项，也不注入常量环境光或 Raster ambient floor；无能量路径保持为黑色，亮度
+只能来自太阳、atmosphere environment 或真实追踪到的反弹光。
 
 相机切换、场景拓扑变化、Legacy/Ray Tracing 模式、AO 算法或参数、Feature 开关变化以及交换链重建都会使后端历史失效。无时序历史的屏幕空间 AO 后端
 忽略失效通知；SHARC、NRD diffuse/specular 和 TAA 分域决定 keep、soft reset 或 full reset，并且都只在成功提交后

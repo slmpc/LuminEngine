@@ -379,7 +379,7 @@ namespace lumin::render {
 
         const scene::DirectionalLight& sun = sceneData.world->environment().sun;
         const glm::vec3 toSun = -normalizedLightDirection(sun.direction);
-        const glm::vec4 sunRadiance = gi::makeRayTracingSunRadiance(sun, lightingSettings.enabled);
+        const glm::vec4 sunIrradiance = gi::makeRayTracingSunIrradiance(sun, lightingSettings.enabled);
         const gi::RayTracingEnvironmentBindings environment{
             .atmosphere = atmosphereConsumerBindingSets_[frameIndex],
         };
@@ -392,7 +392,7 @@ namespace lumin::render {
             .cameraPosition = sceneData.camera.position,
             .cameraForward = sceneData.camera.forward,
             .toSunWorld = glm::vec4{toSun, 0.0f},
-            .sunRadiance = sunRadiance,
+            .sunIrradiance = sunIrradiance,
             .renderSize = glm::vec4{static_cast<float>(context.identity().extent.width),
                                     static_cast<float>(context.identity().extent.height),
                                     -sceneData.camera.jitter.x / static_cast<float>(context.identity().extent.width),
@@ -565,7 +565,7 @@ namespace lumin::render {
 
         const scene::DirectionalLight& sun = sceneData.world->environment().sun;
         const glm::vec3 toSun = -normalizedLightDirection(sun.direction);
-        const glm::vec4 sunRadiance = gi::makeRayTracingSunRadiance(sun, lightingSettings.enabled);
+        const glm::vec4 sunIrradiance = gi::makeRayTracingSunIrradiance(sun, lightingSettings.enabled);
         gi::SharcInvalidationInputs sharcInvalidation{
             .cameraCut = context.changes().containsAny(core::HistoryReason::CameraCut),
             .topologyChanged = world::hasAnyChange(sceneData.changes, world::SceneChangeMask::InstanceTopology),
@@ -608,20 +608,20 @@ namespace lumin::render {
         const gi::SharcFrameParameters sharcFrame{
             .cameraPosition = sceneData.camera.position,
             .toSunWorld = glm::vec4{toSun, 0.0f},
-            .sunRadiance = sunRadiance,
+            .sunIrradiance = sunIrradiance,
             .renderWidth = context.identity().extent.width,
             .renderHeight = context.identity().extent.height,
             .minTraceDistance = 0.001f,
             .maxTraceDistance = sceneData.camera.farPlane,
         };
         if (runtime.sharcEnabled) {
-            data.sharcRecord =
-                runtime.sharc->record(context.frameGraph(), frameIndex, true, sharcFrame, sharcInvalidation,
-                                      environment, environmentResources,
-                                      gi::SharcUpdateFrameGraphInputs{surface.worldPositionHitDistance.graphResource,
-                                                                      surface.normalRoughness.graphResource,
-                                                                      surface.albedoMetallic.graphResource},
-                                      sceneBindings, sceneGraphResources);
+            data.sharcRecord = runtime.sharc->record(
+                context.frameGraph(), frameIndex, true, sharcFrame, sharcInvalidation, environment,
+                environmentResources,
+                gi::SharcUpdateFrameGraphInputs{surface.worldPositionHitDistance.graphResource,
+                                                surface.normalRoughness.graphResource,
+                                                surface.albedoMetallic.graphResource, surface.materialId.graphResource},
+                sceneBindings, sceneGraphResources);
         }
 
         const core::HistoryAction diffuseAction = context.historyAction(core::HistoryDomain::NrdDiffuse);
@@ -640,7 +640,7 @@ namespace lumin::render {
             .cameraPosition = sceneData.camera.position,
             .cameraForward = sceneData.camera.forward,
             .toSunWorld = glm::vec4{toSun, 0.0f},
-            .sunRadiance = sunRadiance,
+            .sunIrradiance = sunIrradiance,
             .renderSize = glm::vec4{static_cast<float>(context.identity().extent.width),
                                     static_cast<float>(context.identity().extent.height), effectiveJitterDelta.x,
                                     effectiveJitterDelta.y},
@@ -651,7 +651,7 @@ namespace lumin::render {
             context.frameGraph(), frameIndex, true, rayTracingConstants,
             gi::RayTracedGiFrameGraphInputs{surface.worldPositionHitDistance.graphResource,
                                             surface.normalRoughness.graphResource, surface.albedoMetallic.graphResource,
-                                            surface.motion.graphResource},
+                                            surface.motion.graphResource, surface.materialId.graphResource},
             gi::RayTracedGiSceneBindings{
                 .descriptors = data.sceneDescriptors,
                 .geometry = data.geometry,

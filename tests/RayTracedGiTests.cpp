@@ -4,6 +4,9 @@
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
@@ -30,25 +33,26 @@ namespace {
         throw std::runtime_error(message);
     }
 
-    void testRayTracingSunRadianceMatchesRasterReference() {
+    void testRayTracingSunIrradianceUsesPhysicalPreExposure() {
         lumin::scene::DirectionalLight sun;
-        const glm::vec4 defaultRadiance = lumin::render::gi::makeRayTracingSunRadiance(sun, true);
-        requireNear(defaultRadiance.x, sun.color.x * 3.2F,
-                    "Default RT sun radiance must match the Raster HDR reference scale.");
-        requireNear(defaultRadiance.y, sun.color.y * 3.2F,
-                    "Default RT sun color must preserve the scene light tint.");
-        requireNear(defaultRadiance.z, sun.color.z * 3.2F,
-                    "Default RT sun color must preserve the scene light tint.");
-        requireNear(defaultRadiance.w, 1.0F, "RT environment visibility must remain enabled.");
+        const glm::vec4 defaultIrradiance = lumin::render::gi::makeRayTracingSunIrradiance(sun, true);
+        const float expected = sun.illuminanceLux * lumin::render::gi::physicalLightingPreExposure;
+        requireNear(defaultIrradiance.x, sun.color.x * expected,
+                    "RT sun irradiance must use EV100 physical pre-exposure instead of a Raster reference value.");
+        requireNear(defaultIrradiance.y, sun.color.y * expected,
+                    "RT sun irradiance must preserve the scene light tint.");
+        requireNear(defaultIrradiance.z, sun.color.z * expected,
+                    "RT sun irradiance must preserve the scene light tint.");
+        requireNear(defaultIrradiance.w, 1.0F, "RT environment visibility must remain enabled.");
 
         sun.illuminanceLux *= 0.5F;
-        const glm::vec4 halfRadiance = lumin::render::gi::makeRayTracingSunRadiance(sun, true);
-        requireNear(halfRadiance.x, defaultRadiance.x * 0.5F,
-                    "RT sun radiance must respond linearly to scene illuminance.");
+        const glm::vec4 halfIrradiance = lumin::render::gi::makeRayTracingSunIrradiance(sun, true);
+        requireNear(halfIrradiance.x, defaultIrradiance.x * 0.5F,
+                    "RT sun irradiance must respond linearly to scene illuminance.");
 
-        const glm::vec4 disabledRadiance = lumin::render::gi::makeRayTracingSunRadiance(sun, false);
-        require(disabledRadiance.x == 0.0F && disabledRadiance.y == 0.0F && disabledRadiance.z == 0.0F &&
-                    disabledRadiance.w == 1.0F,
+        const glm::vec4 disabledIrradiance = lumin::render::gi::makeRayTracingSunIrradiance(sun, false);
+        require(disabledIrradiance.x == 0.0F && disabledIrradiance.y == 0.0F && disabledIrradiance.z == 0.0F &&
+                    disabledIrradiance.w == 1.0F,
                 "Disabling direct lighting must preserve only RT environment visibility.");
     }
 
@@ -81,7 +85,7 @@ namespace {
         const nvrhi::BindingLayoutDesc desc = lumin::render::gi::detail::makeRayTracedGiBindingLayoutDesc(
             geometryCapacity, false, materialTextureCapacity);
         require(desc.visibility == nvrhi::ShaderType::AllRayTracing && desc.registerSpace == 0 &&
-                    desc.registerSpaceIsDescriptorSet && desc.bindings.size() == 18,
+                    desc.registerSpaceIsDescriptorSet && desc.bindings.size() == 19,
                 "RT GI set 0 must contain scene, material textures, and raw-signal resources.");
         require(desc.bindings[0].slot == 0 && desc.bindings[0].type == nvrhi::ResourceType::RayTracingAccelStruct,
                 "Binding 0 must contain the TLAS.");
@@ -99,10 +103,12 @@ namespace {
                     desc.bindings[16].slot == 22 && desc.bindings[16].getArraySize() == materialTextureCapacity &&
                     desc.bindings[17].slot == 23 && desc.bindings[17].type == nvrhi::ResourceType::Sampler,
                 "RT GI bindings 21-23 must expose both material texture arrays and their sampler.");
+        require(desc.bindings[18].slot == 24 && desc.bindings[18].type == nvrhi::ResourceType::Texture_SRV,
+                "RT GI binding 24 must expose primary material IDs for Cook-Torrance evaluation.");
 
         const nvrhi::BindingLayoutDesc sharcDesc = lumin::render::gi::detail::makeRayTracedGiBindingLayoutDesc(
             geometryCapacity, true, materialTextureCapacity);
-        require(sharcDesc.bindings.size() == 24,
+        require(sharcDesc.bindings.size() == 25,
                 "SHARC query must contain cache bindings and the shared material texture table.");
         for (std::size_t index = 15; index <= 19; ++index) {
             require(sharcDesc.bindings[index].type == nvrhi::ResourceType::StructuredBuffer_UAV,
@@ -111,8 +117,8 @@ namespace {
         require(sharcDesc.bindings[20].type == nvrhi::ResourceType::ConstantBuffer,
                 "SHARC query binding 20 must contain SharcGpuConstants.");
         require(sharcDesc.bindings[21].slot == 21 && sharcDesc.bindings[22].slot == 22 &&
-                    sharcDesc.bindings[23].slot == 23,
-                "SHARC RT GI must preserve material bindings 21-23 after its cache descriptors.");
+                    sharcDesc.bindings[23].slot == 23 && sharcDesc.bindings[24].slot == 24,
+                "SHARC RT GI must preserve material bindings 21-24 after its cache descriptors.");
 
         requireInvalidArgument(
             [] {
@@ -149,14 +155,44 @@ namespace {
                 "RT GI must bind state before dispatching one ray-generation thread per pixel.");
     }
 
+    void testRayTracingShadersUseCookTorranceAndGgxSampling() {
+        const std::filesystem::path shaderRoot =
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "shaders";
+        const auto read = [](const std::filesystem::path& path) {
+            std::ifstream stream(path, std::ios::binary);
+            return std::string{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+        };
+        const std::string physicalLighting = read(shaderRoot / "include/PhysicalLighting.slang");
+        const std::string rtDirect = read(shaderRoot / "RtDi.slang");
+        const std::string rtGi = read(shaderRoot / "RtGi.slang");
+        const std::string sharc = read(shaderRoot / "SharcUpdate.slang");
+
+        require(physicalLighting.find("luminEvaluateCookTorrance") != std::string::npos &&
+                    physicalLighting.find("luminGgxDistribution") != std::string::npos &&
+                    physicalLighting.find("luminSmithGgxG1") != std::string::npos &&
+                    physicalLighting.find("luminFresnelSchlick") != std::string::npos &&
+                    physicalLighting.find("luminSampleCookTorranceSpecular") != std::string::npos &&
+                    physicalLighting.find("luminClampFp16Radiance") != std::string::npos,
+                "Shared physical lighting must implement Cook-Torrance with GGX, Smith, Schlick, and GGX sampling.");
+        for (const std::string* source : {&rtDirect, &rtGi, &sharc}) {
+            require(source->find("luminEvaluateCookTorrance") != std::string::npos,
+                    "RTDI, RTGI, and SHARC must evaluate the shared Cook-Torrance BRDF.");
+        }
+        require(rtGi.find("diffuseSample.throughput") != std::string::npos &&
+                    rtGi.find("specularSample.throughput") != std::string::npos &&
+                    rtGi.find("0.015") == std::string::npos,
+                "RTGI must apply BRDF/PDF throughput without a fixed ambient contribution.");
+    }
+
 } // namespace
 
 int main() {
     try {
-        testRayTracingSunRadianceMatchesRasterReference();
+        testRayTracingSunIrradianceUsesPhysicalPreExposure();
         testNrdSignalFormatsAndTextureUsage();
         testBindingLayoutMatchesShaderAbi();
         testDispatchUsesFullRenderExtent();
+        testRayTracingShadersUseCookTorranceAndGgxSampling();
         std::puts("RayTracedGi PASS");
         return 0;
     } catch (const std::exception& error) {

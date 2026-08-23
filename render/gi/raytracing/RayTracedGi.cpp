@@ -39,9 +39,11 @@ namespace lumin::render::gi {
         constexpr std::uint32_t baseColorTexturesBinding = 21;
         constexpr std::uint32_t normalRoughnessTexturesBinding = 22;
         constexpr std::uint32_t materialSamplerBinding = 23;
+        constexpr std::uint32_t materialIdInputBinding = 24;
 
         [[nodiscard]] bool complete(const RayTracedGiFrameInputs& inputs) noexcept {
-            return inputs.position && inputs.normalRoughness && inputs.albedoMetallic && inputs.motion;
+            return inputs.position && inputs.normalRoughness && inputs.albedoMetallic && inputs.motion &&
+                   inputs.materialId;
         }
 
         [[nodiscard]] bool complete(const RayTracedGiSignalResources& signals) noexcept {
@@ -141,7 +143,8 @@ namespace lumin::render::gi {
                              .setSize(maxMaterialTextureDescriptors))
                 .addItem(nvrhi::BindingLayoutItem::Texture_SRV(normalRoughnessTexturesBinding)
                              .setSize(maxMaterialTextureDescriptors))
-                .addItem(nvrhi::BindingLayoutItem::Sampler(materialSamplerBinding));
+                .addItem(nvrhi::BindingLayoutItem::Sampler(materialSamplerBinding))
+                .addItem(nvrhi::BindingLayoutItem::Texture_SRV(materialIdInputBinding));
             return desc;
         }
 
@@ -165,6 +168,7 @@ namespace lumin::render::gi {
                 .addItem(nvrhi::BindingSetItem::Texture_SRV(normalRoughnessInputBinding, inputs.normalRoughness))
                 .addItem(nvrhi::BindingSetItem::Texture_SRV(albedoMetallicBinding, inputs.albedoMetallic))
                 .addItem(nvrhi::BindingSetItem::Texture_SRV(motionInputBinding, inputs.motion))
+                .addItem(nvrhi::BindingSetItem::Texture_SRV(materialIdInputBinding, inputs.materialId))
                 .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(instancesBinding, scene.descriptors.instances))
                 .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(materialsBinding, scene.descriptors.materials))
                 .addItem(nvrhi::BindingSetItem::Texture_UAV(diffuseOutputBinding, signals.diffuseRadianceHitDistance))
@@ -339,8 +343,9 @@ namespace lumin::render::gi {
             throw std::out_of_range("RT GI frame slot is outside the configured range.");
         }
         if (!inputs.position.isValid() || !inputs.normalRoughness.isValid() || !inputs.albedoMetallic.isValid() ||
-            !inputs.motion.isValid() || !sceneResources.tlas.isValid() || !sceneResources.instances.isValid() ||
-            !sceneResources.materials.isValid() || sceneResources.vertices.size() != scene.geometry.size() ||
+            !inputs.motion.isValid() || !inputs.materialId.isValid() || !sceneResources.tlas.isValid() ||
+            !sceneResources.instances.isValid() || !sceneResources.materials.isValid() ||
+            sceneResources.vertices.size() != scene.geometry.size() ||
             sceneResources.indices.size() != scene.geometry.size() ||
             sceneResources.baseColorTextures.size() != scene.baseColorTextures.size() ||
             sceneResources.normalRoughnessTextures.size() != scene.normalRoughnessTextures.size() ||
@@ -425,6 +430,7 @@ namespace lumin::render::gi {
                 builder.readTexture(inputs.normalRoughness);
                 builder.readTexture(inputs.albedoMetallic);
                 builder.readTexture(inputs.motion);
+                builder.readTexture(inputs.materialId);
                 for (const FrameGraphResourceHandle lut : environmentResources.atmosphere.textures) {
                     builder.readTexture(lut);
                 }

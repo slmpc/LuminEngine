@@ -7,8 +7,8 @@
 // 仅参考公开的物理模型和参数化，未复制、翻译或改写 Alpha-Piscium 的 GPLv3 shader 源码。
 static const float kAtmospherePi = 3.14159265358979323846;
 static const float kAtmosphereRayEpsilonKm = 1.0e-3;
-// 当前 renderer 尚未使用物理相机曝光；该比例把 lux 映射到现有 HDR 辐射范围，接入物理曝光后应统一移除。
-static const float kAtmosphereLuxToRendererRadiance = 1.0e-5;
+// EV100 15 与 q=1.2 的固定饱和归一化预曝光使太阳/天空保持同一单位域，并避免 FP16 中间缓冲溢出。
+static const float kAtmospherePhysicalPreExposure = 1.0 / (1.2 * 32768.0);
 
 struct AtmosphereMediumSample {
     float3 rayleighScattering;
@@ -242,7 +242,7 @@ float3 atmosphereSampleMultiScattering(
 
 float3 atmosphereSolarIrradiance(AtmosphereGpuConstants atmosphere) {
     return max(atmosphere.sunColorIlluminanceLux.rgb, float3(0.0)) * max(atmosphere.sunColorIlluminanceLux.w, 0.0) *
-           kAtmosphereLuxToRendererRadiance;
+           kAtmospherePhysicalPreExposure;
 }
 
 float3 atmosphereSkyDirectionFromUnit(float2 unitCoordinate) {

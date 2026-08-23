@@ -33,6 +33,7 @@ namespace lumin::render::gi {
         constexpr std::uint32_t updateBaseColorTexturesBinding = 14;
         constexpr std::uint32_t updateNormalRoughnessTexturesBinding = 15;
         constexpr std::uint32_t updateMaterialSamplerBinding = 16;
+        constexpr std::uint32_t updateMaterialIdBinding = 17;
 
         constexpr std::uint32_t resolveHashEntriesBinding = 0;
         constexpr std::uint32_t resolveAccumulationBinding = 1;
@@ -54,7 +55,7 @@ namespace lumin::render::gi {
         }
 
         [[nodiscard]] bool complete(const SharcUpdateFrameInputs& inputs) noexcept {
-            return inputs.position && inputs.normalRoughness && inputs.albedoMetallic;
+            return inputs.position && inputs.normalRoughness && inputs.albedoMetallic && inputs.materialId;
         }
 
         [[nodiscard]] bool complete(const SharcUpdateSceneBindings& scene) noexcept {
@@ -99,6 +100,7 @@ namespace lumin::render::gi {
                 .addItem(nvrhi::BindingSetItem::Texture_SRV(updatePositionBinding, inputs.position))
                 .addItem(nvrhi::BindingSetItem::Texture_SRV(updateNormalRoughnessBinding, inputs.normalRoughness))
                 .addItem(nvrhi::BindingSetItem::Texture_SRV(updateAlbedoMetallicBinding, inputs.albedoMetallic))
+                .addItem(nvrhi::BindingSetItem::Texture_SRV(updateMaterialIdBinding, inputs.materialId))
                 .addItem(
                     nvrhi::BindingSetItem::StructuredBuffer_SRV(updateInstancesBinding, scene.descriptors.instances))
                 .addItem(
@@ -247,7 +249,7 @@ namespace lumin::render::gi {
     SharcGpuConstants buildSharcGpuConstants(const SharcRadianceCacheConfig& config, const SharcHistoryPlan& history,
                                              const SharcFrameParameters& frame) {
         if (!validateSharcRadianceCacheConfig(config) || !history.isValid() || !finite(frame.cameraPosition) ||
-            !finite(frame.toSunWorld) || !finite(frame.sunRadiance) || frame.renderWidth == 0 ||
+            !finite(frame.toSunWorld) || !finite(frame.sunIrradiance) || frame.renderWidth == 0 ||
             frame.renderHeight == 0 || !finite(frame.minTraceDistance) || !finite(frame.maxTraceDistance) ||
             frame.minTraceDistance <= 0.0F || frame.maxTraceDistance <= frame.minTraceDistance) {
             throw std::invalid_argument("Cannot build SHARC GPU constants from invalid configuration or frame data.");
@@ -260,7 +262,7 @@ namespace lumin::render::gi {
         result.previousCameraPositionLogarithmBase.w = config.logarithmBase;
         result.toSunWorldRadianceScale = frame.toSunWorld;
         result.toSunWorldRadianceScale.w = config.radianceScale;
-        result.sunRadiance = frame.sunRadiance;
+        result.sunIrradiance = frame.sunIrradiance;
         result.traceParameters = glm::vec4(frame.minTraceDistance, frame.maxTraceDistance, config.levelBias,
                                            config.enableAntiFireflyFilter ? 1.0F : 0.0F);
         result.cacheParameters = glm::uvec4(config.capacity, history.accumulationFrameCount, config.staleFrameCount,
@@ -361,7 +363,8 @@ namespace lumin::render::gi {
                              .setSize(maxMaterialTextureDescriptors))
                 .addItem(nvrhi::BindingLayoutItem::Texture_SRV(updateNormalRoughnessTexturesBinding)
                              .setSize(maxMaterialTextureDescriptors))
-                .addItem(nvrhi::BindingLayoutItem::Sampler(updateMaterialSamplerBinding));
+                .addItem(nvrhi::BindingLayoutItem::Sampler(updateMaterialSamplerBinding))
+                .addItem(nvrhi::BindingLayoutItem::Texture_SRV(updateMaterialIdBinding));
             return desc;
         }
 
@@ -560,7 +563,7 @@ namespace lumin::render::gi {
             throw std::out_of_range("SHARC frame slot is outside the configured range.");
         }
         if (!inputs.position.isValid() || !inputs.normalRoughness.isValid() || !inputs.albedoMetallic.isValid() ||
-            !sceneResources.tlas.isValid() || !sceneResources.instances.isValid() ||
+            !inputs.materialId.isValid() || !sceneResources.tlas.isValid() || !sceneResources.instances.isValid() ||
             !sceneResources.materials.isValid() || !complete(scene) || !environment.isValid() ||
             !environmentResources.isValid() || scene.geometry.size() > impl_->maxGeometryDescriptors ||
             sceneResources.vertices.size() != scene.geometry.size() ||
@@ -693,6 +696,7 @@ namespace lumin::render::gi {
                     builder.readTexture(inputs.position);
                     builder.readTexture(inputs.normalRoughness);
                     builder.readTexture(inputs.albedoMetallic);
+                    builder.readTexture(inputs.materialId);
                     for (const FrameGraphResourceHandle lut : environmentResources.atmosphere.textures) {
                         builder.readTexture(lut);
                     }

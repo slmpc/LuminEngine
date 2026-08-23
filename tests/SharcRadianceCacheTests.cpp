@@ -74,7 +74,7 @@ namespace {
         constexpr std::uint32_t materialTextureCapacity = 7;
         const nvrhi::BindingLayoutDesc update =
             detail::makeSharcUpdateBindingLayoutDesc(geometryCapacity, materialTextureCapacity);
-        require(update.visibility == nvrhi::ShaderType::AllRayTracing && update.bindings.size() == 17,
+        require(update.visibility == nvrhi::ShaderType::AllRayTracing && update.bindings.size() == 18,
                 "SHARC update set 0 must expose scene, cache, constants, and material textures.");
         require(update.bindings[4].type == nvrhi::ResourceType::StructuredBuffer_SRV &&
                     update.bindings[4].getArraySize() == geometryCapacity &&
@@ -90,6 +90,8 @@ namespace {
                     update.bindings[15].slot == 15 && update.bindings[15].getArraySize() == materialTextureCapacity &&
                     update.bindings[16].slot == 16 && update.bindings[16].type == nvrhi::ResourceType::Sampler,
                 "SHARC update bindings 14-16 must expose both material arrays and their sampler.");
+        require(update.bindings[17].slot == 17 && update.bindings[17].type == nvrhi::ResourceType::Texture_SRV,
+                "SHARC update binding 17 must expose primary material IDs for Cook-Torrance throughput.");
 
         const nvrhi::BindingLayoutDesc resolve = detail::makeSharcResolveBindingLayoutDesc();
         require(resolve.visibility == nvrhi::ShaderType::Compute && resolve.bindings.size() == 6,
@@ -165,7 +167,7 @@ namespace {
         SharcFrameParameters frame;
         frame.cameraPosition = glm::vec4(3.0F, 4.0F, 5.0F, 1.0F);
         frame.toSunWorld = glm::vec4(0.0F, 1.0F, 0.0F, 0.0F);
-        frame.sunRadiance = glm::vec4(8.0F, 7.0F, 6.0F, 2.0F);
+        frame.sunIrradiance = glm::vec4(8.0F, 7.0F, 6.0F, 2.0F);
         frame.renderWidth = 1600;
         frame.renderHeight = 900;
         const SharcHistoryPlan plan = history.beginFrame(frame.cameraPosition, {});

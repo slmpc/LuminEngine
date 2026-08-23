@@ -1,4 +1,5 @@
 #include "GpuScene.slang"
+#include "PhysicalLighting.slang"
 #include "atmosphere/AtmosphereBindings.slang"
 
 struct RayTracedDiConstants {
@@ -7,7 +8,7 @@ struct RayTracedDiConstants {
     float4 cameraPosition;
     float4 cameraForward;
     float4 toSunWorld;
-    float4 sunRadiance;
+    float4 sunIrradiance;
     float4 renderSize;
     float4 traceParameters;
 };
@@ -68,25 +69,9 @@ float3 evaluateDirect(GpuMaterialData material, float3 normal, float3 toView, fl
     if (normalDotLight <= 0.0 || visibility <= 0.0 || frame.traceParameters.z < 0.5) {
         return float3(0.0);
     }
-    float3 halfVector = safeNormalize(toView + toLight, normal);
-    if (material.metadata.x == 1u) {
-        float roughness = clamp(material.surfaceParameters.x, 0.04, 1.0);
-        float exponent = clamp(2.0 / max(roughness * roughness, 1e-5) - 2.0, 1.0, 8192.0);
-        float specular = pow(saturate(dot(normal, halfVector)), exponent);
-        return (material.baseColorMetallic.rgb / 3.14159265359 +
-                saturate(material.specularColorShininess.rgb) * specular) *
-               frame.sunRadiance.rgb * normalDotLight * visibility;
-    }
-
-    float metallic = saturate(material.baseColorMetallic.a);
-    float roughness = clamp(material.surfaceParameters.x, 0.04, 1.0);
-    float3 f0 = lerp(float3(0.04), material.baseColorMetallic.rgb, metallic);
-    float fresnel = pow(1.0 - saturate(dot(halfVector, toView)), 5.0);
-    float3 F = f0 + (1.0 - f0) * fresnel;
-    float3 diffuse = (1.0 - F) * (1.0 - metallic) * material.baseColorMetallic.rgb / 3.14159265359;
-    float specularExponent = clamp(2.0 / max(roughness * roughness, 1e-5) - 2.0, 1.0, 8192.0);
-    float specular = pow(saturate(dot(normal, halfVector)), specularExponent);
-    return (diffuse + F * specular) * frame.sunRadiance.rgb * normalDotLight * visibility;
+    LuminCookTorranceLobes lobes = luminEvaluateCookTorrance(
+        luminMakeCookTorranceMaterial(material), normal, toView, toLight);
+    return (lobes.diffuse + lobes.specular) * frame.sunIrradiance.rgb * normalDotLight * visibility;
 }
 
 void writeMiss(uint2 pixel, float3 environmentRadiance) {
@@ -96,7 +81,7 @@ void writeMiss(uint2 pixel, float3 environmentRadiance) {
     materialIdOutput[pixel] = kInvalidMaterial;
     viewZ[pixel] = 0.0;
     motion[pixel] = float2(0.0);
-    directRadiance[pixel] = float4(environmentRadiance, 1.0);
+    directRadiance[pixel] = float4(luminClampFp16Radiance(environmentRadiance), 1.0);
     visibilityMask[pixel] = 0u;
 }
 
@@ -133,7 +118,7 @@ void primaryMissMain(inout PrimaryPayload payload) {
         return;
     }
     uint2 pixel = DispatchRaysIndex().xy;
-    writeMiss(pixel, atmosphereSampleEnvironmentRadiance(WorldRayDirection()) * frame.sunRadiance.w);
+    writeMiss(pixel, atmosphereSamplePrimaryEnvironmentRadiance(WorldRayDirection()) * frame.sunIrradiance.w);
 }
 
 [shader("miss")]
@@ -213,6 +198,7 @@ void primaryClosestHitMain(inout PrimaryPayload payload, BuiltInTriangleIntersec
     materialIdOutput[pixel] = instance.metadata.x;
     viewZ[pixel] = depth;
     motion[pixel] = previousUv - currentUv;
-    directRadiance[pixel] = float4(direct, 1.0);
+    // Cook-Torrance 的低粗糙度掠射峰值可超过 half 上限；仅在 FP16 scene-radiance 存储边界截断，避免 Inf 污染 TAA。
+    directRadiance[pixel] = float4(luminClampFp16Radiance(direct), 1.0);
     visibilityMask[pixel] = 1u;
 }

@@ -209,6 +209,12 @@
           "set": 0,
           "kind": "sampler",
           "name": "materialSampler"
+        },
+        {
+          "binding": 24,
+          "set": 0,
+          "kind": "sampledImage",
+          "name": "materialIdTexture"
         }
       ],
       "abiStructs": [
