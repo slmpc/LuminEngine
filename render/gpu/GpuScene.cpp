@@ -67,6 +67,7 @@ namespace lumin::render::gpu {
                 !sameFloat(left.metallicRoughness.metallic, right.metallicRoughness.metallic) ||
                 !sameVec3(left.blinnPhong.specularColor, right.blinnPhong.specularColor) ||
                 !sameFloat(left.blinnPhong.shininess, right.blinnPhong.shininess) ||
+                !sameFloat(left.blinnPhong.indexOfRefraction, right.blinnPhong.indexOfRefraction) ||
                 !sameFloat(left.textureScale, right.textureScale) ||
                 left.textures.has_value() != right.textures.has_value()) {
                 return false;
@@ -193,6 +194,12 @@ namespace lumin::render::gpu {
         const float shininess = std::isfinite(material.blinnPhong.shininess)
                                     ? std::clamp(material.blinnPhong.shininess, 1.0f, 8192.0f)
                                     : 48.0f;
+        const float indexOfRefraction = std::isfinite(material.blinnPhong.indexOfRefraction)
+                                            ? std::clamp(material.blinnPhong.indexOfRefraction, 1.0f, 3.0f)
+                                            : 1.5f;
+        const float fresnelRatio = (indexOfRefraction - 1.0f) / (indexOfRefraction + 1.0f);
+        const float dielectricReflectanceAtNormal =
+            material.surfaceModel == scene::SurfaceModel::BlinnPhong ? fresnelRatio * fresnelRatio : 0.0f;
         const float textureScale =
             std::isfinite(material.textureScale) ? std::max(std::abs(material.textureScale), 0.0001f) : 1.0f;
         const bool hasTextures = material.textures.has_value() && !material.textures->empty();
@@ -201,7 +208,8 @@ namespace lumin::render::gpu {
         return GpuMaterialData{
             .baseColorMetallic = glm::vec4{baseColor, metallic},
             .specularColorShininess = glm::vec4{specularColor, shininess},
-            .surfaceParameters = glm::vec4{materialDenoisingRoughness(material), textureScale, normalYSign, 0.0f},
+            .surfaceParameters = glm::vec4{materialDenoisingRoughness(material), textureScale, normalYSign,
+                                           dielectricReflectanceAtNormal},
             .metadata = glm::uvec4{static_cast<std::uint32_t>(material.surfaceModel),
                                    hasTextures ? textureDescriptorIndex : 0U, hasTextures ? 1U : 0U, 0U},
         };

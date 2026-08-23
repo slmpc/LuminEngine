@@ -38,9 +38,9 @@ LuminCookTorranceMaterial luminMakeCookTorranceMaterial(GpuMaterialData material
     result.baseColor = saturate(material.baseColorMetallic.rgb);
     result.roughness = clamp(material.surfaceParameters.x, 0.04, 1.0);
     if (material.metadata.x == kLuminBlinnPhongSurfaceModel) {
-        // 旧材质的 specularColor 作为介质 F0；粗糙度仍由统一的 GGX 分布解释。
+        // 旧 Ks 仅保留给 Raster Blinn-Phong；RT 使用由 MTL Ni/材质 IOR 推导并限制过的介质 F0。
         result.diffuseColor = result.baseColor;
-        result.reflectanceAtNormal = saturate(material.specularColorShininess.rgb);
+        result.reflectanceAtNormal = float3(clamp(material.surfaceParameters.w, 0.0, 0.25));
     } else {
         float metallic = saturate(material.baseColorMetallic.a);
         result.diffuseColor = result.baseColor * (1.0 - metallic);

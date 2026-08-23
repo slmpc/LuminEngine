@@ -165,13 +165,14 @@ recipe 注册 RT surface/GPU Scene producer，不包含 Raster-only 模块。RT 
 `scene::Material` 位于 `core/scene/Material.hpp`，通过 `SurfaceModel` 逐材质选择
 `MetallicRoughness` 或 `BlinnPhong`。枚举使用固定的 `uint32_t` 数值 `0/1`，会直接进入 GPU material buffer；
 后续只能追加新值，不能重新排序。材质同时保留两套模型参数，因此编辑器切换模型不会丢失原有调参：
-Metallic-Roughness 使用 `roughness/metallic`，Blinn-Phong 使用 `specularColor/shininess`，两者共享 base color、
-normal map 和 UV scale。
+Metallic-Roughness 使用 `roughness/metallic`，Blinn-Phong 使用 `specularColor/shininess/indexOfRefraction`，两者共享
+base color、normal map 和 UV scale。OBJ 导入器保留 MTL 的 `Ni`；缺失 `Ni` 的旧资产与不含 `ior` 的旧场景使用
+常见电介质默认值 1.5。
 
 `gpu::GpuMaterialData` 是 raster、ray tracing、SHARC 与 NRD adapter 共用的 64-byte、16-byte aligned ABI：
 `baseColorMetallic` 保存基础颜色与金属度，`specularColorShininess` 保存 Blinn-Phong 高光颜色与指数，
-`surfaceParameters` 保存统一等效粗糙度、UV scale 与 normal Y 符号，`metadata` 以整数保存 `SurfaceModel`、
-texture descriptor index 和纹理存在标志。Blinn-Phong 指数通过
+`surfaceParameters` 保存统一等效粗糙度、UV scale、normal Y 符号，以及 Blinn-Phong IOR 推导出的介质 `F0`；
+`metadata` 以整数保存 `SurfaceModel`、texture descriptor index 和纹理存在标志。Blinn-Phong 指数通过
 `sqrt(2 / (shininess + 2))` 转换为 NRD/GI 使用的等效感知粗糙度，避免 direct lighting 与去噪器各自解释材质。
 
 `Material` 可以引用 base color、normal 和 roughness 三张贴图。`ModelRenderer` 对场景中的唯一贴图组合去重，
@@ -206,8 +207,9 @@ RTDI、RTGI、SHARC 与 atmosphere LUT 共用 EV100 15、饱和归一化系数 `
 `0.2679` 度角半径，并由入射照度除以太阳盘立体角得到辐亮度。
 
 Ray Tracing 的所有材质统一使用 Cook-Torrance BRDF：GGX 法线分布、Smith-GGX 几何遮蔽与 Schlick Fresnel。
-Metallic-Roughness 材质使用 `F0 = lerp(0.04, baseColor, metallic)`；旧 Blinn-Phong 材质在 RT 路径中把显式
-`specularColor` 解释为介质 `F0`，不再执行未归一化的 Phong 高光。RTGI 漫反射采用 cosine-weighted sampling，镜面
+Metallic-Roughness 材质使用 `F0 = lerp(0.04, baseColor, metallic)`；旧 Blinn-Phong 材质在 RT 路径中使用
+`F0 = ((IOR - 1) / (IOR + 1))^2`，其 `specularColor` 只保留给 Raster Blinn-Phong，避免把 MTL 的任意 `Ks`
+误当作介质反射率。IOR 在上传时限制到 `[1, 3]`，默认 1.5 对应 `F0 = 0.04`。RTGI 漫反射采用 cosine-weighted sampling，镜面
 采用 GGX VNDF importance sampling，以避免普通 NDF 在掠射角产生高权重无效样本。两路路径估计都先应用完整
 `BRDF * cos(theta) / PDF`，随后用 `NRD_MaterialFactors` 解调主表面材质；Composite 在 REBLUR 后用同一因子恢复材质，
 因此空间去噪不会模糊 albedo、metallic 或 Fresnel 细节。

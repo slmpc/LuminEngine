@@ -173,7 +173,9 @@ namespace {
                     physicalLighting.find("luminFresnelSchlick") != std::string::npos &&
                     physicalLighting.find("luminSampleGgxVisibleNormal") != std::string::npos &&
                     physicalLighting.find("luminSampleCookTorranceSpecular") != std::string::npos &&
-                    physicalLighting.find("luminClampFp16Radiance") != std::string::npos,
+                    physicalLighting.find("luminClampFp16Radiance") != std::string::npos &&
+                    physicalLighting.find("material.surfaceParameters.w") != std::string::npos &&
+                    physicalLighting.find("saturate(material.specularColorShininess.rgb)") == std::string::npos,
                 "Shared physical lighting must implement Cook-Torrance with GGX, Smith, Schlick, and GGX sampling.");
         for (const std::string* source : {&rtDirect, &rtGi, &sharc}) {
             require(source->find("luminEvaluateCookTorrance") != std::string::npos,

@@ -37,6 +37,8 @@ namespace lumin::scene {
         glm::vec3 specularColor{0.04f};
         /// 半程向量高光指数；数值越大，高光越集中。
         float shininess = 48.0f;
+        /// 介质折射率；光追路径据此计算 Cook-Torrance 法线入射反射率，默认 1.5 对应 `F0 = 0.04`。
+        float indexOfRefraction = 1.5f;
 
         friend bool operator==(const BlinnPhongParameters&, const BlinnPhongParameters&) = default;
     };
@@ -44,12 +46,17 @@ namespace lumin::scene {
     /**
      * 当前材质纹理集合。
      *
-     * `roughness` 纹理对两种模型都调制逐像素高光宽度：PBR
-     * 直接使用感知粗糙度，Blinn-Phong 则从
-     * 等效粗糙度反算高光指数。normal 与 base color
-     * 同样由两种表面模型共享。任一贴图均可缺省；渲染器会分别
-     * 使用白色、平坦法线或白色粗糙度
-     * fallback，路径由拥有项目负责保证生命周期覆盖渲染会话。
+     * `roughness` 纹理对两种模型都调制逐像素高光宽度。
+     *
+     * PBR 直接使用感知粗糙度。
+     *
+     * Blinn-Phong 从等效粗糙度反算高光指数。
+     *
+     * normal 与 base color 同样由两种表面模型共享。
+     *
+     * 任一贴图均可缺省，渲染器使用对应 fallback。
+     *
+     * 贴图路径的生命周期必须覆盖渲染会话。
      */
     struct PbrTextureSet {
         std::filesystem::path baseColor;

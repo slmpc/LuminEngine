@@ -1481,6 +1481,9 @@ namespace lumin::editor {
                 propertyLabel("Shininess");
                 changed |= ImGui::SliderFloat("##shininess", &material.blinnPhong.shininess, 1.0f, 512.0f, "%.0f",
                                               ImGuiSliderFlags_Logarithmic);
+                propertyLabel("Index of refraction");
+                changed |= ImGui::SliderFloat("##indexOfRefraction", &material.blinnPhong.indexOfRefraction, 1.0f, 3.0f,
+                                              "%.3f");
             }
             propertyLabel("Texture scale");
             changed |= ImGui::DragFloat("##textureScale", &material.textureScale, 0.05f, 0.01f, 100.0f);

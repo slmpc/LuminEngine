@@ -213,6 +213,8 @@ namespace lumin::assets {
                 .diffuseColor = {source.diffuse[0], source.diffuse[1], source.diffuse[2]},
                 .specularColor = {source.specular[0], source.specular[1], source.specular[2]},
                 .shininess = std::max(source.shininess, 0.0f),
+                // tinyobj 对缺失 Ni 使用 1.0；不透明旧材质回退到常见电介质 IOR，避免光追完全失去菲涅耳反射。
+                .indexOfRefraction = std::isfinite(source.ior) && source.ior > 1.0f ? source.ior : 1.5f,
                 .diffuseTexture = resolveTexturePath(objectPath, source.diffuse_texname),
                 .normalTexture = resolveTexturePath(objectPath, source.normal_texname),
                 .roughnessTexture = resolveTexturePath(objectPath, source.roughness_texname),
