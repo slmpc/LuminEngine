@@ -57,13 +57,91 @@ namespace {
         return mesh;
     }
 
+    struct TestLogicState {
+        TestLogicState(lumin::scene::Level& levelValue, lumin::scene::Camera& cameraValue,
+                       lumin::scripting::ScriptRuntime& scriptsValue, lumin::project::ProjectSession* projectValue)
+            : level(levelValue), camera(cameraValue), scripts(scriptsValue), externalProject(projectValue) {
+            if (externalProject == nullptr) {
+                ownedProject = std::make_unique<lumin::project::ProjectSession>(level, camera, scripts);
+            }
+        }
+
+        [[nodiscard]] lumin::project::ProjectSession& project() const noexcept {
+            return externalProject != nullptr ? *externalProject : *ownedProject;
+        }
+
+        [[nodiscard]] std::shared_ptr<const lumin::editor::EditorLogicSnapshot> capture() {
+            auto result = std::make_shared<lumin::editor::EditorLogicSnapshot>();
+            result->revision = nextSnapshotRevision++;
+            result->renderWorld = lumin::render::world::RenderWorldExtractor::extract(level);
+            result->camera = camera;
+            result->environment = level.environment();
+            for (const lumin::scene::ActorHandle handle : level.actorHandles()) {
+                if (const lumin::scene::Actor* actor = level.actor(handle); actor != nullptr) {
+                    result->actors.push_back(
+                        {handle, actor->name(), actor->transform(), actor->material(), actor->modelHandle()});
+                }
+            }
+            for (const lumin::scene::ModelHandle handle : level.modelHandles()) {
+                const lumin::scene::ModelInstance& model = level.model(handle);
+                result->models.push_back(
+                    {handle, model, level.actorForModel(handle), project().assetForMesh(model.mesh)});
+            }
+            result->scripts = scripts.scripts();
+            result->scriptDiagnostics = scripts.diagnostics();
+            result->consoleHistory = scripts.consoleHistory();
+            result->project.open = project().hasProject();
+            result->project.dirty = project().dirty();
+            result->project.projectFile = project().projectFile();
+            result->project.rootDirectory = project().rootDirectory();
+            result->project.manifest = project().manifest();
+            result->project.assets = project().assets();
+            result->project.entries = project().projectEntries();
+            result->project.diagnostics = project().diagnostics();
+            result->project.settings = project().settings();
+            return result;
+        }
+
+        lumin::scene::Level& level;
+        lumin::scene::Camera& camera;
+        lumin::scripting::ScriptRuntime& scripts;
+        lumin::project::ProjectSession* externalProject = nullptr;
+        std::unique_ptr<lumin::project::ProjectSession> ownedProject;
+        std::vector<lumin::editor::EditorCommandResult> results;
+        lumin::editor::EditorCommandId nextCommandId = 1;
+        std::uint64_t nextSnapshotRevision = 1;
+    };
+
+    lumin::editor::EditorLogicServices makeLogicServices(lumin::scene::Level& level, lumin::scene::Camera& camera,
+                                                         lumin::scripting::ScriptRuntime& scripts,
+                                                         lumin::project::ProjectSession* project = nullptr) {
+        auto state = std::make_shared<TestLogicState>(level, camera, scripts, project);
+        return {
+            .snapshot =
+                [state] {
+                    return state->capture();
+                },
+            .submit =
+                [state](lumin::editor::EditorLogicCommand command) {
+                    const lumin::editor::EditorCommandId id = state->nextCommandId++;
+                    state->results.push_back(
+                        {id, command(state->level, state->camera, state->scripts, state->project())});
+                    return id;
+                },
+            .drainResults =
+                [state] {
+                    std::vector<lumin::editor::EditorCommandResult> results;
+                    results.swap(state->results);
+                    return results;
+                },
+        };
+    }
+
     lumin::editor::Editor makeEditor(lumin::scene::Level& level, lumin::scene::Camera& camera,
                                      lumin::render::RenderSettings& settings, lumin::scripting::ScriptRuntime& runtime,
-                                     lumin::editor::ViewportImageProvider viewportImage = {}) {
-        return lumin::editor::Editor{level,
-                                     camera,
-                                     settings,
-                                     runtime,
+                                     lumin::editor::ViewportImageProvider viewportImage = {},
+                                     lumin::project::ProjectSession* project = nullptr) {
+        return lumin::editor::Editor{makeLogicServices(level, camera, runtime, project), settings,
                                      [] {
                                          return lumin::render::gi::BackendInfo{"SSAO", false, false};
                                      },
@@ -216,11 +294,18 @@ namespace {
         lumin::scene::Camera camera;
         lumin::render::RenderSettings settings;
         lumin::scripting::ScriptRuntime runtime;
+        TemporaryDirectory temporary;
+        lumin::project::ProjectSession project(level, camera, runtime);
+        std::string error;
+        require(project.create(temporary.path, "DockLayout", error), error.c_str());
         bool viewportImageRequested = false;
-        auto editor = makeEditor(level, camera, settings, runtime, [&viewportImageRequested] {
-            viewportImageRequested = true;
-            return lumin::render::ImGuiViewportImage{lumin::render::core::UiTextureId{0x1234U}, 640, 360};
-        });
+        auto editor = makeEditor(
+            level, camera, settings, runtime,
+            [&viewportImageRequested] {
+                viewportImageRequested = true;
+                return lumin::render::ImGuiViewportImage{lumin::render::core::UiTextureId{0x1234U}, 640, 360};
+            },
+            &project);
 
         const auto drawFrame = [&editor](const ImVec2 workSize) {
             ImGui::NewFrame();
@@ -404,15 +489,12 @@ namespace {
         int saveCount = 0;
 
         lumin::editor::Editor editor{
-            level,
-            camera,
+            makeLogicServices(level, camera, runtime, &project),
             renderSettings,
-            runtime,
             [] {
                 return lumin::render::gi::BackendInfo{"SSAO", false, false};
             },
             {},
-            &project,
             {},
             lumin::editor::EditorSettingsServices{
                 .settings = persisted,

@@ -348,6 +348,10 @@ namespace lumin::project {
 
     } // namespace
 
+    void normalizeProjectSettings(ProjectSettings& settings) noexcept {
+        settings.logicTickHz = std::clamp(settings.logicTickHz, MinimumLogicTickHz, MaximumLogicTickHz);
+    }
+
     bool AssetId::isValid() const noexcept {
         return value.size() == 32 && std::ranges::all_of(value, [](unsigned char character) {
                    return std::isxdigit(character) != 0;
@@ -448,7 +452,7 @@ namespace lumin::project {
             level_.setEnvironment(scene::SceneEnvironment{});
             camera_ = scene::Camera{};
             camera_.markCut();
-            renderSettings_ = {};
+            settings_ = {};
             if (!scripts_.setScriptRoot(nextRoot)) {
                 throw std::runtime_error("Could not switch the script root while scripts are active.");
             }
@@ -535,23 +539,38 @@ namespace lumin::project {
                 value.sun.castsShadows = environment->value("castsShadows", value.sun.castsShadows);
                 level_.setEnvironment(value);
             }
-            if (const auto settings = sceneJson.find("renderSettings");
-                settings != sceneJson.end() && settings->is_object()) {
-                renderSettings_.directLighting = settings->value("directLighting", true);
-                renderSettings_.shadows = settings->value("shadows", true);
-                renderSettings_.rayTracing = settings->value("rayTracing", true);
-                renderSettings_.ssao = settings->value("ssao", true);
-                renderSettings_.ambientOcclusionMode = parseAmbientOcclusionMode(*settings);
-                renderSettings_.ambientOcclusionRadius = settings->value("ambientOcclusionRadius", 1.0f);
-                renderSettings_.ambientOcclusionStrength = settings->value("ambientOcclusionStrength", 1.0f);
-                renderSettings_.ambientOcclusionBias = settings->value("ambientOcclusionBias", 0.08f);
-                renderSettings_.sharc = settings->value("sharc", true);
-                renderSettings_.nrd = settings->value("nrd", true);
-                renderSettings_.taa = settings->value("taa", true);
-                renderSettings_.splitLambda = settings->value("splitLambda", 0.68f);
-                renderSettings_.shadowDistance = settings->value("shadowDistance", 200.0f);
-                renderSettings_.exposure = settings->value("exposure", 1.0f);
+            settings_ = {};
+            if (const auto projectSettings = sceneJson.find("projectSettings");
+                projectSettings != sceneJson.end() && projectSettings->is_object()) {
+                settings_.logicTickHz = projectSettings->value("logicTickHz", DefaultLogicTickHz);
             }
+            const auto renderSettings = sceneJson.find("renderSettings");
+            const Json* render =
+                renderSettings != sceneJson.end() && renderSettings->is_object() ? &*renderSettings : nullptr;
+            if (const auto projectSettings = sceneJson.find("projectSettings");
+                projectSettings != sceneJson.end() && projectSettings->is_object()) {
+                if (const auto nested = projectSettings->find("render");
+                    nested != projectSettings->end() && nested->is_object()) {
+                    render = &*nested;
+                }
+            }
+            if (render != nullptr) {
+                settings_.render.directLighting = render->value("directLighting", true);
+                settings_.render.shadows = render->value("shadows", true);
+                settings_.render.rayTracing = render->value("rayTracing", true);
+                settings_.render.ssao = render->value("ssao", true);
+                settings_.render.ambientOcclusionMode = parseAmbientOcclusionMode(*render);
+                settings_.render.ambientOcclusionRadius = render->value("ambientOcclusionRadius", 1.0f);
+                settings_.render.ambientOcclusionStrength = render->value("ambientOcclusionStrength", 1.0f);
+                settings_.render.ambientOcclusionBias = render->value("ambientOcclusionBias", 0.08f);
+                settings_.render.sharc = render->value("sharc", true);
+                settings_.render.nrd = render->value("nrd", true);
+                settings_.render.taa = render->value("taa", true);
+                settings_.render.splitLambda = render->value("splitLambda", 0.68f);
+                settings_.render.shadowDistance = render->value("shadowDistance", 200.0f);
+                settings_.render.exposure = render->value("exposure", 1.0f);
+            }
+            normalizeProjectSettings(settings_);
             for (const Json& actorJson : sceneJson["actors"]) {
                 const scene::ActorHandle handle = level_.spawnActor();
                 scene::Actor* actor = level_.actor(handle);
@@ -655,21 +674,23 @@ namespace lumin::project {
                          {"sunColor", vectorJson(sun.color)},
                          {"illuminanceLux", sun.illuminanceLux},
                          {"castsShadows", sun.castsShadows}}},
-                       {"renderSettings",
-                        {{"directLighting", renderSettings_.directLighting},
-                         {"shadows", renderSettings_.shadows},
-                         {"rayTracing", renderSettings_.rayTracing},
-                         {"ssao", renderSettings_.ssao},
-                         {"ambientOcclusionMode", ambientOcclusionModeName(renderSettings_.ambientOcclusionMode)},
-                         {"ambientOcclusionRadius", renderSettings_.ambientOcclusionRadius},
-                         {"ambientOcclusionStrength", renderSettings_.ambientOcclusionStrength},
-                         {"ambientOcclusionBias", renderSettings_.ambientOcclusionBias},
-                         {"sharc", renderSettings_.sharc},
-                         {"nrd", renderSettings_.nrd},
-                         {"taa", renderSettings_.taa},
-                         {"splitLambda", renderSettings_.splitLambda},
-                         {"shadowDistance", renderSettings_.shadowDistance},
-                         {"exposure", renderSettings_.exposure}}},
+                       {"projectSettings",
+                        {{"logicTickHz", settings_.logicTickHz},
+                         {"render",
+                          {{"directLighting", settings_.render.directLighting},
+                           {"shadows", settings_.render.shadows},
+                           {"rayTracing", settings_.render.rayTracing},
+                           {"ssao", settings_.render.ssao},
+                           {"ambientOcclusionMode", ambientOcclusionModeName(settings_.render.ambientOcclusionMode)},
+                           {"ambientOcclusionRadius", settings_.render.ambientOcclusionRadius},
+                           {"ambientOcclusionStrength", settings_.render.ambientOcclusionStrength},
+                           {"ambientOcclusionBias", settings_.render.ambientOcclusionBias},
+                           {"sharc", settings_.render.sharc},
+                           {"nrd", settings_.render.nrd},
+                           {"taa", settings_.render.taa},
+                           {"splitLambda", settings_.render.splitLambda},
+                           {"shadowDistance", settings_.render.shadowDistance},
+                           {"exposure", settings_.render.exposure}}}}},
                        {"actors", std::move(actors)}};
         if (!writeJsonAtomic(projectFile_, manifestJson, error) ||
             !writeJsonAtomic(root_ / ".lumin/AssetRegistry.json", registryJson(assets_), error) ||
@@ -691,6 +712,7 @@ namespace lumin::project {
         observedAssetFiles_.clear();
         projectEntries_.clear();
         diagnostics_.clear();
+        settings_ = {};
         registryNeedsUpgrade_ = false;
         dirty_ = false;
     }
@@ -1070,11 +1092,26 @@ namespace lumin::project {
         return std::nullopt;
     }
 
+    void ProjectSession::setSettings(ProjectSettings settings) noexcept {
+        normalizeProjectSettings(settings);
+        if (settings_ != settings) {
+            settings_ = std::move(settings);
+            dirty_ = true;
+        }
+    }
+
+    const ProjectSettings& ProjectSession::settings() const noexcept {
+        return settings_;
+    }
+
     void ProjectSession::setRenderSettings(ProjectRenderSettings settings) noexcept {
-        renderSettings_ = settings;
+        if (settings_.render != settings) {
+            settings_.render = std::move(settings);
+            dirty_ = true;
+        }
     }
     const ProjectRenderSettings& ProjectSession::renderSettings() const noexcept {
-        return renderSettings_;
+        return settings_.render;
     }
 
 } // namespace lumin::project

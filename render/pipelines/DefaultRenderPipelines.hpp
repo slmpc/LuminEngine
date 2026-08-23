@@ -88,9 +88,8 @@ namespace lumin::render::pipelines {
 
     /**
      * @brief 创建注册全部内置 Raster/Hybrid Feature 模块的 session factory。
-     * @return 完全拥有且可移动到异步 `Renderer` 的工厂。
+     * @return 完全拥有且可移动到同步 `Renderer` 的工厂。
      */
-    [[nodiscard]] std::unique_ptr<runtime::IRenderPipelineSessionFactory>
-    makeDefaultRenderPipelineSessionFactory();
+    [[nodiscard]] std::unique_ptr<runtime::IRenderPipelineSessionFactory> makeDefaultRenderPipelineSessionFactory();
 
 } // namespace lumin::render::pipelines

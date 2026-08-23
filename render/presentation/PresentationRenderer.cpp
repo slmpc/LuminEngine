@@ -11,7 +11,7 @@ namespace lumin::render {
         shutdown();
     }
 
-    void PresentationRenderer::initialize(VulkanContext& context, const core::UiFontAtlas& fontAtlas,
+    void PresentationRenderer::initialize(VulkanContext& context, ImFontAtlas& fontAtlas,
                                           std::filesystem::path shaderDirectory) {
         shutdown();
         renderer_.initialize(UiRendererConfig{
@@ -54,11 +54,11 @@ namespace lumin::render {
     }
 
     void PresentationRenderer::record(nvrhi::ICommandList& commandList, std::uint32_t imageIndex,
-                                      std::uint32_t frameSlot, const core::UiDrawPacket& packet) {
+                                      std::uint32_t frameSlot, const ImDrawData& drawData) {
         if (imageIndex >= framebuffers_.size()) {
             throw std::out_of_range("Presentation image index is outside the current swapchain.");
         }
-        renderer_.render(commandList, *framebuffers_[imageIndex], frameSlot, packet);
+        renderer_.render(commandList, *framebuffers_[imageIndex], frameSlot, drawData);
     }
 
     nvrhi::ITexture* PresentationRenderer::fontTexture() const noexcept {

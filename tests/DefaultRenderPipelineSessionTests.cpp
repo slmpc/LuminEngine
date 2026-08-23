@@ -169,8 +169,9 @@ namespace {
                 "Swapchain resize must preserve Viewport render resources unless the surface format changes.");
         require(level.find("context_.cancelFrame") != std::string::npos,
                 "Record failure must cancel the acquired frame through VulkanContext.");
-        require(level.find("ImGui::") == std::string::npos && level.find("ImGuiManager") == std::string::npos,
-                "Default pipeline must consume an immutable UI packet without accessing Dear ImGui state.");
+        require(
+            level.find("ImGui::") == std::string::npos && level.find("ImGuiManager") == std::string::npos,
+            "Default pipeline orchestration must pass current-frame ImDrawData without reading global ImGui state.");
         std::cout << "HISTORY_COORDINATION=FrameChangeSet>prepare>submit>commit;SEQUENCE=success-only\n"
                      "ERROR_PATH=acquire/record/submit-discard,retry\n";
     }
@@ -319,23 +320,18 @@ namespace {
         std::cout << "SWAPCHAIN_STATES=Unknown>Present;RECREATE=Unknown;WRAPPER_RELEASE=before-native\n";
     }
 
-    void verifyAsyncRuntime(const std::string& renderer, const std::string& mailbox) {
-        require(renderer.find("std::thread") != std::string::npos &&
-                    renderer.find("mailbox.submit") != std::string::npos,
-                "Renderer must submit immutable packets to a dedicated worker thread.");
-        require(renderer.find("RenderControlKind::Flush") != std::string::npos &&
-                    renderer.find("RenderControlKind::Stop") != std::string::npos,
-                "Flush and stop must use the ordered control queue.");
+    void verifySynchronousRuntime(const std::string& renderer) {
+        require(renderer.find("std::thread") == std::string::npos &&
+                    renderer.find("RenderMailbox") == std::string::npos &&
+                    renderer.find("session->drawFrame(std::move(packet), ui)") != std::string::npos,
+                "Renderer must draw synchronously on the SDL/Vulkan owning main thread.");
         require(renderer.find("session.reset();") < renderer.find("context.reset();"),
-                "Feature Runtime resources must be destroyed before VulkanContext on the render thread.");
-        require(mailbox.find("latestFrame_ = RenderMailboxFrame") != std::string::npos &&
-                    mailbox.find("controls_.push_back") != std::string::npos,
-                "Mailbox must keep one latest frame and a distinct FIFO control queue.");
+                "Feature Runtime resources must be destroyed before VulkanContext on the owning thread.");
         for (const std::string& forbidden : {"scene::Level", "scene::Camera", "ImGui::", "SDL_"}) {
             require(renderer.find(forbidden) == std::string::npos,
-                    "The asynchronous Runtime must not read main-thread framework objects.");
+                    "Renderer must consume values without reaching into active logic or global framework state.");
         }
-        std::cout << "ASYNC_RUNTIME=latest-wins+ordered-control;GPU_OWNER=render-thread\n";
+        std::cout << "SYNC_RUNTIME=direct-draw;GPU_OWNER=os-main-thread\n";
     }
 
     void verifyNvrhiYCoordinateConvention(const std::string& level) {
@@ -408,7 +404,6 @@ int main() {
                                   readSource("render/pipelines/default/DefaultRenderFeatures.cpp");
         const std::string context = readSource("render/platform/vulkan/VulkanContext.cpp");
         const std::string renderer = readSource("render/runtime/Renderer.cpp");
-        const std::string mailbox = readSource("render/runtime/RenderMailbox.cpp");
         const std::string pipelineDefinition = readSource("render/pipelines/DefaultRenderPipelines.cpp");
         const std::string frameContracts = readSource("render/core/FrameDataContracts.hpp");
         verifyPassOrder(level, pipelineDefinition);
@@ -418,7 +413,7 @@ int main() {
         verifyHybridGiIntegration(level);
         verifyFeaturePipelineContract(level, pipelineDefinition, frameContracts);
         verifySwapchainLifecycle(context);
-        verifyAsyncRuntime(renderer, mailbox);
+        verifySynchronousRuntime(renderer);
         verifyNvrhiYCoordinateConvention(level);
         verifyHybridMotionContract();
         verifyHybridRaySidednessContract();

@@ -17,7 +17,7 @@ namespace lumin::render {
     class GpuResourceManager;
     class PipelineFactory;
     class ShaderLibrary;
-}
+} // namespace lumin::render
 
 namespace lumin::render::core {
 
@@ -32,7 +32,7 @@ namespace lumin::render::core {
      */
     class FeatureCreateContext final {
     public:
-        /// 渲染线程独占的 NvRHI 设备；无 GPU 的纯逻辑 Feature 可以不使用该指针。
+        /// 渲染主线程独占的 NvRHI 设备；无 GPU 的纯逻辑 Feature 可以不使用该指针。
         nvrhi::IDevice* device = nullptr;
 
         /// 无业务语义的 buffer/texture 创建与初始化上传服务；Feature 不得保存该非拥有指针。

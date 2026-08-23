@@ -44,7 +44,8 @@ namespace lumin::render {
      * @brief 创建无顶点输入的全屏 graphics pipeline。
      *
      * Factory 只拥有通用 shader/pipeline 创建服务，不缓存或命名任何 Feature pipeline。返回的 handle 由调用方 Feature
-     * 负责保存，并在其生命周期结束时释放。所有方法只能在拥有 NvRHI device 的渲染线程调用。
+     * 负责保存，并在其生命周期结束时释放。所有方法只能在拥有 NvRHI device 的渲染主线程调用。
+
      */
     class FullscreenPipelineFactory final {
     public:

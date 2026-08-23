@@ -14,6 +14,13 @@
 
 namespace lumin::project {
 
+    /** 项目逻辑更新频率的默认值。 */
+    inline constexpr std::uint32_t DefaultLogicTickHz = 60;
+    /** 项目允许的最低逻辑更新频率。 */
+    inline constexpr std::uint32_t MinimumLogicTickHz = 15;
+    /** 项目允许的最高逻辑更新频率。 */
+    inline constexpr std::uint32_t MaximumLogicTickHz = 240;
+
     enum class AssetType {
         Mesh,
         Texture,
@@ -118,7 +125,26 @@ namespace lumin::project {
         float splitLambda = 0.68f;
         float shadowDistance = 200.0f;
         float exposure = 1.0f;
+
+        friend bool operator==(const ProjectRenderSettings&, const ProjectRenderSettings&) = default;
     };
+
+    /**
+     * @brief 随项目场景持久化的运行设置。
+     *
+     * 设置由拥有 `ProjectSession` 的逻辑线程修改；快照消费者只能读取副本。
+     */
+    struct ProjectSettings {
+        /** 固定逻辑 Tick 频率，单位为 Hz，始终归一化到支持范围。 */
+        std::uint32_t logicTickHz = DefaultLogicTickHz;
+        /** 项目的渲染设置。 */
+        ProjectRenderSettings render;
+
+        friend bool operator==(const ProjectSettings&, const ProjectSettings&) = default;
+    };
+
+    /** 将项目设置归一化到引擎支持范围。 */
+    void normalizeProjectSettings(ProjectSettings& settings) noexcept;
 
     class ProjectSession {
     public:
@@ -148,7 +174,13 @@ namespace lumin::project {
         [[nodiscard]] std::optional<scene::MeshHandle> meshForAsset(const AssetId& asset);
         [[nodiscard]] std::optional<AssetId> assetForMesh(scene::MeshHandle mesh) const;
 
+        /** 替换完整项目设置并推进 dirty 状态。 */
+        void setSettings(ProjectSettings settings) noexcept;
+        /** 返回当前完整项目设置。 */
+        [[nodiscard]] const ProjectSettings& settings() const noexcept;
+        /** 替换项目渲染设置并推进 dirty 状态。 */
         void setRenderSettings(ProjectRenderSettings settings) noexcept;
+        /** 返回当前项目渲染设置。 */
         [[nodiscard]] const ProjectRenderSettings& renderSettings() const noexcept;
 
     private:
@@ -169,7 +201,7 @@ namespace lumin::project {
         std::unordered_map<std::string, ObservedAssetFile> observedAssetFiles_;
         std::vector<ProjectEntry> projectEntries_;
         std::vector<std::string> diagnostics_;
-        ProjectRenderSettings renderSettings_;
+        ProjectSettings settings_;
         bool registryNeedsUpgrade_ = false;
         bool dirty_ = false;
     };

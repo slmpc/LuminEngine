@@ -23,7 +23,8 @@ namespace lumin::render::core {
     /**
      * @brief 显式保存静态链接 Feature 的描述符和工厂。
      *
-     * Registry 不拥有任何 GPU 资源，也不会依赖全局静态初始化。注册完成后可在渲染线程上解析 recipe
+     * Registry 不拥有任何 GPU 资源，也不会依赖全局静态初始化。注册完成后可在渲染主线程上解析 recipe
+     *
      * 并创建独立实例；调用方必须保证并发读取期间不再注册。
      */
     class RenderFeatureRegistry final {

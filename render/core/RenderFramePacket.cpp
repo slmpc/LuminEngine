@@ -1,8 +1,6 @@
 #include "render/core/RenderFramePacket.hpp"
 
 #include "scene/Camera.hpp"
-#include "scene/Level.hpp"
-
 #include <limits>
 #include <stdexcept>
 
@@ -13,9 +11,11 @@ namespace lumin::render::core {
                surface.viewportExtent.width > 0 && surface.viewportExtent.height > 0;
     }
 
-    RenderFramePacket RenderFramePacketBuilder::build(const scene::Level& level, const scene::Camera& camera,
-                                                      RenderSettingsSnapshot settings, UiDrawPacket ui,
-                                                      SurfaceState surface) {
+    RenderFramePacket RenderFramePacketBuilder::build(world::RenderWorldSnapshotPtr world, const scene::Camera& camera,
+                                                      RenderSettingsSnapshot settings, SurfaceState surface) {
+        if (world == nullptr) {
+            throw std::invalid_argument("Render frame packet requires a world snapshot.");
+        }
         if (surface.viewportExtent.width == 0 || surface.viewportExtent.height == 0) {
             throw std::invalid_argument("Render frame packet requires a non-empty Viewport extent.");
         }
@@ -27,11 +27,11 @@ namespace lumin::render::core {
             static_cast<float>(surface.viewportExtent.width) / static_cast<float>(surface.viewportExtent.height);
         const glm::mat4 view = camera.viewMatrix();
         const glm::mat4 projection = camera.projectionMatrix(aspectRatio);
-        const world::SceneDelta scene = worldCache_.sync(level);
+        const world::SceneChangeMask sceneChanges = world::changesBetween(worldSnapshot_, world);
 
         RenderFramePacket packet{
             .clientFrame = ClientFrameId{nextClientFrame_},
-            .world = scene.snapshot,
+            .world = std::move(world),
             .camera =
                 CameraFrameData{
                     .view = view,
@@ -50,16 +50,16 @@ namespace lumin::render::core {
                     .cutEpoch = camera.cutEpoch(),
                 },
             .settings = std::move(settings),
-            .ui = std::move(ui),
             .surface = surface,
-            .sceneChangesHint = scene.changes,
+            .sceneChangesHint = sceneChanges,
         };
+        worldSnapshot_ = packet.world;
         ++nextClientFrame_;
         return packet;
     }
 
     world::RenderWorldSnapshotPtr RenderFramePacketBuilder::worldSnapshot() const noexcept {
-        return worldCache_.snapshot();
+        return worldSnapshot_;
     }
 
 } // namespace lumin::render::core

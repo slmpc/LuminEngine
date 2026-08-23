@@ -3,10 +3,13 @@
 #include "render/resources/ShaderLibrary.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+
+#include <imgui.h>
 
 namespace lumin::render {
     namespace {
@@ -29,7 +32,7 @@ namespace lumin::render {
     void UiRenderer::initialize(const UiRendererConfig& config) {
         shutdown();
         if (config.device == nullptr || config.colorFormat == nvrhi::Format::UNKNOWN || config.frameSlotCount == 0 ||
-            config.fontAtlas == nullptr || !config.fontAtlas->isValid()) {
+            config.fontAtlas == nullptr) {
             throw std::invalid_argument("Invalid UiRenderer configuration.");
         }
         device_ = config.device;
@@ -69,18 +72,18 @@ namespace lumin::render {
             nvrhi::VertexAttributeDesc()
                 .setName("POSITION")
                 .setFormat(nvrhi::Format::RG32_FLOAT)
-                .setOffset(offsetof(core::UiVertex, positionX))
-                .setElementStride(sizeof(core::UiVertex)),
+                .setOffset(offsetof(ImDrawVert, pos))
+                .setElementStride(sizeof(ImDrawVert)),
             nvrhi::VertexAttributeDesc()
                 .setName("TEXCOORD")
                 .setFormat(nvrhi::Format::RG32_FLOAT)
-                .setOffset(offsetof(core::UiVertex, textureU))
-                .setElementStride(sizeof(core::UiVertex)),
+                .setOffset(offsetof(ImDrawVert, uv))
+                .setElementStride(sizeof(ImDrawVert)),
             nvrhi::VertexAttributeDesc()
                 .setName("COLOR")
                 .setFormat(nvrhi::Format::RGBA8_UNORM)
-                .setOffset(offsetof(core::UiVertex, color))
-                .setElementStride(sizeof(core::UiVertex)),
+                .setOffset(offsetof(ImDrawVert, col))
+                .setElementStride(sizeof(ImDrawVert)),
         };
         inputLayout_ = device_->createInputLayout(attributes, std::size(attributes), vertexShader_);
 
@@ -119,10 +122,17 @@ namespace lumin::render {
         createFontResources(*config.fontAtlas);
     }
 
-    void UiRenderer::createFontResources(const core::UiFontAtlas& atlas) {
+    void UiRenderer::createFontResources(ImFontAtlas& atlas) {
+        unsigned char* pixels = nullptr;
+        int width = 0;
+        int height = 0;
+        atlas.GetTexDataAsRGBA32(&pixels, &width, &height);
+        if (pixels == nullptr || width <= 0 || height <= 0) {
+            throw std::invalid_argument("Dear ImGui produced an empty font atlas.");
+        }
         nvrhi::TextureDesc textureDesc;
-        textureDesc.setWidth(atlas.width)
-            .setHeight(atlas.height)
+        textureDesc.setWidth(static_cast<std::uint32_t>(width))
+            .setHeight(static_cast<std::uint32_t>(height))
             .setFormat(nvrhi::Format::RGBA8_UNORM)
             .setDebugName("UI font atlas")
             .setInitialState(nvrhi::ResourceStates::ShaderResource)
@@ -141,8 +151,8 @@ namespace lumin::render {
         }
         upload->setEnableAutomaticBarriers(true);
         upload->open();
-        upload->writeTexture(fontTexture_, 0, 0, atlas.rgba8.data(), static_cast<std::size_t>(atlas.width) * 4,
-                             atlas.rgba8.size());
+        const std::size_t rowPitch = static_cast<std::size_t>(width) * 4;
+        upload->writeTexture(fontTexture_, 0, 0, pixels, rowPitch, rowPitch * static_cast<std::size_t>(height));
         upload->close();
         device_->executeCommandList(upload);
         device_->setEventQuery(complete, nvrhi::CommandQueue::Graphics);
@@ -153,6 +163,8 @@ namespace lumin::render {
             throw std::runtime_error("Failed to create UiRenderer font binding set.");
         }
         textureBindings_.emplace(core::uiFontTextureId().value(), std::move(binding));
+        // ImGui 1.92 的 legacy SetTexID 只能在 GetTexData 构建出 TexData 后调用。
+        atlas.SetTexID(static_cast<ImTextureID>(core::uiFontTextureId().value()));
     }
 
     nvrhi::BindingSetHandle UiRenderer::createTextureBinding(nvrhi::ITexture* texture) const {
@@ -184,7 +196,7 @@ namespace lumin::render {
         const core::UiTextureId resolvedId = id.isValid() ? id : core::uiFontTextureId();
         const auto found = textureBindings_.find(resolvedId.value());
         if (found == textureBindings_.end() || !found->second) {
-            throw std::logic_error("UiDrawPacket references an unregistered logical texture id.");
+            throw std::logic_error("Dear ImGui references an unregistered logical texture id.");
         }
         return *found->second;
     }
@@ -215,7 +227,7 @@ namespace lumin::render {
             growBufferCapacity(buffers.vertexCapacity, vertexCount, minimumVertexCapacity);
         if (vertexCapacity != buffers.vertexCapacity) {
             nvrhi::BufferDesc desc;
-            desc.setByteSize(vertexCapacity * sizeof(core::UiVertex))
+            desc.setByteSize(vertexCapacity * sizeof(ImDrawVert))
                 .setDebugName("UI vertex buffer")
                 .setIsVertexBuffer(true)
                 .setCpuAccess(nvrhi::CpuAccessMode::Write)
@@ -227,7 +239,7 @@ namespace lumin::render {
         const std::size_t indexCapacity = growBufferCapacity(buffers.indexCapacity, indexCount, minimumIndexCapacity);
         if (indexCapacity != buffers.indexCapacity) {
             nvrhi::BufferDesc desc;
-            desc.setByteSize(indexCapacity * sizeof(std::uint32_t))
+            desc.setByteSize(indexCapacity * sizeof(ImDrawIdx))
                 .setDebugName("UI index buffer")
                 .setIsIndexBuffer(true)
                 .setCpuAccess(nvrhi::CpuAccessMode::Write)
@@ -241,10 +253,10 @@ namespace lumin::render {
     }
 
     void UiRenderer::setRenderState(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
-                                    const core::UiDrawPacket& packet, const FrameBuffers& buffers,
-                                    const nvrhi::Rect& scissor, nvrhi::IBindingSet& textureBinding) {
-        const float framebufferWidth = packet.displayWidth * packet.framebufferScaleX;
-        const float framebufferHeight = packet.displayHeight * packet.framebufferScaleY;
+                                    const ImDrawData& drawData, const FrameBuffers& buffers, const nvrhi::Rect& scissor,
+                                    nvrhi::IBindingSet& textureBinding) {
+        const float framebufferWidth = drawData.DisplaySize.x * drawData.FramebufferScale.x;
+        const float framebufferHeight = drawData.DisplaySize.y * drawData.FramebufferScale.y;
         nvrhi::ViewportState viewport;
         viewport.addViewport(nvrhi::Viewport(framebufferWidth, framebufferHeight)).addScissorRect(scissor);
 
@@ -256,12 +268,12 @@ namespace lumin::render {
             .addVertexBuffer(nvrhi::VertexBufferBinding().setBuffer(buffers.vertexBuffer).setSlot(0).setOffset(0))
             .setIndexBuffer(nvrhi::IndexBufferBinding()
                                 .setBuffer(buffers.indexBuffer)
-                                .setFormat(nvrhi::Format::R32_UINT)
+                                .setFormat(sizeof(ImDrawIdx) == 2 ? nvrhi::Format::R16_UINT : nvrhi::Format::R32_UINT)
                                 .setOffset(0));
         commandList.setGraphicsState(state);
 
-        const UiProjection projection = makeNvrhiProjection(packet.displayPositionX, packet.displayPositionY,
-                                                            packet.displayWidth, packet.displayHeight);
+        const UiProjection projection = makeNvrhiProjection(drawData.DisplayPos.x, drawData.DisplayPos.y,
+                                                            drawData.DisplaySize.x, drawData.DisplaySize.y);
         const UiPushConstants constants = {
             {projection.scaleX, projection.scaleY},
             {projection.translateX, projection.translateY},
@@ -271,46 +283,87 @@ namespace lumin::render {
     }
 
     void UiRenderer::render(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer, std::uint32_t frameSlot,
-                            const core::UiDrawPacket& packet) {
+                            const ImDrawData& drawData) {
         if (!initialized_) {
             throw std::logic_error("UiRenderer is not initialized.");
         }
-        if (!packet.isRenderable()) {
+        const float framebufferWidthValue = drawData.DisplaySize.x * drawData.FramebufferScale.x;
+        const float framebufferHeightValue = drawData.DisplaySize.y * drawData.FramebufferScale.y;
+        if (!drawData.Valid || drawData.TotalVtxCount <= 0 || drawData.TotalIdxCount <= 0 ||
+            framebufferWidthValue <= 0.0f || framebufferHeightValue <= 0.0f) {
             return;
         }
 
         FrameBuffers& buffers = frameBuffers_[frameSlot % frameBuffers_.size()];
-        ensureBuffers(buffers, packet.vertices.size(), packet.indices.size());
-        const auto writeMapped = [this](nvrhi::IBuffer* buffer, const void* data, std::size_t size) {
-            void* mapped = device_->mapBuffer(buffer, nvrhi::CpuAccessMode::Write);
-            if (mapped == nullptr) {
-                throw std::runtime_error("Failed to map a UiRenderer dynamic buffer.");
+        ensureBuffers(buffers, static_cast<std::size_t>(drawData.TotalVtxCount),
+                      static_cast<std::size_t>(drawData.TotalIdxCount));
+        void* mappedVertices = device_->mapBuffer(buffers.vertexBuffer, nvrhi::CpuAccessMode::Write);
+        void* mappedIndices = device_->mapBuffer(buffers.indexBuffer, nvrhi::CpuAccessMode::Write);
+        if (mappedVertices == nullptr || mappedIndices == nullptr) {
+            if (mappedVertices != nullptr) {
+                device_->unmapBuffer(buffers.vertexBuffer);
             }
-            std::memcpy(mapped, data, size);
-            device_->unmapBuffer(buffer);
-        };
-        writeMapped(buffers.vertexBuffer, packet.vertices.data(), packet.vertices.size() * sizeof(core::UiVertex));
-        writeMapped(buffers.indexBuffer, packet.indices.data(), packet.indices.size() * sizeof(std::uint32_t));
+            if (mappedIndices != nullptr) {
+                device_->unmapBuffer(buffers.indexBuffer);
+            }
+            throw std::runtime_error("Failed to map a UiRenderer dynamic buffer.");
+        }
+        auto* vertexDestination = static_cast<std::byte*>(mappedVertices);
+        auto* indexDestination = static_cast<std::byte*>(mappedIndices);
+        for (const ImDrawList* list : drawData.CmdLists) {
+            const std::size_t vertexBytes = list->VtxBuffer.size() * sizeof(ImDrawVert);
+            const std::size_t indexBytes = list->IdxBuffer.size() * sizeof(ImDrawIdx);
+            std::memcpy(vertexDestination, list->VtxBuffer.Data, vertexBytes);
+            std::memcpy(indexDestination, list->IdxBuffer.Data, indexBytes);
+            vertexDestination += vertexBytes;
+            indexDestination += indexBytes;
+        }
+        device_->unmapBuffer(buffers.vertexBuffer);
+        device_->unmapBuffer(buffers.indexBuffer);
 
-        const int framebufferWidth = static_cast<int>(packet.displayWidth * packet.framebufferScaleX);
-        const int framebufferHeight = static_cast<int>(packet.displayHeight * packet.framebufferScaleY);
+        const int framebufferWidth = static_cast<int>(framebufferWidthValue);
+        const int framebufferHeight = static_cast<int>(framebufferHeightValue);
         const nvrhi::Rect fullScissor(framebufferWidth, framebufferHeight);
         nvrhi::IBindingSet& fontBinding = resolveTexture(core::uiFontTextureId());
-        setRenderState(commandList, framebuffer, packet, buffers, fullScissor, fontBinding);
+        setRenderState(commandList, framebuffer, drawData, buffers, fullScissor, fontBinding);
 
-        for (const core::UiDrawCommand& draw : packet.commands) {
-            if (draw.type == core::UiDrawCommandType::ResetRenderState) {
-                setRenderState(commandList, framebuffer, packet, buffers, fullScissor, fontBinding);
-                continue;
+        std::uint32_t globalIndexOffset = 0;
+        std::uint32_t globalVertexOffset = 0;
+        for (const ImDrawList* list : drawData.CmdLists) {
+            for (const ImDrawCmd& draw : list->CmdBuffer) {
+                if (draw.UserCallback == ImDrawCallback_ResetRenderState) {
+                    setRenderState(commandList, framebuffer, drawData, buffers, fullScissor, fontBinding);
+                    continue;
+                }
+                if (draw.UserCallback != nullptr) {
+                    draw.UserCallback(list, &draw);
+                    continue;
+                }
+                const float left = std::clamp((draw.ClipRect.x - drawData.DisplayPos.x) * drawData.FramebufferScale.x,
+                                              0.0f, framebufferWidthValue);
+                const float top = std::clamp((draw.ClipRect.y - drawData.DisplayPos.y) * drawData.FramebufferScale.y,
+                                             0.0f, framebufferHeightValue);
+                const float right = std::clamp((draw.ClipRect.z - drawData.DisplayPos.x) * drawData.FramebufferScale.x,
+                                               0.0f, framebufferWidthValue);
+                const float bottom = std::clamp((draw.ClipRect.w - drawData.DisplayPos.y) * drawData.FramebufferScale.y,
+                                                0.0f, framebufferHeightValue);
+                if (draw.ElemCount == 0 || !std::isfinite(left) || !std::isfinite(top) || !std::isfinite(right) ||
+                    !std::isfinite(bottom) || right <= left || bottom <= top) {
+                    continue;
+                }
+                const nvrhi::Rect scissor(static_cast<int>(std::floor(left)), static_cast<int>(std::ceil(right)),
+                                          static_cast<int>(std::floor(top)), static_cast<int>(std::ceil(bottom)));
+                const core::UiTextureId texture{static_cast<core::UiTextureId::ValueType>(draw.GetTexID())};
+                nvrhi::IBindingSet& textureBinding = resolveTexture(texture);
+                setRenderState(commandList, framebuffer, drawData, buffers, scissor, textureBinding);
+                nvrhi::DrawArguments arguments;
+                arguments.setVertexCount(draw.ElemCount)
+                    .setStartIndexLocation(globalIndexOffset + draw.IdxOffset)
+                    .setStartVertexLocation(globalVertexOffset + draw.VtxOffset);
+                commandList.drawIndexed(arguments);
             }
-            const nvrhi::Rect scissor(draw.scissorLeft, draw.scissorRight, draw.scissorTop, draw.scissorBottom);
-            nvrhi::IBindingSet& textureBinding = resolveTexture(draw.texture);
-            setRenderState(commandList, framebuffer, packet, buffers, scissor, textureBinding);
-            nvrhi::DrawArguments arguments;
-            arguments.setVertexCount(draw.elementCount)
-                .setStartIndexLocation(draw.indexOffset)
-                .setStartVertexLocation(draw.vertexOffset);
-            commandList.drawIndexed(arguments);
+            globalIndexOffset += static_cast<std::uint32_t>(list->IdxBuffer.size());
+            globalVertexOffset += static_cast<std::uint32_t>(list->VtxBuffer.size());
         }
     }
 

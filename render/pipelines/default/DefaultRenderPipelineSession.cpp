@@ -1,5 +1,5 @@
-#include "render/level/FeatureFrameData.hpp"
 #include "render/pipelines/default/DefaultRenderPipelineSession.hpp"
+#include "render/level/FeatureFrameData.hpp"
 
 #include "render/gi/legacy/LegacyBackend.hpp"
 #include "render/gpu/GpuScene.hpp"
@@ -29,12 +29,11 @@
 namespace lumin::render {
     pipelines::DefaultRenderPipelineSession::DefaultRenderPipelineSession(
         VulkanContext& context, world::RenderWorldSnapshotPtr initialWorld, std::filesystem::path shaderDirectory,
-        core::UiFontAtlas uiFontAtlas, std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
-        : context_(context), shaderDirectory_(std::move(shaderDirectory)), uiFontAtlas_(std::move(uiFontAtlas)),
+        ImFontAtlas& uiFontAtlas, std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination)
+        : context_(context), shaderDirectory_(std::move(shaderDirectory)), uiFontAtlas_(&uiFontAtlas),
           rasterResources_(*context.rhiDevice().Get(), frameSlotCount),
-          postFxResources_(*context.rhiDevice().Get(), frameSlotCount),
-          resourceFactory_(*context.rhiDevice().Get()), shaderLibrary_(*context.rhiDevice().Get(), shaderDirectory_),
-          pipelineFactory_(*context.rhiDevice().Get()),
+          postFxResources_(*context.rhiDevice().Get(), frameSlotCount), resourceFactory_(*context.rhiDevice().Get()),
+          shaderLibrary_(*context.rhiDevice().Get(), shaderDirectory_), pipelineFactory_(*context.rhiDevice().Get()),
           fullscreenPipelineFactory_(*context.rhiDevice().Get(), shaderDirectory_),
           globalIllumination_(std::move(globalIllumination)), currentWorld_(std::move(initialWorld)) {
         if (currentWorld_ == nullptr) {
@@ -49,7 +48,7 @@ namespace lumin::render {
         createRenderResources();
         // 先创建 RT 资源，再根据真实的 device/scene capability 选择固定的帧图拓扑。
         createRenderFeaturePipeline();
-        presentation_.initialize(context_, uiFontAtlas_, shaderDirectory_);
+        presentation_.initialize(context_, *uiFontAtlas_, shaderDirectory_);
         presentation_.setViewportTexture(viewportOutput_.texture);
         swapchainGeneration_ = context_.swapchainGeneration();
     }
@@ -60,10 +59,11 @@ namespace lumin::render {
         destroyRenderResources();
     }
 
-    bool pipelines::DefaultRenderPipelineSession::drawFrame(core::RenderFramePacket packet) {
+    bool pipelines::DefaultRenderPipelineSession::drawFrame(core::RenderFramePacket packet, const ImDrawData& ui) {
         if (!packet.isValid()) {
             throw std::invalid_argument("Default pipeline session received an invalid render frame packet.");
         }
+        currentUiDrawData_ = &ui;
         const RenderSettings settings = pipelines::readDefaultRenderSettings(packet.settings);
         if (committedSettings_.has_value()) {
             const core::FeatureSettingsChange settingsChange =
@@ -260,16 +260,15 @@ namespace lumin::render {
 
         const core::ResolvedRenderPipeline resolved =
             core::RenderPipelineRecipeResolver::resolve(registry, definition.recipe(), capabilities);
-        auto candidate = std::make_unique<core::RenderPipelineInstance>(
-            registry, resolved,
-            core::FeatureCreateContext{
-                .device = context_.rhiDevice(),
-                .resources = &resourceFactory_,
-                .shaders = &shaderLibrary_,
-                .pipelines = &pipelineFactory_,
-                .capabilities = capabilities,
-                .frameSlotCount = frameSlotCount,
-            });
+        auto candidate = std::make_unique<core::RenderPipelineInstance>(registry, resolved,
+                                                                        core::FeatureCreateContext{
+                                                                            .device = context_.rhiDevice(),
+                                                                            .resources = &resourceFactory_,
+                                                                            .shaders = &shaderLibrary_,
+                                                                            .pipelines = &pipelineFactory_,
+                                                                            .capabilities = capabilities,
+                                                                            .frameSlotCount = frameSlotCount,
+                                                                        });
         candidate->onRenderExtentChanged(renderExtent_);
         activePipelineKind_ = path;
         renderPipeline_ = std::move(candidate);
@@ -368,12 +367,13 @@ namespace lumin::render {
             public:
                 [[nodiscard]] std::unique_ptr<runtime::IRenderPipelineSession>
                 create(runtime::RenderPipelineSessionCreateContext context) const override {
-                    if (context.vulkan == nullptr || context.initialWorld == nullptr) {
-                        throw std::invalid_argument("Default pipeline session requires Vulkan and world inputs.");
+                    if (context.vulkan == nullptr || context.initialWorld == nullptr ||
+                        context.uiFontAtlas == nullptr) {
+                        throw std::invalid_argument("Default pipeline session requires Vulkan, world and UI inputs.");
                     }
                     return std::make_unique<DefaultRenderPipelineSession>(
                         *context.vulkan, std::move(context.initialWorld), std::move(context.shaderDirectory),
-                        std::move(context.uiFontAtlas));
+                        *context.uiFontAtlas);
                 }
             };
 

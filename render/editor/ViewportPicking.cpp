@@ -112,4 +112,37 @@ namespace lumin::editor {
         return closest;
     }
 
+    std::optional<ViewportPickResult> pickViewportModel(const render::world::RenderWorldSnapshot& world,
+                                                        const ViewportRay& ray) {
+        std::optional<ViewportPickResult> closest;
+        for (const render::world::RenderWorldInstance& instance : world.instances()) {
+            if (instance.meshIndex >= world.meshes().size()) {
+                continue;
+            }
+            const assets::Mesh& mesh = world.meshes()[instance.meshIndex].mesh;
+            const glm::mat4 modelMatrix = instance.model.transform.matrix();
+            const glm::mat4 inverseModel = glm::inverse(modelMatrix);
+            const glm::vec3 localOrigin = glm::vec3{inverseModel * glm::vec4{ray.origin, 1.0f}};
+            const glm::vec3 localDirection = glm::normalize(glm::vec3{inverseModel * glm::vec4{ray.direction, 0.0f}});
+            if (!intersectsBounds(mesh, localOrigin, localDirection)) {
+                continue;
+            }
+            for (std::size_t index = 0; index + 2 < mesh.indices.size(); index += 3) {
+                const auto localDistance = intersectTriangle(
+                    localOrigin, localDirection, mesh.vertices[mesh.indices[index]].position,
+                    mesh.vertices[mesh.indices[index + 1]].position, mesh.vertices[mesh.indices[index + 2]].position);
+                if (!localDistance.has_value()) {
+                    continue;
+                }
+                const glm::vec3 localHit = localOrigin + localDirection * *localDistance;
+                const glm::vec3 worldHit = glm::vec3{modelMatrix * glm::vec4{localHit, 1.0f}};
+                const float worldDistance = glm::length(worldHit - ray.origin);
+                if (!closest.has_value() || worldDistance < closest->distance) {
+                    closest = ViewportPickResult{instance.modelHandle, worldDistance, worldHit};
+                }
+            }
+        }
+        return closest;
+    }
+
 } // namespace lumin::editor

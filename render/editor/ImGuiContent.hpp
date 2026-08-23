@@ -1,6 +1,6 @@
 #pragma once
 
-#include "render/core/UiDrawPacket.hpp"
+#include "render/core/UiTextureId.hpp"
 
 #include <cstdint>
 
@@ -36,7 +36,7 @@ namespace lumin::render {
         }
     };
 
-    /// 主线程 UI 内容适配器；Feature 和渲染线程不得持有或调用该接口。
+    /// 渲染主线程 UI 内容适配器；Feature 不得持有或调用该接口。
     class ImGuiContent {
     public:
         /// 允许通过接口安全销毁 UI 内容。

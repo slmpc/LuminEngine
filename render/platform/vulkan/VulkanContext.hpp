@@ -73,7 +73,7 @@ namespace lumin::render {
     };
 
     /**
-     * @brief 渲染线程独占的 Vulkan 1.3/NvRHI 设备、交换链与提交上下文。
+     * @brief 渲染主线程独占的 Vulkan 1.3/NvRHI 设备、交换链与提交上下文。
      *
      * 构造后所有方法（只读 capability accessor 除外）均只能在构造线程调用。该类型是引擎唯一允许直接使用
      * 原生 Vulkan device、queue、swapchain 和同步对象的边界。
@@ -81,10 +81,11 @@ namespace lumin::render {
     class VulkanContext {
     public:
         /**
-         * @brief 接收主线程 bootstrap，并在当前渲染线程创建设备、NvRHI 与交换链。
-         * @param bootstrap 唯一的 instance/surface 所有权；构造开始后即被消费。
+         * @brief 接收当前线程的 bootstrap，并在渲染主线程创建设备、NvRHI 与交换链。
+         * @param bootstrap 唯一的
+         * instance/surface 所有权；构造开始后即被消费。
          * @throws std::exception 设备能力不足或任一后端资源创建失败时抛出。
-         * @thread_safety 必须在专用渲染线程构造和销毁。
+         * @thread_safety 必须在拥有 SDL 窗口的渲染主线程构造和销毁。
          */
         explicit VulkanContext(VulkanSurfaceBootstrap bootstrap);
         ~VulkanContext();
@@ -130,7 +131,7 @@ namespace lumin::render {
          * 主线程随
          * packet 深拷贝的状态；不得包含 SDL 对象。
          * @thread_safety 只能由拥有此 Context
-         * 的渲染线程调用。
+         * 的渲染主线程调用。
 
          */
         void updateSurfaceState(const core::SurfaceState& state) noexcept;

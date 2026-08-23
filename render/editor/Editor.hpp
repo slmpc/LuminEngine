@@ -14,6 +14,7 @@
 #include "config/EngineSettings.hpp"
 #include "project/ProjectSession.hpp"
 #include "render/RenderSettings.hpp"
+#include "render/editor/EditorLogic.hpp"
 #include "render/editor/ImGuiContent.hpp"
 #include "render/gi/GlobalIllumination.hpp"
 #include "scene/Camera.hpp"
@@ -44,7 +45,7 @@ namespace lumin::editor {
 
     using BackendInfoProvider = std::function<render::gi::BackendInfo()>;
     using ViewportImageProvider = std::function<render::ImGuiViewportImage()>;
-    /** 返回渲染线程最近统计的交换链呈现帧率。 */
+    /** 返回渲染主线程最近统计的交换链呈现帧率。 */
     using FrameRateProvider = std::function<float()>;
     using DialogResultCallback = std::function<void(std::vector<std::filesystem::path>)>;
 
@@ -74,23 +75,23 @@ namespace lumin::editor {
     class Editor final : public render::ImGuiContent {
     public:
         /**
-         * @brief 创建绑定场景、渲染设置和项目服务的 Editor UI。
-         * @param level 被编辑场景，必须覆盖 Editor 生命周期。
-         * @param camera 被编辑相机，必须覆盖 Editor 生命周期。
+         * @brief 创建通过不可变快照和异步命令访问逻辑状态的 Editor UI。
+         * @param logic
+         * 线程安全的逻辑快照、命令提交与结果服务。
          * @param settings 可写渲染设置，必须覆盖 Editor 生命周期。
-         * @param scripts 脚本 Runtime，必须覆盖 Editor 生命周期。
-         * @param backendInfo 当前 GI backend 状态 provider。
-         * @param viewportImage 当前 Viewport 输出纹理 provider。
-         * @param project 可选项目会话，不转移所有权。
+
+         * * @param backendInfo 当前 GI backend 状态 provider。
+         * @param viewportImage 当前 Viewport 输出纹理
+         * provider。
          * @param dialogs 平台文件对话框服务。
-         * @param settingsServices Editor 持久化设置服务。
+         * @param settingsServices Editor
+         * 持久化设置服务。
          * @param frameRate 当前交换链呈现帧率 provider；为空时显示零。
+
          */
-        Editor(scene::Level& level, scene::Camera& camera, render::RenderSettings& settings,
-               scripting::ScriptRuntime& scripts, BackendInfoProvider backendInfo,
-               ViewportImageProvider viewportImage = {}, project::ProjectSession* project = nullptr,
-               EditorDialogServices dialogs = {}, EditorSettingsServices settingsServices = {},
-               FrameRateProvider frameRate = {});
+        Editor(EditorLogicServices logic, render::RenderSettings& settings, BackendInfoProvider backendInfo,
+               ViewportImageProvider viewportImage = {}, EditorDialogServices dialogs = {},
+               EditorSettingsServices settingsServices = {}, FrameRateProvider frameRate = {});
         ~Editor() override;
 
         Editor(const Editor&) = delete;
@@ -116,8 +117,8 @@ namespace lumin::editor {
         bool setSelectedTransform(const scene::Transform& transform);
         bool setSelectedMaterial(const scene::Material& material);
 
-        void setCameraSpeed(float speed) noexcept;
-        void setCameraPosition(const glm::vec3& position) noexcept;
+        void setCameraSpeed(float speed);
+        void setCameraPosition(const glm::vec3& position);
         void setDirectLightingEnabled(bool enabled) noexcept;
         void setShadowsEnabled(bool enabled) noexcept;
         void setGlobalIlluminationMode(render::GlobalIlluminationMode mode) noexcept;
@@ -132,7 +133,7 @@ namespace lumin::editor {
         void setCsmMaxDistance(float maxDistance) noexcept;
         void setTaaEnabled(bool enabled) noexcept;
         void setExposure(float exposure) noexcept;
-        void setSunDirection(const glm::vec3& direction) noexcept;
+        void setSunDirection(const glm::vec3& direction);
 
         [[nodiscard]] scripting::ScriptResult executeCommand(std::string_view command);
         [[nodiscard]] const std::vector<ConsoleEntry>& consoleEntries() const noexcept;

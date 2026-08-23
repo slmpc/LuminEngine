@@ -1,6 +1,6 @@
 #pragma once
 
-#include "render/core/UiDrawPacket.hpp"
+#include "render/core/UiTextureId.hpp"
 #include "render/presentation/UiRenderer.hpp"
 
 #include <cstdint>
@@ -9,6 +9,9 @@
 
 #include <nvrhi/nvrhi.h>
 
+struct ImDrawData;
+struct ImFontAtlas;
+
 namespace lumin::render {
 
     class VulkanContext;
@@ -16,7 +19,7 @@ namespace lumin::render {
     /**
      * @brief 拥有交换链 framebuffer、UI renderer 和逻辑纹理解析的 Presentation 资源。
      *
-     * 该类只在渲染线程使用；主线程只持有 `UiTextureId`，不会接触 NvRHI binding。
+     * 该类只在渲染主线程使用；Editor 只持有 `UiTextureId`，不会接触 NvRHI binding。
      */
     class PresentationRenderer final {
     public:
@@ -34,8 +37,7 @@ namespace lumin::render {
          * @throws std::invalid_argument 字体图集无效时抛出。
          * @throws std::runtime_error NvRHI 资源创建失败时抛出。
          */
-        void initialize(VulkanContext& context, const core::UiFontAtlas& fontAtlas,
-                        std::filesystem::path shaderDirectory);
+        void initialize(VulkanContext& context, ImFontAtlas& fontAtlas, std::filesystem::path shaderDirectory);
 
         /// 幂等释放 Presentation 资源。
         void shutdown() noexcept;
@@ -44,11 +46,12 @@ namespace lumin::render {
         void setViewportTexture(nvrhi::ITexture* texture);
 
         /**
-         * @brief 录制 UI packet 到本帧交换链 framebuffer。
-         * @throws std::out_of_range `imageIndex` 不属于当前交换链时抛出。
+         * @brief 录制当前 ImGui draw data 到本帧交换链 framebuffer。
+         * @throws std::out_of_range `imageIndex`
+         * 不属于当前交换链时抛出。
          */
         void record(nvrhi::ICommandList& commandList, std::uint32_t imageIndex, std::uint32_t frameSlot,
-                    const core::UiDrawPacket& packet);
+                    const ImDrawData& drawData);
 
         /// 返回字体图集物理纹理。
         [[nodiscard]] nvrhi::ITexture* fontTexture() const noexcept;

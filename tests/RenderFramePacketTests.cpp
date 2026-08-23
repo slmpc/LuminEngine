@@ -36,17 +36,13 @@ namespace {
         scene::Camera camera;
 
         render::RenderSettings settings;
-        render::core::UiDrawPacket ui;
-        ui.displayWidth = 640.0f;
-        ui.displayHeight = 360.0f;
-        ui.vertices.push_back({});
-
         render::core::RenderFramePacketBuilder builder;
         render::core::RenderFramePacket packet =
-            builder.build(level, camera, render::pipelines::makeDefaultRenderSettingsSnapshot(settings), std::move(ui),
+            builder.build(render::world::RenderWorldExtractor::extract(level), camera,
+                          render::pipelines::makeDefaultRenderSettingsSnapshot(settings),
                           render::core::SurfaceState{.windowExtent = {1280, 720}, .viewportExtent = {640, 360}});
-        require(packet.isValid() && packet.world->instances().size() == 1 && packet.ui.vertices.size() == 1,
-                "A packet must own complete scene and UI data.");
+        require(packet.isValid() && packet.world->instances().size() == 1,
+                "A packet must own a complete immutable logic world snapshot.");
 
         const glm::vec4 packetPosition = packet.camera.position;
         scene::Transform moved;
@@ -65,7 +61,8 @@ namespace {
             "Mutating aggregate settings after build must not affect a typed snapshot.");
 
         const render::core::RenderFramePacket next =
-            builder.build(level, camera, render::pipelines::makeDefaultRenderSettingsSnapshot(settings), {},
+            builder.build(render::world::RenderWorldExtractor::extract(level), camera,
+                          render::pipelines::makeDefaultRenderSettingsSnapshot(settings),
                           render::core::SurfaceState{.windowExtent = {1280, 720}, .viewportExtent = {640, 360}});
         require(
             next.clientFrame.value == packet.clientFrame.value + 1 &&

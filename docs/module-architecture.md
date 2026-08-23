@@ -48,13 +48,12 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 - `Lumin::VulkanBackend`：窗口 surface、`VulkanContext`、交换链、能力探测和 RenderDoc 接入；这是唯一原生 Vulkan 边界。
 - `Lumin::Atmosphere`、`Lumin::GpuScene`、`Lumin::RasterFeatures`、`Lumin::GiFeatures`、`Lumin::PostFxFeatures`：按资源
   所有权域拆分的 Feature 实现。
-- `Lumin::RenderPresentation`：交换链 framebuffer 与 UI NvRHI renderer；只消费主线程深拷贝的 `UiDrawPacket`，不依赖
-  ImGui、SDL 或 Editor。
+- `Lumin::RenderPresentation`：交换链 framebuffer 与 UI NvRHI renderer；在渲染主线程同步消费当前帧
+  `ImDrawData`，不保存 ImGui context、SDL backend 或 Editor 对象。
 - `Lumin::RenderPipelines`：Raster/Hybrid recipe、typed producer/consumer 契约、默认模块显式注册和
   `DefaultRenderPipelineSession` 帧事务组合。
-- `Lumin::RenderRuntime`：异步 `Renderer` 门面、latest-wins mailbox、有序控制队列、状态快照和抽象
-  `IRenderPipelineSession` 生命周期；不链接或包含任何具体 Feature/recipe。只有专用渲染线程访问移交后的 Vulkan/NvRHI
-  对象。
+- `Lumin::RenderRuntime`：同步 `Renderer` 门面、状态快照和抽象 `IRenderPipelineSession` 生命周期；不链接或包含
+  任何具体 Feature/recipe。Renderer 的构造、`drawFrame()` 和销毁都在拥有 SDL 窗口的渲染主线程执行。
 - `Lumin::Editor`：独立 Editor UI target，不再与 Render 单体库共享产物。
 
 物理目录继续按依赖边界划分：
@@ -65,9 +64,9 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
   旧 `TextureManager` 已拆为 `render/features/raster/RasterFeatureResources` 与
   `render/features/postfx/PostFxResources`；旧 `PipelineManager` 已由无业务语义的 `FullscreenPipelineFactory` 和各
   Feature 自有 handle 替代。
-- `render/editor/` 保存 `Editor`、`ImGuiContent` 和 `ImGuiFrontend`。该目录在主线程独占 ImGui context 与 SDL backend，
-  深拷贝生成 `UiDrawPacket`；`RenderSettingsPanelAdapter` 把面板聚合值写入 typed store。依赖关系不能反向流入 Runtime
-  或 Feature。
+- `render/editor/` 保存 `Editor`、`EditorLogicSnapshot`、`ImGuiContent` 和 `ImGuiFrontend`。该目录在渲染主线程
+  独占 ImGui context 与 SDL backend，`finishFrame()` 返回仅供当前帧同步消费的 `ImDrawData`；
+  `RenderSettingsPanelAdapter` 把面板聚合值写入 typed store。依赖关系不能反向流入 Runtime 或 Feature。
 - `render/presentation/` 保存 `UiRenderer` 与 `PresentationRenderer`，以稳定逻辑纹理 ID 解析字体和 Viewport 物理资源，
   不保存 ImGui command、callback 或 NvRHI binding 指针形式的纹理 ID。
 - `render/level/`、`render/features/`、`render/gi/`、`render/atmosphere/` 和 `render/gpu/` 保存场景渲染功能；
@@ -80,11 +79,13 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 
 ## Application
 
-`application/Application.cpp` 是组合层，不属于 Core 或 Render 的内部实现。它创建窗口、场景、脚本、主线程
-`RenderFramePacketBuilder`、settings adapter 和异步 `Renderer`，并把 `Game` 注入到 Core 的 `GameContext`。Application
-在每帧完成场景、相机、设置和 ImGui 更新后构建完全拥有的 packet；Runtime 不读取这些活动对象。Application 在主线程
-创建只包含 Vulkan instance 与 SDL surface 的 `VulkanSurfaceBootstrap` 并立即移交；`VulkanContext` 及 device、NvRHI、
-swapchain 由渲染线程创建和销毁，Application 不保留 GPU context 成员。
+`application/Application.cpp` 是组合层，不属于 Core 或 Render 的内部实现。它启动 `LogicRuntime`，后者在独立逻辑线程
+独占 `Game`、`Level`、`Camera`、`ScriptRuntime` 与 `ProjectSession`，并向渲染主线程发布不可变
+`EditorLogicSnapshot`。Editor 修改通过有序命令队列返回逻辑线程，按键采用 latest-wins 状态，相对鼠标位移在 Tick 前累积。
+
+渲染主线程创建并持有窗口、SDL backend、ImGui context、`RenderFramePacketBuilder`、settings adapter、`Renderer`、
+`VulkanContext`、device、NvRHI 与 swapchain。每个 UI 帧只读取一次逻辑快照，同一份快照同时供 Editor 与
+`RenderFramePacketBuilder` 使用；`Renderer::drawFrame()` 在当前线程立即记录、提交并呈现，不读取活动逻辑对象。
 `Lumin::Application`（兼容名
 `Lumin::GameEngine`）链接 `Lumin::Core` 与 `Lumin::Render`；Render 不反向链接 Application。
 

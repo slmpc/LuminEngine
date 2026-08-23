@@ -1,6 +1,6 @@
 #pragma once
 
-#include "render/core/UiDrawPacket.hpp"
+#include "render/core/UiTextureId.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -10,11 +10,14 @@
 
 #include <nvrhi/nvrhi.h>
 
+struct ImDrawData;
+struct ImFontAtlas;
+
 namespace lumin::render {
 
     /// 描述 UiRenderer 创建持久 GPU 资源所需的显式输入。
     struct UiRendererConfig {
-        /// 渲染线程独占的 NvRHI 设备。
+        /// 渲染主线程独占的 NvRHI 设备。
         nvrhi::IDevice* device = nullptr;
         /// 交换链颜色格式。
         nvrhi::Format colorFormat = nvrhi::Format::UNKNOWN;
@@ -26,8 +29,8 @@ namespace lumin::render {
         std::uint32_t sampleCount = 1;
         /// 目标附件是否执行硬件 sRGB 编码。
         bool outputIsSrgb = false;
-        /// 主线程深拷贝的字体图集。
-        const core::UiFontAtlas* fontAtlas = nullptr;
+        /// 当前渲染主线程拥有的 Dear ImGui 字体图集。
+        ImFontAtlas* fontAtlas = nullptr;
     };
 
     /// UI 顶点位置到 NvRHI 逻辑裁剪空间的线性变换。
@@ -43,9 +46,9 @@ namespace lumin::render {
     };
 
     /**
-     * @brief 在渲染线程把 `UiDrawPacket` 录制为 NvRHI draw 的 Presentation renderer。
+     * @brief 在渲染主线程把当前 `ImDrawData` 录制为 NvRHI draw 的 Presentation renderer。
      *
-     * 该类不链接 SDL、Dear ImGui 或 Editor，不执行任意 callback。纹理只通过稳定 `UiTextureId` 查找当前 binding。
+     * 该类不保存 ImGui 帧指针；纹理只通过稳定 `UiTextureId` 查找当前 binding。
      */
     class UiRenderer final {
     public:
@@ -79,11 +82,12 @@ namespace lumin::render {
         void unregisterTexture(core::UiTextureId id) noexcept;
 
         /**
-         * @brief 使用指定 framebuffer 和帧槽录制一个深拷贝 UI packet。
-         * @throws std::logic_error renderer 未初始化或 packet 引用了未注册纹理时抛出。
+         * @brief 使用指定 framebuffer 和帧槽同步录制当前 ImGui draw data。
+         * @throws std::logic_error renderer
+         * 未初始化或 draw data 引用了未注册纹理时抛出。
          */
         void render(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer, std::uint32_t frameSlot,
-                    const core::UiDrawPacket& packet);
+                    const ImDrawData& drawData);
 
         /// 返回字体图集物理纹理；初始化前为空。
         [[nodiscard]] nvrhi::ITexture* fontTexture() const noexcept;
@@ -111,12 +115,12 @@ namespace lumin::render {
         };
 
         void createRendererResources(const UiRendererConfig& config);
-        void createFontResources(const core::UiFontAtlas& atlas);
+        void createFontResources(ImFontAtlas& atlas);
         [[nodiscard]] nvrhi::BindingSetHandle createTextureBinding(nvrhi::ITexture* texture) const;
         [[nodiscard]] nvrhi::IBindingSet& resolveTexture(core::UiTextureId id) const;
         void ensureBuffers(FrameBuffers& buffers, std::size_t vertexCount, std::size_t indexCount);
         void setRenderState(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
-                            const core::UiDrawPacket& packet, const FrameBuffers& buffers, const nvrhi::Rect& scissor,
+                            const ImDrawData& drawData, const FrameBuffers& buffers, const nvrhi::Rect& scissor,
                             nvrhi::IBindingSet& textureBinding);
 
         nvrhi::IDevice* device_ = nullptr;

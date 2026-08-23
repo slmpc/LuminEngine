@@ -12,7 +12,7 @@ namespace lumin::editor::style {
     inline constexpr float RightPanelRatio = 0.25f;
     inline constexpr float BottomPanelRatio = 0.30f;
     inline constexpr float SceneHierarchyRatio = 0.45f;
-    inline constexpr int LayoutSchema = 4;
+    inline constexpr int LayoutSchema = 5;
 
     void apply();
 

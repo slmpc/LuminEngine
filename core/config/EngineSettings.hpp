@@ -24,6 +24,8 @@ namespace lumin::config {
         bool contentBrowser = true;
         bool scriptConsole = true;
         bool renderSettings = true;
+        /** `Project Settings` dock 面板是否可见。 */
+        bool projectSettings = true;
 
         friend bool operator==(const EditorWindowVisibility&, const EditorWindowVisibility&) = default;
     };

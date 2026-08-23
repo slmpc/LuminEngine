@@ -143,7 +143,10 @@ add_library(lumin_render_presentation STATIC
 )
 add_library(Lumin::RenderPresentation ALIAS lumin_render_presentation)
 lumin_configure_render_library(lumin_render_presentation)
-target_link_libraries(lumin_render_presentation PUBLIC Lumin::RenderCore Lumin::RenderRhi Lumin::VulkanBackend)
+target_link_libraries(lumin_render_presentation
+    PUBLIC Lumin::RenderCore Lumin::RenderRhi Lumin::VulkanBackend
+    PRIVATE imgui::imgui
+)
 lumin_render_target_uses_shaders(lumin_render_presentation)
 
 add_library(lumin_render_features INTERFACE)
@@ -158,7 +161,6 @@ target_link_libraries(lumin_render_features INTERFACE
 )
 
 add_library(lumin_render_runtime STATIC
-    runtime/RenderMailbox.cpp
     runtime/Renderer.cpp
 )
 add_library(Lumin::RenderRuntime ALIAS lumin_render_runtime)
@@ -169,6 +171,7 @@ target_link_libraries(lumin_render_runtime
 
 add_library(lumin_editor_module STATIC
     editor/Editor.cpp
+    editor/EditorLogic.cpp
     editor/EditorStyle.cpp
     editor/ImGuiFrontend.cpp
     editor/RenderSettingsPanelAdapter.cpp

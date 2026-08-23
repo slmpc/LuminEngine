@@ -56,7 +56,8 @@ namespace lumin::config {
                       {"details", windows.details},
                       {"contentBrowser", windows.contentBrowser},
                       {"scriptConsole", windows.scriptConsole},
-                      {"renderSettings", windows.renderSettings}}}};
+                      {"renderSettings", windows.renderSettings},
+                      {"projectSettings", windows.projectSettings}}}};
         }
 
         EngineSettings parseSettings(const Json& document) {
@@ -91,6 +92,7 @@ namespace lumin::config {
                 settings.windows.contentBrowser = windows->value("contentBrowser", true);
                 settings.windows.scriptConsole = windows->value("scriptConsole", true);
                 settings.windows.renderSettings = windows->value("renderSettings", true);
+                settings.windows.projectSettings = windows->value("projectSettings", true);
             }
             normalizeEngineSettings(settings);
             return settings;

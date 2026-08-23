@@ -45,14 +45,23 @@ roughness 槽。三张贴图全部就绪前材质使用无纹理 fallback，避�
 Actor 并调用同一附着接口。
 
 项目场景只保存带持久 ID 的通用 Actor。未注册的原生 C++ Actor、程序化网格和其他临时运行时对象不会写入项目文件。
-新项目使用空场景，并重置相机、环境和项目渲染设置。
+新项目使用空场景，并重置相机、环境和完整项目设置。
+
+## Project Settings
+
+`Project Settings` 随场景保存在顶层 `projectSettings` 对象中，其中 `logicTickHz` 控制独立逻辑线程的固定 Tick
+频率，`render` 保存项目渲染设置。逻辑频率默认是 `60 Hz`，有效范围为 `15-240 Hz`；加载文件和 Editor 命令都会
+归一化到该范围，面板修改后不需要重启项目。关闭项目后 Runtime 恢复默认 `60 Hz`。
+
+旧场景的顶层 `renderSettings` 仍可读取；下一次保存会迁移到 `projectSettings.render`。
 
 ## 项目导航与全局设置
 
 没有项目时，编辑器只显示 `Project Navigator`，其中提供最近项目、`New Project...` 和 `Open Project...`。项目打开后
 切换到 dock 工作区；`File > Close Project` 关闭当前会话并返回导航器，dirty 项目继续使用 Save、Discard、Cancel。
 
-`File > Configuration` 可选择默认进入导航器或打开上次项目。`View` 菜单及各面板标题栏控制六个编辑器面板的可见性。
+`File > Configuration` 可选择默认进入导航器或打开上次项目。`View` 菜单及各面板标题栏控制七个编辑器面板的可见性，
+其中 `Project Settings` 用于项目级运行参数。
 启动模式、上次项目、最近十个项目和面板可见性保存在 SDL 首选目录的 `engine-settings.json` 中，不写入项目文件。
 
 ## Viewport 输入

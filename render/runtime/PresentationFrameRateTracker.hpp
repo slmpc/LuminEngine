@@ -7,7 +7,7 @@
 namespace lumin::render::runtime {
 
     /**
-     * @brief 按固定时间窗统计渲染线程完成的交换链呈现帧率。
+     * @brief 按固定时间窗统计渲染主线程完成的交换链呈现帧率。
      *
      * 统计器不读取主线程或 ImGui 时钟；调用方只应在一次 `present` 流程完成后记录一帧。
      */
@@ -67,9 +67,9 @@ namespace lumin::render::runtime {
         }
 
     private:
-        /** 当前采样窗口起点，只在渲染线程访问。 */
+        /** 当前采样窗口起点，只在渲染主线程访问。 */
         TimePoint windowStart_;
-        /** 当前采样窗口内已完成的呈现帧数，只在渲染线程访问。 */
+        /** 当前采样窗口内已完成的呈现帧数，只在渲染主线程访问。 */
         std::uint64_t presentedFrameCount_ = 0;
     };
 

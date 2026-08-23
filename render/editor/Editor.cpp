@@ -89,13 +89,21 @@ namespace lumin::editor {
             return "Unknown";
         }
 
-        bool modelAlive(const scene::Level& level, scene::ModelHandle handle) {
-            try {
-                static_cast<void>(level.model(handle));
-                return true;
-            } catch (const std::out_of_range&) {
-                return false;
-            }
+        EditorCommandOutcome makeCommandOutcome(bool succeeded = true, std::string message = {},
+                                                std::optional<scene::ActorHandle> actor = {},
+                                                std::optional<scripting::ScriptResult> scriptResult = {},
+                                                std::vector<scripting::ScriptReloadResult> reloadResults = {}) {
+            EditorCommandOutcome outcome;
+            outcome.succeeded = succeeded;
+            outcome.message = std::move(message);
+            outcome.actor = actor;
+            outcome.scriptResult = std::move(scriptResult);
+            outcome.reloadResults = std::move(reloadResults);
+            return outcome;
+        }
+
+        bool modelAlive(const EditorLogicSnapshot& snapshot, scene::ModelHandle handle) {
+            return snapshot.findModel(handle) != nullptr;
         }
 
         void section(const char* title) {
@@ -296,26 +304,23 @@ namespace lumin::editor {
     } // namespace
 
     struct Editor::Impl {
-        Impl(scene::Level& levelValue, scene::Camera& cameraValue, render::RenderSettings& settingsValue,
-             scripting::ScriptRuntime& scriptsValue, BackendInfoProvider backendInfoValue,
-             ViewportImageProvider viewportImageValue, project::ProjectSession* projectValue,
+        Impl(EditorLogicServices logicValue, render::RenderSettings& settingsValue,
+             BackendInfoProvider backendInfoValue, ViewportImageProvider viewportImageValue,
              EditorDialogServices dialogsValue, EditorSettingsServices settingsServicesValue,
              FrameRateProvider frameRateValue)
-            : level(levelValue), camera(cameraValue), settings(settingsValue), scripts(scriptsValue),
-              backendInfo(std::move(backendInfoValue)), viewportImage(std::move(viewportImageValue)),
-              projectSession(projectValue), dialogs(std::move(dialogsValue)),
+            : logic(std::move(logicValue)), settings(settingsValue), backendInfo(std::move(backendInfoValue)),
+              viewportImage(std::move(viewportImageValue)), dialogs(std::move(dialogsValue)),
               engineSettings(std::move(settingsServicesValue.settings)),
               saveEngineSettings(std::move(settingsServicesValue.save)), frameRate(std::move(frameRateValue)) {
             config::normalizeEngineSettings(engineSettings);
+            refreshLogicSnapshot();
         }
 
-        scene::Level& level;
-        scene::Camera& camera;
+        EditorLogicServices logic;
+        std::shared_ptr<const EditorLogicSnapshot> logicSnapshot = std::make_shared<EditorLogicSnapshot>();
         render::RenderSettings& settings;
-        scripting::ScriptRuntime& scripts;
         BackendInfoProvider backendInfo;
         ViewportImageProvider viewportImage;
-        project::ProjectSession* projectSession = nullptr;
         EditorDialogServices dialogs;
         config::EngineSettings engineSettings;
         SaveEngineSettingsCallback saveEngineSettings;
@@ -354,8 +359,146 @@ namespace lumin::editor {
         bool showConfiguration = false;
         bool exitRequested = false;
         bool focusDetails = false;
+        bool observedProjectOpen = false;
+        std::filesystem::path observedProjectFile;
+        std::optional<scene::ActorHandle> pendingActorSelection;
         ImGuizmo::OPERATION gizmoOperation = ImGuizmo::TRANSLATE;
         ImGuizmo::MODE gizmoMode = ImGuizmo::WORLD;
+
+        [[nodiscard]] const EditorLogicSnapshot& snapshot() const noexcept {
+            return *logicSnapshot;
+        }
+
+        [[nodiscard]] bool hasProject() const noexcept {
+            return snapshot().project.open;
+        }
+
+        void applyProjectRenderSettings() {
+            const project::ProjectRenderSettings& value = snapshot().project.settings.render;
+            settings.directLighting.enabled = value.directLighting;
+            settings.shadows.enabled = value.shadows;
+            settings.globalIllumination.mode =
+                value.rayTracing ? render::GlobalIlluminationMode::RayTracing : render::GlobalIlluminationMode::Legacy;
+            settings.globalIllumination.ssaoEnabled = value.ssao;
+            settings.globalIllumination.ambientOcclusionMode = toRenderAmbientOcclusionMode(value.ambientOcclusionMode);
+            settings.globalIllumination.ambientOcclusionRadius = std::max(value.ambientOcclusionRadius, 0.05f);
+            settings.globalIllumination.ambientOcclusionStrength = std::max(value.ambientOcclusionStrength, 0.0f);
+            settings.globalIllumination.ambientOcclusionBias = std::clamp(value.ambientOcclusionBias, 0.0f, 0.5f);
+            settings.globalIllumination.sharcEnabled = value.sharc;
+            settings.globalIllumination.nrdEnabled = value.nrd;
+            settings.temporalAa.enabled = value.taa;
+            settings.shadows.splitLambda = value.splitLambda;
+            settings.shadows.maxDistance = value.shadowDistance;
+            settings.toneMapping.exposure = value.exposure;
+        }
+
+        void refreshLogicSnapshot() {
+            if (logic.snapshot) {
+                if (std::shared_ptr<const EditorLogicSnapshot> next = logic.snapshot(); next != nullptr) {
+                    logicSnapshot = std::move(next);
+                }
+            }
+            const bool projectChanged =
+                observedProjectOpen != snapshot().project.open || observedProjectFile != snapshot().project.projectFile;
+            if (projectChanged) {
+                observedProjectOpen = snapshot().project.open;
+                observedProjectFile = snapshot().project.projectFile;
+                clearSelection();
+                contentProjectRoot.clear();
+                contentDirectory.clear();
+                contentHistory.clear();
+                viewportInteraction = {};
+                if (hasProject()) {
+                    applyProjectRenderSettings();
+                    rememberProject();
+                }
+            }
+            if (pendingActorSelection.has_value() && snapshot().findActor(*pendingActorSelection) != nullptr) {
+                selectActor(*pendingActorSelection);
+                pendingActorSelection.reset();
+            }
+        }
+
+        void appendScriptResult(const scripting::ScriptResult& result) {
+            if (result.succeeded) {
+                if (result.values.empty()) {
+                    console.push_back({scripting::ScriptSeverity::Info,
+                                       scripting::ScriptPhase::Console,
+                                       {},
+                                       "<console>",
+                                       "Command completed",
+                                       ConsoleEntry::Kind::CommandResult});
+                } else {
+                    for (const std::string& value : result.values) {
+                        console.push_back({scripting::ScriptSeverity::Info,
+                                           scripting::ScriptPhase::Console,
+                                           {},
+                                           "<console>",
+                                           value,
+                                           ConsoleEntry::Kind::CommandResult});
+                    }
+                }
+            } else if (result.error.has_value()) {
+                console.push_back({scripting::ScriptSeverity::Error, result.error->phase, result.error->script,
+                                   result.error->source.generic_string(), result.error->message});
+            }
+        }
+
+        void processCommandOutcome(const EditorCommandOutcome& outcome) {
+            if (!outcome.message.empty()) {
+                statusMessage = outcome.message;
+            }
+            if (outcome.actor.has_value()) {
+                pendingActorSelection = outcome.actor;
+            }
+            if (outcome.scriptResult.has_value()) {
+                appendScriptResult(*outcome.scriptResult);
+            }
+            for (const scripting::ScriptReloadResult& reload : outcome.reloadResults) {
+                if (reload.result.succeeded) {
+                    console.push_back({scripting::ScriptSeverity::Info,
+                                       scripting::ScriptPhase::Reload,
+                                       reload.script,
+                                       {},
+                                       "Reloaded"});
+                } else if (reload.result.error.has_value()) {
+                    console.push_back({scripting::ScriptSeverity::Error, reload.result.error->phase, reload.script,
+                                       reload.result.error->source.generic_string(), reload.result.error->message});
+                }
+            }
+        }
+
+        [[nodiscard]] std::optional<EditorCommandOutcome> submitCommand(EditorLogicCommand commandValue) {
+            if (!logic.submit) {
+                statusMessage = "Logic Runtime service is unavailable.";
+                return std::nullopt;
+            }
+            try {
+                const EditorCommandId submitted = logic.submit(std::move(commandValue));
+                std::optional<EditorCommandOutcome> immediate;
+                if (logic.drainResults) {
+                    for (const EditorCommandResult& result : logic.drainResults()) {
+                        processCommandOutcome(result.outcome);
+                        if (result.id == submitted) {
+                            immediate = result.outcome;
+                        }
+                    }
+                }
+                return immediate;
+            } catch (const std::exception& exception) {
+                statusMessage = exception.what();
+                return std::nullopt;
+            }
+        }
+
+        void processLogicResults() {
+            if (logic.drainResults) {
+                for (const EditorCommandResult& result : logic.drainResults()) {
+                    processCommandOutcome(result.outcome);
+                }
+            }
+            refreshLogicSnapshot();
+        }
 
         void persistEngineSettings() {
             if (!saveEngineSettings) {
@@ -368,11 +511,11 @@ namespace lumin::editor {
         }
 
         void rememberProject() {
-            if (projectSession == nullptr || !projectSession->hasProject()) {
+            if (!hasProject()) {
                 return;
             }
-            config::rememberProject(engineSettings, projectSession->projectFile());
-            selectedRecentProject = projectSession->projectFile();
+            config::rememberProject(engineSettings, snapshot().project.projectFile);
+            selectedRecentProject = snapshot().project.projectFile;
             persistEngineSettings();
         }
 
@@ -392,34 +535,6 @@ namespace lumin::editor {
                     .splitLambda = settings.shadows.splitLambda,
                     .shadowDistance = settings.shadows.maxDistance,
                     .exposure = settings.toneMapping.exposure};
-        }
-
-        void applyProjectRenderSettings() {
-            if (projectSession == nullptr) {
-                return;
-            }
-            const auto& value = projectSession->renderSettings();
-            settings.directLighting.enabled = value.directLighting;
-            settings.shadows.enabled = value.shadows;
-            settings.globalIllumination.mode =
-                value.rayTracing ? render::GlobalIlluminationMode::RayTracing : render::GlobalIlluminationMode::Legacy;
-            settings.globalIllumination.ssaoEnabled = value.ssao;
-            settings.globalIllumination.ambientOcclusionMode = toRenderAmbientOcclusionMode(value.ambientOcclusionMode);
-            settings.globalIllumination.ambientOcclusionRadius = std::max(value.ambientOcclusionRadius, 0.05f);
-            settings.globalIllumination.ambientOcclusionStrength = std::max(value.ambientOcclusionStrength, 0.0f);
-            settings.globalIllumination.ambientOcclusionBias = std::clamp(value.ambientOcclusionBias, 0.0f, 0.5f);
-            settings.globalIllumination.sharcEnabled = value.sharc;
-            settings.globalIllumination.nrdEnabled = value.nrd;
-            settings.temporalAa.enabled = value.taa;
-            settings.shadows.splitLambda = value.splitLambda;
-            settings.shadows.maxDistance = value.shadowDistance;
-            settings.toneMapping.exposure = value.exposure;
-        }
-
-        void markProjectDirty() noexcept {
-            if (projectSession != nullptr) {
-                projectSession->markDirty();
-            }
         }
 
         void clearSelection() noexcept {
@@ -442,7 +557,10 @@ namespace lumin::editor {
         }
 
         void synchronizeDiagnostics() {
-            for (const scripting::ScriptDiagnostic& diagnostic : scripts.diagnostics(lastDiagnosticSequence)) {
+            for (const scripting::ScriptDiagnostic& diagnostic : snapshot().scriptDiagnostics) {
+                if (diagnostic.sequence <= lastDiagnosticSequence) {
+                    continue;
+                }
                 console.push_back({diagnostic.severity, diagnostic.phase, diagnostic.script,
                                    diagnostic.source.generic_string(), diagnostic.message});
                 lastDiagnosticSequence = std::max(lastDiagnosticSequence, diagnostic.sequence);
@@ -450,48 +568,48 @@ namespace lumin::editor {
         }
 
         scripting::ScriptResult executeCommand(std::string_view source) {
-            scripting::ScriptResult result = scripts.execute(source);
             historyIndex.reset();
             historyDraft.clear();
-            if (result.succeeded) {
-                if (result.values.empty()) {
-                    console.push_back({scripting::ScriptSeverity::Info,
-                                       scripting::ScriptPhase::Console,
-                                       {},
-                                       "<console>",
-                                       "Command completed",
-                                       ConsoleEntry::Kind::CommandResult});
-                } else {
-                    for (const std::string& value : result.values) {
-                        console.push_back({scripting::ScriptSeverity::Info,
-                                           scripting::ScriptPhase::Console,
-                                           {},
-                                           "<console>",
-                                           value,
-                                           ConsoleEntry::Kind::CommandResult});
-                    }
-                }
-            } else {
-                synchronizeDiagnostics();
+            const std::string ownedSource{source};
+            const auto immediate =
+                submitCommand([ownedSource](scene::Level&, scene::Camera&, scripting::ScriptRuntime& scripts,
+                                            project::ProjectSession&) {
+                    scripting::ScriptResult result = scripts.execute(ownedSource);
+                    const bool succeeded = result.succeeded;
+                    return makeCommandOutcome(succeeded, {}, {}, std::move(result));
+                });
+            if (immediate.has_value() && immediate->scriptResult.has_value()) {
+                return *immediate->scriptResult;
             }
-            return result;
+            scripting::ScriptResult pending;
+            pending.succeeded = true;
+            return pending;
         }
 
         void clearDiagnostics() {
-            scripts.clearDiagnostics();
+            static_cast<void>(submitCommand(
+                [](scene::Level&, scene::Camera&, scripting::ScriptRuntime& scripts, project::ProjectSession&) {
+                    scripts.clearDiagnostics();
+                    return EditorCommandOutcome{};
+                }));
             std::erase_if(console, [](const ConsoleEntry& entry) {
                 return entry.kind == ConsoleEntry::Kind::Diagnostic;
             });
         }
 
         void clearCommandHistory() {
-            scripts.clearConsoleHistory();
+            static_cast<void>(submitCommand(
+                [](scene::Level&, scene::Camera&, scripting::ScriptRuntime& scripts, project::ProjectSession&) {
+                    scripts.clearConsoleHistory();
+                    return EditorCommandOutcome{};
+                }));
             historyIndex.reset();
             historyDraft.clear();
         }
 
         std::string commandHistoryPrevious(std::string_view draft) {
-            const std::vector<scripting::ConsoleHistoryEntry> history = scripts.consoleHistory();
+            refreshLogicSnapshot();
+            const std::vector<scripting::ConsoleHistoryEntry>& history = snapshot().consoleHistory;
             if (history.empty()) {
                 return std::string{draft};
             }
@@ -508,7 +626,8 @@ namespace lumin::editor {
             if (!historyIndex.has_value()) {
                 return historyDraft;
             }
-            const std::vector<scripting::ConsoleHistoryEntry> history = scripts.consoleHistory();
+            refreshLogicSnapshot();
+            const std::vector<scripting::ConsoleHistoryEntry>& history = snapshot().consoleHistory;
             if (*historyIndex + 1 < history.size()) {
                 ++*historyIndex;
                 return history[*historyIndex].command;
@@ -518,20 +637,15 @@ namespace lumin::editor {
         }
 
         std::vector<scripting::ScriptReloadResult> reloadChangedScripts() {
-            std::vector<scripting::ScriptReloadResult> results = scripts.reloadChanged();
-            for (const scripting::ScriptReloadResult& reload : results) {
-                if (reload.result.succeeded) {
-                    console.push_back({scripting::ScriptSeverity::Info,
-                                       scripting::ScriptPhase::Reload,
-                                       reload.script,
-                                       {},
-                                       "Reloaded"});
-                } else if (reload.result.error.has_value()) {
-                    console.push_back({scripting::ScriptSeverity::Error, reload.result.error->phase, reload.script,
-                                       reload.result.error->source.generic_string(), reload.result.error->message});
-                }
-            }
-            return results;
+            const auto immediate = submitCommand([](scene::Level&, scene::Camera&, scripting::ScriptRuntime& scripts,
+                                                    project::ProjectSession&) {
+                std::vector<scripting::ScriptReloadResult> results = scripts.reloadChanged();
+                const bool succeeded = std::ranges::all_of(results, [](const scripting::ScriptReloadResult& result) {
+                    return result.result.succeeded;
+                });
+                return makeCommandOutcome(succeeded, {}, {}, {}, std::move(results));
+            });
+            return immediate.has_value() ? immediate->reloadResults : std::vector<scripting::ScriptReloadResult>{};
         }
 
         void buildLayout(ImGuiID dockspace, const ImGuiViewport& viewport) {
@@ -561,6 +675,7 @@ namespace lumin::editor {
             ImGui::DockBuilderDockWindow("Scene Hierarchy", hierarchy);
             ImGui::DockBuilderDockWindow("Details", properties);
             ImGui::DockBuilderDockWindow("Render / GI", properties);
+            ImGui::DockBuilderDockWindow("Project Settings", properties);
             ImGui::DockBuilderDockWindow("Content Browser", bottom);
             ImGui::DockBuilderDockWindow("Script Console", bottom);
             ImGui::DockBuilderDockWindow("Viewport", center);
@@ -578,7 +693,7 @@ namespace lumin::editor {
         }
 
         void runDestructive(std::function<void()> action) {
-            if (projectSession != nullptr && projectSession->dirty()) {
+            if (snapshot().project.dirty) {
                 pendingDestructiveAction = std::move(action);
                 showConfirm = true;
                 return;
@@ -587,7 +702,7 @@ namespace lumin::editor {
         }
 
         void requestNewProject() {
-            if (!dialogs.openFolder || projectSession == nullptr) {
+            if (!dialogs.openFolder || !logic.submit) {
                 statusMessage = "Folder dialog service is unavailable.";
                 return;
             }
@@ -602,15 +717,17 @@ namespace lumin::editor {
         }
 
         bool openProjectPath(const std::filesystem::path& path) {
-            if (projectSession == nullptr) {
+            if (!logic.submit) {
                 return false;
             }
-            const std::filesystem::path previousProject = projectSession->projectFile();
-            std::string error;
-            if (!projectSession->open(path, error)) {
-                if (projectSession->projectFile() != previousProject) {
-                    projectSession->close();
-                }
+            const std::filesystem::path ownedPath = path;
+            const auto immediate = submitCommand([ownedPath](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
+                                                             project::ProjectSession& projectSession) {
+                std::string error;
+                const bool opened = projectSession.open(ownedPath, error);
+                return makeCommandOutcome(opened, opened ? "Project opened." : std::move(error));
+            });
+            if (immediate.has_value() && !immediate->succeeded) {
                 if (engineSettings.lastProject.has_value() && engineSettings.lastProject->lexically_normal() ==
                                                                   std::filesystem::absolute(path).lexically_normal()) {
                     engineSettings.lastProject.reset();
@@ -619,18 +736,14 @@ namespace lumin::editor {
                     }
                     persistEngineSettings();
                 }
-                statusMessage = std::move(error);
                 return false;
             }
             clearSelection();
-            applyProjectRenderSettings();
-            rememberProject();
-            statusMessage = "Opened " + projectSession->manifest().name;
             return true;
         }
 
         void requestOpenProject() {
-            if (!dialogs.openProject || projectSession == nullptr) {
+            if (!dialogs.openProject || !logic.submit) {
                 statusMessage = "Project dialog service is unavailable.";
                 return;
             }
@@ -642,26 +755,31 @@ namespace lumin::editor {
         }
 
         void saveProject() {
-            if (projectSession == nullptr || !projectSession->hasProject()) {
+            if (!hasProject()) {
                 statusMessage = "No project is open.";
                 return;
             }
-            projectSession->setRenderSettings(currentProjectRenderSettings());
-            std::string error;
-            statusMessage = projectSession->save(error) ? "Project saved." : std::move(error);
+            const project::ProjectRenderSettings renderSettings = currentProjectRenderSettings();
+            static_cast<void>(submitCommand([renderSettings](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
+                                                             project::ProjectSession& projectSession) {
+                projectSession.setRenderSettings(renderSettings);
+                std::string error;
+                const bool saved = projectSession.save(error);
+                return makeCommandOutcome(saved, saved ? "Project saved." : std::move(error));
+            }));
         }
 
         void closeProject() {
-            if (projectSession == nullptr) {
-                return;
-            }
-            projectSession->close();
+            static_cast<void>(submitCommand(
+                [](scene::Level&, scene::Camera&, scripting::ScriptRuntime&, project::ProjectSession& projectSession) {
+                    projectSession.close();
+                    return makeCommandOutcome(true, "Project closed.");
+                }));
             clearSelection();
             contentProjectRoot.clear();
             contentDirectory.clear();
             contentHistory.clear();
             viewportInteraction = {};
-            statusMessage = "Project closed.";
         }
 
         void drawMainMenu() {
@@ -693,12 +811,10 @@ namespace lumin::editor {
                     ImGui::EndMenu();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Save Scene", "Ctrl+S", false,
-                                    projectSession != nullptr && projectSession->hasProject())) {
+                if (ImGui::MenuItem("Save Scene", "Ctrl+S", false, hasProject())) {
                     saveProject();
                 }
-                if (ImGui::MenuItem("Close Project", nullptr, false,
-                                    projectSession != nullptr && projectSession->hasProject())) {
+                if (ImGui::MenuItem("Close Project", nullptr, false, hasProject())) {
                     runDestructive([this] {
                         closeProject();
                     });
@@ -715,7 +831,7 @@ namespace lumin::editor {
                 }
                 ImGui::EndMenu();
             }
-            const bool editorWorkspaceActive = projectSession == nullptr || projectSession->hasProject();
+            const bool editorWorkspaceActive = hasProject();
             if (ImGui::BeginMenu("View", editorWorkspaceActive)) {
                 auto& windows = engineSettings.windows;
                 ImGui::MenuItem("Viewport", nullptr, &windows.viewport);
@@ -724,12 +840,13 @@ namespace lumin::editor {
                 ImGui::MenuItem("Content Browser", nullptr, &windows.contentBrowser);
                 ImGui::MenuItem("Script Console", nullptr, &windows.scriptConsole);
                 ImGui::MenuItem("Render / GI", nullptr, &windows.renderSettings);
+                ImGui::MenuItem("Project Settings", nullptr, &windows.projectSettings);
                 ImGui::EndMenu();
             }
-            if (projectSession != nullptr && projectSession->hasProject()) {
+            if (hasProject()) {
                 ImGui::Separator();
-                ImGui::TextUnformatted(projectSession->manifest().name.c_str());
-                if (projectSession->dirty()) {
+                ImGui::TextUnformatted(snapshot().project.manifest.name.c_str());
+                if (snapshot().project.dirty) {
                     ImGui::SameLine();
                     ImGui::TextUnformatted("*");
                 }
@@ -857,15 +974,18 @@ namespace lumin::editor {
                     ImGui::BeginDisabled();
                 }
                 if (ImGui::Button("Create")) {
-                    std::string error;
-                    if (projectSession->create(newProjectLocation, projectName.data(), error)) {
+                    const std::filesystem::path location = newProjectLocation;
+                    const std::string name = projectName.data();
+                    const auto immediate =
+                        submitCommand([location, name](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
+                                                       project::ProjectSession& projectSession) {
+                            std::string error;
+                            const bool created = projectSession.create(location, name, error);
+                            return makeCommandOutcome(created, created ? "Project created." : std::move(error));
+                        });
+                    if (!immediate.has_value() || immediate->succeeded) {
                         clearSelection();
-                        applyProjectRenderSettings();
-                        rememberProject();
-                        statusMessage = "Project created.";
                         ImGui::CloseCurrentPopup();
-                    } else {
-                        statusMessage = std::move(error);
                     }
                 }
                 if (!canCreate) {
@@ -886,7 +1006,7 @@ namespace lumin::editor {
                 ImGui::TextUnformatted("Save the current project before continuing?");
                 if (ImGui::Button("Save")) {
                     saveProject();
-                    if (projectSession == nullptr || !projectSession->dirty()) {
+                    if (!snapshot().project.dirty) {
                         auto action = std::move(pendingDestructiveAction);
                         ImGui::CloseCurrentPopup();
                         if (action) {
@@ -915,11 +1035,10 @@ namespace lumin::editor {
             if (directory.empty()) {
                 return true;
             }
-            return projectSession != nullptr &&
-                   std::ranges::any_of(projectSession->projectEntries(), [&](const project::ProjectEntry& entry) {
-                       return entry.kind == project::ProjectEntryKind::Directory &&
-                              entry.relativePath.lexically_normal() == directory.lexically_normal();
-                   });
+            return std::ranges::any_of(snapshot().project.entries, [&](const project::ProjectEntry& entry) {
+                return entry.kind == project::ProjectEntryKind::Directory &&
+                       entry.relativePath.lexically_normal() == directory.lexically_normal();
+            });
         }
 
         void navigateContent(std::filesystem::path directory, bool remember = true) {
@@ -937,7 +1056,7 @@ namespace lumin::editor {
         }
 
         void synchronizeProjectFiles(bool manual) {
-            if (projectSession == nullptr || !projectSession->hasProject()) {
+            if (!hasProject()) {
                 return;
             }
             const auto now = std::chrono::steady_clock::now();
@@ -946,17 +1065,23 @@ namespace lumin::editor {
                 return;
             }
             lastContentSync = now;
-            const project::AssetSyncResult result = projectSession->synchronizeProjectFiles(manual);
-            if (!result.succeeded()) {
-                statusMessage = result.error;
-            } else if (manual || result.changed()) {
-                statusMessage = std::to_string(result.added) + " added, " + std::to_string(result.moved) + " moved, " +
-                                std::to_string(result.modified) + " modified, " + std::to_string(result.missing) +
-                                " missing.";
-                if (!result.diagnostics.empty()) {
-                    statusMessage += " " + result.diagnostics.front();
+            static_cast<void>(submitCommand([manual](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
+                                                     project::ProjectSession& projectSession) {
+                const project::AssetSyncResult result = projectSession.synchronizeProjectFiles(manual);
+                if (!result.succeeded()) {
+                    return makeCommandOutcome(false, result.error);
                 }
-            }
+                std::string message;
+                if (manual || result.changed()) {
+                    message = std::to_string(result.added) + " added, " + std::to_string(result.moved) + " moved, " +
+                              std::to_string(result.modified) + " modified, " + std::to_string(result.missing) +
+                              " missing.";
+                    if (!result.diagnostics.empty()) {
+                        message += " " + result.diagnostics.front();
+                    }
+                }
+                return makeCommandOutcome(true, std::move(message));
+            }));
             if (!contentDirectoryExists(contentDirectory)) {
                 contentDirectory.clear();
                 contentHistory.clear();
@@ -965,7 +1090,7 @@ namespace lumin::editor {
 
         void drawDirectoryTreeNode(const std::filesystem::path& directory, std::string_view label, bool rootNode) {
             bool hasChildren = false;
-            for (const project::ProjectEntry& entry : projectSession->projectEntries()) {
+            for (const project::ProjectEntry& entry : snapshot().project.entries) {
                 if (entry.kind == project::ProjectEntryKind::Directory &&
                     entry.relativePath.parent_path() == directory) {
                     hasChildren = true;
@@ -989,7 +1114,7 @@ namespace lumin::editor {
                 navigateContent(directory);
             }
             if (open) {
-                for (const project::ProjectEntry& entry : projectSession->projectEntries()) {
+                for (const project::ProjectEntry& entry : snapshot().project.entries) {
                     if (entry.kind == project::ProjectEntryKind::Directory &&
                         entry.relativePath.parent_path() == directory) {
                         drawDirectoryTreeNode(entry.relativePath, entry.relativePath.filename().string(), false);
@@ -1005,7 +1130,7 @@ namespace lumin::editor {
             constexpr float tileHeight = 96.0f;
             constexpr float iconSize = 46.0f;
             const project::AssetRecord* asset =
-                entry.asset.has_value() ? projectSession->assets().find(*entry.asset) : nullptr;
+                entry.asset.has_value() ? snapshot().project.assets.find(*entry.asset) : nullptr;
             const std::string id = entry.relativePath.generic_string();
             ImGui::PushID(id.c_str());
             ImGui::InvisibleButton("##entry", {tileWidth, tileHeight});
@@ -1026,9 +1151,14 @@ namespace lumin::editor {
                 if (entry.kind == project::ProjectEntryKind::Directory) {
                     navigateContent(entry.relativePath);
                 } else if (asset != nullptr && asset->available && asset->type == project::AssetType::Mesh) {
-                    if (const auto created = projectSession->createActorFromMesh(asset->id); created.has_value()) {
-                        selectActor(*created);
-                    }
+                    const project::AssetId assetId = asset->id;
+                    static_cast<void>(submitCommand([assetId](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
+                                                              project::ProjectSession& projectSession) {
+                        const auto created = projectSession.createActorFromMesh(assetId);
+                        return makeCommandOutcome(created.has_value(),
+                                                  created.has_value() ? std::string{} : "Could not create mesh actor.",
+                                                  created);
+                    }));
                 }
             }
             if (hovered) {
@@ -1060,7 +1190,7 @@ namespace lumin::editor {
                 ImGui::End();
                 return;
             }
-            if (projectSession == nullptr || !projectSession->hasProject()) {
+            if (!hasProject()) {
                 contentProjectRoot.clear();
                 contentDirectory.clear();
                 contentHistory.clear();
@@ -1069,8 +1199,8 @@ namespace lumin::editor {
                 return;
             }
 
-            if (contentProjectRoot != projectSession->rootDirectory()) {
-                contentProjectRoot = projectSession->rootDirectory();
+            if (contentProjectRoot != snapshot().project.rootDirectory) {
+                contentProjectRoot = snapshot().project.rootDirectory;
                 contentDirectory.clear();
                 contentHistory.clear();
                 contentSearch.fill('\0');
@@ -1100,7 +1230,7 @@ namespace lumin::editor {
                 ImGui::SetTooltip("Refresh");
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton(projectSession->manifest().name.c_str())) {
+            if (ImGui::SmallButton(snapshot().project.manifest.name.c_str())) {
                 navigateContent({});
             }
             const std::filesystem::path displayedDirectory = contentDirectory;
@@ -1125,14 +1255,14 @@ namespace lumin::editor {
 
             const float treeWidth = std::clamp(ImGui::GetContentRegionAvail().x * 0.24f, 150.0f, 260.0f);
             ImGui::BeginChild("DirectoryTree", {treeWidth, -ImGui::GetFrameHeightWithSpacing()}, false);
-            drawDirectoryTreeNode({}, projectSession->manifest().name, true);
+            drawDirectoryTreeNode({}, snapshot().project.manifest.name, true);
             ImGui::EndChild();
             ImGui::SameLine();
             ImGui::BeginChild("DirectoryContents", {0.0f, -ImGui::GetFrameHeightWithSpacing()}, false);
 
             std::vector<const project::ProjectEntry*> visibleEntries;
             const std::string query = lowerAscii(contentSearch.data());
-            for (const project::ProjectEntry& entry : projectSession->projectEntries()) {
+            for (const project::ProjectEntry& entry : snapshot().project.entries) {
                 const bool visible =
                     query.empty()
                         ? entry.relativePath.parent_path() == contentDirectory
@@ -1163,10 +1293,13 @@ namespace lumin::editor {
             ImGui::EndChild();
 
             if (removeAsset.has_value()) {
-                std::string error;
-                if (!projectSession->removeAsset(*removeAsset, error)) {
-                    statusMessage = std::move(error);
-                }
+                const project::AssetId assetId = *removeAsset;
+                static_cast<void>(submitCommand([assetId](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
+                                                          project::ProjectSession& projectSession) {
+                    std::string error;
+                    const bool removed = projectSession.removeAsset(assetId, error);
+                    return makeCommandOutcome(removed, std::move(error));
+                }));
             }
             if (showRenameAsset) {
                 ImGui::OpenPopup("Rename Asset");
@@ -1176,12 +1309,18 @@ namespace lumin::editor {
                 ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                 ImGui::InputText("Name", renameAssetName.data(), renameAssetName.size());
                 if (ImGui::Button("Rename")) {
-                    std::string error;
-                    if (projectSession->renameAsset(*renameAssetId, renameAssetName.data(), error)) {
+                    const project::AssetId assetId = *renameAssetId;
+                    const std::string name = renameAssetName.data();
+                    const auto immediate =
+                        submitCommand([assetId, name](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
+                                                      project::ProjectSession& projectSession) {
+                            std::string error;
+                            const bool renamed = projectSession.renameAsset(assetId, name, error);
+                            return makeCommandOutcome(renamed, std::move(error));
+                        });
+                    if (!immediate.has_value() || immediate->succeeded) {
                         renameAssetId.reset();
                         ImGui::CloseCurrentPopup();
-                    } else {
-                        statusMessage = std::move(error);
                     }
                 }
                 ImGui::SameLine();
@@ -1202,13 +1341,10 @@ namespace lumin::editor {
 
         void drawHierarchy() {
             ImGui::Begin("Scene Hierarchy", &engineSettings.windows.sceneHierarchy);
-            for (const scene::ActorHandle handle : level.actorHandles()) {
-                scene::Actor* value = level.actor(handle);
-                if (value == nullptr) {
-                    continue;
-                }
+            for (const EditorActorSnapshot& value : snapshot().actors) {
+                const scene::ActorHandle handle = value.handle;
                 const std::string label =
-                    value->name() + "##actor" + std::to_string(handle.index) + ":" + std::to_string(handle.generation);
+                    value.name + "##actor" + std::to_string(handle.index) + ":" + std::to_string(handle.generation);
                 const bool selected = actor == handle;
                 ImGui::PushID(static_cast<int>(handle.index));
                 ImGui::PushID(static_cast<int>(handle.generation));
@@ -1220,44 +1356,70 @@ namespace lumin::editor {
                     if (ImGui::MenuItem("Properties")) {
                         focusDetails = true;
                     }
-                    if (projectSession != nullptr && projectSession->hasProject() && ImGui::BeginMenu("Add Script")) {
-                        for (const project::AssetRecord& asset : projectSession->assets().assets()) {
+                    if (hasProject() && ImGui::BeginMenu("Add Script")) {
+                        for (const project::AssetRecord& asset : snapshot().project.assets.assets()) {
                             if (asset.available && asset.type == project::AssetType::Script &&
                                 ImGui::MenuItem(asset.displayName.c_str())) {
-                                const auto result =
-                                    scripts.attach(level, handle, projectSession->rootDirectory() / asset.relativePath);
-                                if (!result && result.result.error.has_value()) {
-                                    statusMessage = result.result.error->message;
-                                } else {
-                                    markProjectDirty();
-                                }
+                                const std::filesystem::path source =
+                                    snapshot().project.rootDirectory / asset.relativePath;
+                                static_cast<void>(submitCommand([handle,
+                                                                 source](scene::Level& level, scene::Camera&,
+                                                                         scripting::ScriptRuntime& scripts,
+                                                                         project::ProjectSession& projectSession) {
+                                    scripting::ScriptSpawnResult result = scripts.attach(level, handle, source);
+                                    if (result) {
+                                        projectSession.markDirty();
+                                    }
+                                    const bool succeeded = result.result.succeeded;
+                                    const std::string message =
+                                        result.result.error.has_value() ? result.result.error->message : std::string{};
+                                    return makeCommandOutcome(succeeded, message, {}, std::move(result.result));
+                                }));
                             }
                         }
                         ImGui::EndMenu();
                     }
-                    if (ImGui::MenuItem("Duplicate") && projectSession != nullptr && value->modelHandle().isValid()) {
-                        const auto meshAsset = projectSession->assetForMesh(level.model(value->modelHandle()).mesh);
-                        if (meshAsset.has_value()) {
-                            scene::Transform transform = value->transform();
+                    if (ImGui::MenuItem("Duplicate") && value.modelHandle.isValid()) {
+                        const EditorModelSnapshot* sourceModel = snapshot().findModel(value.modelHandle);
+                        if (sourceModel != nullptr && sourceModel->meshAsset.has_value()) {
+                            const project::AssetId meshAsset = *sourceModel->meshAsset;
+                            scene::Transform transform = value.transform;
+                            const scene::Material material = value.material;
                             transform.position.x += 0.5f;
-                            if (const auto copy = projectSession->createActorFromMesh(*meshAsset, transform);
-                                copy.has_value()) {
-                                level.actor(*copy)->setMaterial(value->material());
-                                selectActor(*copy);
-                            }
+                            static_cast<void>(
+                                submitCommand([meshAsset, transform,
+                                               material](scene::Level& level, scene::Camera&, scripting::ScriptRuntime&,
+                                                         project::ProjectSession& projectSession) {
+                                    const auto copy = projectSession.createActorFromMesh(meshAsset, transform);
+                                    if (copy.has_value()) {
+                                        if (scene::Actor* actor = level.actor(*copy); actor != nullptr) {
+                                            actor->setMaterial(material);
+                                        }
+                                        projectSession.markDirty();
+                                    }
+                                    return makeCommandOutcome(copy.has_value(), {}, copy);
+                                }));
                         }
                     }
                     if (ImGui::MenuItem("Delete")) {
-                        level.destroyActor(handle);
+                        static_cast<void>(
+                            submitCommand([handle](scene::Level& level, scene::Camera&, scripting::ScriptRuntime&,
+                                                   project::ProjectSession& projectSession) {
+                                const bool destroyed = level.destroyActor(handle);
+                                if (destroyed) {
+                                    projectSession.markDirty();
+                                }
+                                return makeCommandOutcome(destroyed);
+                            }));
                         clearSelection();
-                        markProjectDirty();
                     }
                     ImGui::EndPopup();
                 }
                 ImGui::PopID();
                 ImGui::PopID();
             }
-            for (const scene::ModelHandle handle : level.modelHandles()) {
+            for (const EditorModelSnapshot& value : snapshot().models) {
+                const scene::ModelHandle handle = value.handle;
                 char label[64]{};
                 std::snprintf(label, sizeof(label), "Model %u:%u", handle.index, handle.generation);
                 const bool selected = model == handle;
@@ -1269,7 +1431,7 @@ namespace lumin::editor {
                 ImGui::PopID();
                 ImGui::PopID();
             }
-            if (level.actorHandles().empty() && level.modelHandles().empty() && scripts.scripts().empty()) {
+            if (snapshot().actors.empty() && snapshot().models.empty() && snapshot().scripts.empty()) {
                 ImGui::TextDisabled("No actors, models, or scripts");
             }
             ImGui::End();
@@ -1285,7 +1447,6 @@ namespace lumin::editor {
             changed |= ImGui::DragFloat3("##scale", &transform.scale.x, 0.01f, 0.001f, 1000.0f);
             if (changed) {
                 setSelectedTransform(transform);
-                markProjectDirty();
             }
         }
 
@@ -1314,7 +1475,7 @@ namespace lumin::editor {
             }
             propertyLabel("Texture scale");
             changed |= ImGui::DragFloat("##textureScale", &material.textureScale, 0.05f, 0.01f, 100.0f);
-            if (projectSession != nullptr && projectSession->hasProject()) {
+            if (hasProject()) {
                 scene::PbrTextureSet textureDraft = material.textures.value_or(scene::PbrTextureSet{});
                 bool textureChanged = false;
                 const auto textureSlot = [&](const char* label, const char* id, std::filesystem::path& target) {
@@ -1326,9 +1487,9 @@ namespace lumin::editor {
                             payload != nullptr) {
                             const project::AssetId asset{std::string{static_cast<const char*>(payload->Data),
                                                                      static_cast<std::size_t>(payload->DataSize)}};
-                            if (const project::AssetRecord* record = projectSession->assets().find(asset);
+                            if (const project::AssetRecord* record = snapshot().project.assets.find(asset);
                                 record != nullptr && record->available && record->type == project::AssetType::Texture) {
-                                target = projectSession->rootDirectory() / record->relativePath;
+                                target = snapshot().project.rootDirectory / record->relativePath;
                                 textureChanged = true;
                             }
                         }
@@ -1345,7 +1506,6 @@ namespace lumin::editor {
             }
             if (changed) {
                 setSelectedMaterial(material);
-                markProjectDirty();
             }
         }
 
@@ -1358,79 +1518,138 @@ namespace lumin::editor {
             if (selection == SelectionState::Stale) {
                 ImGui::TextUnformatted("Selection became stale and was cleared.");
             } else if (actor.has_value()) {
-                scene::Actor* selected = level.actor(*actor);
+                const EditorActorSnapshot* selected = snapshot().findActor(*actor);
                 if (selected != nullptr) {
                     std::array<char, 128> name{};
-                    const std::size_t nameLength = std::min(selected->name().size(), name.size() - 1);
-                    std::copy_n(selected->name().data(), nameLength, name.data());
+                    const std::size_t nameLength = std::min(selected->name.size(), name.size() - 1);
+                    std::copy_n(selected->name.data(), nameLength, name.data());
                     propertyLabel("Name");
                     if (ImGui::InputText("##actorName", name.data(), name.size(),
                                          ImGuiInputTextFlags_EnterReturnsTrue)) {
-                        selected->setName(name.data());
-                        markProjectDirty();
+                        const scene::ActorHandle handle = *actor;
+                        const std::string actorName = name.data();
+                        static_cast<void>(submitCommand([handle, actorName](scene::Level& level, scene::Camera&,
+                                                                            scripting::ScriptRuntime&,
+                                                                            project::ProjectSession& projectSession) {
+                            scene::Actor* value = level.actor(handle);
+                            if (value == nullptr) {
+                                return makeCommandOutcome(false, "Selected actor is no longer alive.");
+                            }
+                            value->setName(actorName);
+                            projectSession.markDirty();
+                            return EditorCommandOutcome{};
+                        }));
                     }
                     section("Transform");
-                    editTransform(selected->transform());
+                    editTransform(selected->transform);
                     section("Material");
-                    editMaterial(selected->material());
+                    editMaterial(selected->material);
                     section("Scripts");
-                    std::vector<scripting::ScriptInfo> attached = scripts.scriptsForActor(*actor);
+                    std::vector<scripting::ScriptInfo> attached = snapshot().scriptsForActor(*actor);
                     for (std::size_t index = 0; index < attached.size(); ++index) {
                         scripting::ScriptInfo& info = attached[index];
                         ImGui::PushID(static_cast<int>(info.handle.value));
                         bool enabled = info.enabled;
                         if (ImGui::Checkbox("##enabled", &enabled)) {
-                            scripts.setEnabled(info.handle, enabled);
-                            markProjectDirty();
+                            const scripting::ScriptHandle handle = info.handle;
+                            static_cast<void>(submitCommand([handle, enabled](scene::Level&, scene::Camera&,
+                                                                              scripting::ScriptRuntime& scripts,
+                                                                              project::ProjectSession& projectSession) {
+                                const bool changed = scripts.setEnabled(handle, enabled);
+                                if (changed) {
+                                    projectSession.markDirty();
+                                }
+                                return makeCommandOutcome(changed);
+                            }));
                         }
                         ImGui::SameLine();
                         ImGui::TextUnformatted(info.source.filename().string().c_str());
                         if (ImGui::SmallButton("Reload")) {
-                            static_cast<void>(scripts.reload(info.handle));
+                            const scripting::ScriptHandle handle = info.handle;
+                            static_cast<void>(
+                                submitCommand([handle](scene::Level&, scene::Camera&, scripting::ScriptRuntime& scripts,
+                                                       project::ProjectSession&) {
+                                    scripting::ScriptResult result = scripts.reload(handle);
+                                    const bool succeeded = result.succeeded;
+                                    return makeCommandOutcome(succeeded, {}, {}, std::move(result));
+                                }));
                         }
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Up") && index > 0) {
-                            scripts.reorder(info.handle, index - 1);
-                            markProjectDirty();
+                            const scripting::ScriptHandle handle = info.handle;
+                            const std::size_t target = index - 1;
+                            static_cast<void>(submitCommand([handle, target](scene::Level&, scene::Camera&,
+                                                                             scripting::ScriptRuntime& scripts,
+                                                                             project::ProjectSession& projectSession) {
+                                const bool changed = scripts.reorder(handle, target);
+                                if (changed) {
+                                    projectSession.markDirty();
+                                }
+                                return makeCommandOutcome(changed);
+                            }));
                         }
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Down") && index + 1 < attached.size()) {
-                            scripts.reorder(info.handle, index + 1);
-                            markProjectDirty();
+                            const scripting::ScriptHandle handle = info.handle;
+                            const std::size_t target = index + 1;
+                            static_cast<void>(submitCommand([handle, target](scene::Level&, scene::Camera&,
+                                                                             scripting::ScriptRuntime& scripts,
+                                                                             project::ProjectSession& projectSession) {
+                                const bool changed = scripts.reorder(handle, target);
+                                if (changed) {
+                                    projectSession.markDirty();
+                                }
+                                return makeCommandOutcome(changed);
+                            }));
                         }
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Remove")) {
-                            scripts.detach(info.handle);
-                            markProjectDirty();
+                            const scripting::ScriptHandle handle = info.handle;
+                            static_cast<void>(
+                                submitCommand([handle](scene::Level&, scene::Camera&, scripting::ScriptRuntime& scripts,
+                                                       project::ProjectSession& projectSession) {
+                                    const bool changed = scripts.detach(handle);
+                                    if (changed) {
+                                        projectSession.markDirty();
+                                    }
+                                    return makeCommandOutcome(changed);
+                                }));
                         }
                         ImGui::PopID();
                     }
-                    if (projectSession != nullptr && projectSession->hasProject() &&
-                        ImGui::BeginCombo("Add Script", "Select")) {
-                        for (const project::AssetRecord& asset : projectSession->assets().assets()) {
+                    if (hasProject() && ImGui::BeginCombo("Add Script", "Select")) {
+                        for (const project::AssetRecord& asset : snapshot().project.assets.assets()) {
                             if (asset.available && asset.type == project::AssetType::Script &&
                                 ImGui::Selectable(asset.displayName.c_str())) {
-                                const auto result =
-                                    scripts.attach(level, *actor, projectSession->rootDirectory() / asset.relativePath);
-                                if (!result && result.result.error.has_value()) {
-                                    statusMessage = result.result.error->message;
-                                } else {
-                                    markProjectDirty();
-                                }
+                                const scene::ActorHandle actorHandle = *actor;
+                                const std::filesystem::path source =
+                                    snapshot().project.rootDirectory / asset.relativePath;
+                                static_cast<void>(submitCommand([actorHandle,
+                                                                 source](scene::Level& level, scene::Camera&,
+                                                                         scripting::ScriptRuntime& scripts,
+                                                                         project::ProjectSession& projectSession) {
+                                    scripting::ScriptSpawnResult result = scripts.attach(level, actorHandle, source);
+                                    if (result) {
+                                        projectSession.markDirty();
+                                    }
+                                    return makeCommandOutcome(
+                                        result.result.succeeded,
+                                        result.result.error.has_value() ? result.result.error->message : std::string{});
+                                }));
                             }
                         }
                         ImGui::EndCombo();
                     }
                 }
             } else if (model.has_value()) {
-                const scene::ModelInstance& selected = level.model(*model);
-                section("Transform");
-                editTransform(selected.transform);
-                section("Material");
-                editMaterial(selected.material);
+                if (const EditorModelSnapshot* selected = snapshot().findModel(*model); selected != nullptr) {
+                    section("Transform");
+                    editTransform(selected->model.transform);
+                    section("Material");
+                    editMaterial(selected->model.material);
+                }
             } else if (script.has_value()) {
-                const std::optional<scripting::ScriptInfo> selected = scripts.script(*script);
-                if (selected.has_value()) {
+                if (const scripting::ScriptInfo* selected = snapshot().findScript(*script); selected != nullptr) {
                     ImGui::Text("Handle: %llu", static_cast<unsigned long long>(selected->handle.value));
                     ImGui::TextWrapped("Source: %s", selected->source.generic_string().c_str());
                     ImGui::Text("Revision: %llu", static_cast<unsigned long long>(selected->revision));
@@ -1498,15 +1717,17 @@ namespace lumin::editor {
             const auto pickAtMouse = [&]() -> std::optional<ViewportPickResult> {
                 const ImVec2 mouse = ImGui::GetIO().MousePos;
                 const ViewportRay ray =
-                    makeViewportRay(camera, mouse.x - imageMinimum.x, mouse.y - imageMinimum.y,
+                    makeViewportRay(snapshot().camera, mouse.x - imageMinimum.x, mouse.y - imageMinimum.y,
                                     imageMaximum.x - imageMinimum.x, imageMaximum.y - imageMinimum.y);
-                return pickViewportModel(level, ray);
+                return snapshot().renderWorld != nullptr ? pickViewportModel(*snapshot().renderWorld, ray)
+                                                         : std::nullopt;
             };
             const auto selectPick = [&](const std::optional<ViewportPickResult>& picked) {
                 if (!picked.has_value()) {
                     clearSelection();
-                } else if (const auto owner = level.actorForModel(picked->model); owner.has_value()) {
-                    selectActor(*owner);
+                } else if (const EditorModelSnapshot* pickedModel = snapshot().findModel(picked->model);
+                           pickedModel != nullptr && pickedModel->actor.has_value()) {
+                    selectActor(*pickedModel->actor);
                 } else {
                     selectModel(picked->model);
                 }
@@ -1515,19 +1736,21 @@ namespace lumin::editor {
             scene::Transform selectedTransform;
             bool hasSelectedTransform = false;
             if (actor.has_value()) {
-                if (const scene::Actor* selected = level.actor(*actor); selected != nullptr) {
-                    selectedTransform = selected->transform();
+                if (const EditorActorSnapshot* selected = snapshot().findActor(*actor); selected != nullptr) {
+                    selectedTransform = selected->transform;
                     hasSelectedTransform = true;
                 }
-            } else if (model.has_value() && modelAlive(level, *model)) {
-                selectedTransform = level.model(*model).transform;
-                hasSelectedTransform = true;
+            } else if (model.has_value()) {
+                if (const EditorModelSnapshot* selected = snapshot().findModel(*model); selected != nullptr) {
+                    selectedTransform = selected->model.transform;
+                    hasSelectedTransform = true;
+                }
             }
             if (hasSelectedTransform) {
                 glm::mat4 transformMatrix = selectedTransform.matrix();
-                const glm::mat4 view = camera.viewMatrix();
-                const glm::mat4 projection = camera.projectionMatrix(std::max(imageMaximum.x - imageMinimum.x, 1.0f) /
-                                                                     std::max(imageMaximum.y - imageMinimum.y, 1.0f));
+                const glm::mat4 view = snapshot().camera.viewMatrix();
+                const glm::mat4 projection = snapshot().camera.projectionMatrix(
+                    std::max(imageMaximum.x - imageMinimum.x, 1.0f) / std::max(imageMaximum.y - imageMinimum.y, 1.0f));
                 ImGuizmo::SetOrthographic(false);
                 ImGuizmo::SetDrawlist();
                 ImGuizmo::SetRect(imageMinimum.x, imageMinimum.y, imageMaximum.x - imageMinimum.x,
@@ -1538,7 +1761,6 @@ namespace lumin::editor {
                                                           &selectedTransform.rotationDegrees.x,
                                                           &selectedTransform.scale.x);
                     setSelectedTransform(selectedTransform);
-                    markProjectDirty();
                 }
             }
 
@@ -1568,25 +1790,36 @@ namespace lumin::editor {
                     focusDetails = true;
                 }
                 if (actor.has_value() && ImGui::MenuItem("Delete")) {
-                    level.destroyActor(*actor);
+                    const scene::ActorHandle handle = *actor;
+                    static_cast<void>(
+                        submitCommand([handle](scene::Level& level, scene::Camera&, scripting::ScriptRuntime&,
+                                               project::ProjectSession& projectSession) {
+                            const bool destroyed = level.destroyActor(handle);
+                            if (destroyed) {
+                                projectSession.markDirty();
+                            }
+                            return makeCommandOutcome(destroyed);
+                        }));
                     clearSelection();
-                    markProjectDirty();
                 }
                 ImGui::EndPopup();
             }
             if (ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("LUMIN_ASSET");
-                    payload != nullptr && projectSession != nullptr) {
+                    payload != nullptr && hasProject()) {
                     const project::AssetId asset{std::string{static_cast<const char*>(payload->Data),
                                                              static_cast<std::size_t>(payload->DataSize)}};
                     scene::Transform transform;
                     const auto picked = pickAtMouse();
-                    transform.position =
-                        picked.has_value() ? picked->worldPosition : camera.position() + camera.forward() * 3.0f;
-                    if (const auto created = projectSession->createActorFromMesh(asset, transform);
-                        created.has_value()) {
-                        selectActor(*created);
-                    }
+                    transform.position = picked.has_value()
+                                             ? picked->worldPosition
+                                             : snapshot().camera.position() + snapshot().camera.forward() * 3.0f;
+                    static_cast<void>(
+                        submitCommand([asset, transform](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
+                                                         project::ProjectSession& projectSession) {
+                            const auto created = projectSession.createActorFromMesh(asset, transform);
+                            return makeCommandOutcome(created.has_value(), {}, created);
+                        }));
                 }
                 ImGui::EndDragDropTarget();
             }
@@ -1594,19 +1827,37 @@ namespace lumin::editor {
             ImGui::PopStyleVar();
         }
 
+        void updateCameraSpeed(float speed) {
+            static_cast<void>(submitCommand([speed](scene::Level&, scene::Camera& camera, scripting::ScriptRuntime&,
+                                                    project::ProjectSession& projectSession) {
+                camera.setMoveSpeed(speed);
+                projectSession.markDirty();
+                return EditorCommandOutcome{};
+            }));
+        }
+
+        void updateCameraPosition(const glm::vec3& position) {
+            static_cast<void>(submitCommand([position](scene::Level&, scene::Camera& camera, scripting::ScriptRuntime&,
+                                                       project::ProjectSession& projectSession) {
+                camera.setPosition(position);
+                camera.markCut();
+                projectSession.markDirty();
+                return EditorCommandOutcome{};
+            }));
+        }
+
         void drawRenderSettings() {
             ImGui::Begin("Render / GI", &engineSettings.windows.renderSettings);
             section("Camera");
-            float speed = camera.moveSpeed();
+            float speed = snapshot().camera.moveSpeed();
             propertyLabel("Move speed");
             if (ImGui::DragFloat("##cameraSpeed", &speed, 0.05f, 0.1f, 20.0f)) {
-                camera.setMoveSpeed(speed);
+                updateCameraSpeed(speed);
             }
-            glm::vec3 position = camera.position();
+            glm::vec3 position = snapshot().camera.position();
             propertyLabel("Position");
             if (ImGui::DragFloat3("##cameraPosition", &position.x, 0.05f)) {
-                camera.setPosition(position);
-                camera.markCut();
+                updateCameraPosition(position);
             }
             section("Direct Lighting");
             ImGui::Checkbox("Enabled##directLighting", &settings.directLighting.enabled);
@@ -1666,7 +1917,7 @@ namespace lumin::editor {
                     ImGui::SliderFloat("##csmSplitLambda", &settings.shadows.splitLambda, 0.0f, 1.0f, "%.2f");
                     propertyLabel("Max distance");
                     ImGui::SliderFloat("##csmMaxDistance", &settings.shadows.maxDistance, 1.0f,
-                                       std::max(camera.farPlane(), 1.0f), "%.1f");
+                                       std::max(snapshot().camera.farPlane(), 1.0f), "%.1f");
                 }
             } else {
                 ImGui::Checkbox("SHARC", &settings.globalIllumination.sharcEnabled);
@@ -1681,9 +1932,39 @@ namespace lumin::editor {
             ImGui::SliderFloat("##exposure", &settings.toneMapping.exposure, 0.1f, 4.0f);
             section("Lighting");
             propertyLabel("Sun direction");
-            scene::DirectionalLight sun = level.environment().sun;
+            scene::DirectionalLight sun = snapshot().environment.sun;
             if (ImGui::SliderFloat3("##sunDirection", &sun.direction.x, -1.0f, 1.0f)) {
-                level.setSun(sun);
+                const scene::DirectionalLight value = sun;
+                static_cast<void>(submitCommand([value](scene::Level& level, scene::Camera&, scripting::ScriptRuntime&,
+                                                        project::ProjectSession& projectSession) {
+                    level.setSun(value);
+                    projectSession.markDirty();
+                    return EditorCommandOutcome{};
+                }));
+            }
+            ImGui::End();
+        }
+
+        void drawProjectSettings() {
+            ImGui::Begin("Project Settings", &engineSettings.windows.projectSettings);
+            if (!hasProject()) {
+                ImGui::End();
+                return;
+            }
+
+            project::ProjectSettings value = snapshot().project.settings;
+            int tickRate = static_cast<int>(value.logicTickHz);
+            section("Simulation");
+            propertyLabel("Logic tick rate");
+            ImGui::SetNextItemWidth(-style::Space1);
+            if (ImGui::SliderInt("##logicTickHz", &tickRate, static_cast<int>(project::MinimumLogicTickHz),
+                                 static_cast<int>(project::MaximumLogicTickHz), "%d Hz")) {
+                value.logicTickHz = static_cast<std::uint32_t>(tickRate);
+                static_cast<void>(submitCommand([value](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
+                                                        project::ProjectSession& projectSession) mutable {
+                    projectSession.setSettings(std::move(value));
+                    return EditorCommandOutcome{};
+                }));
             }
             ImGui::End();
         }
@@ -1753,7 +2034,8 @@ namespace lumin::editor {
         }
 
         bool selectActor(scene::ActorHandle handle) {
-            if (!level.isActorAlive(handle)) {
+            refreshLogicSnapshot();
+            if (snapshot().findActor(handle) == nullptr) {
                 return false;
             }
             selection = SelectionState::Actor;
@@ -1764,7 +2046,8 @@ namespace lumin::editor {
         }
 
         bool selectModel(scene::ModelHandle handle) {
-            if (!modelAlive(level, handle)) {
+            refreshLogicSnapshot();
+            if (!modelAlive(snapshot(), handle)) {
                 return false;
             }
             selection = SelectionState::Model;
@@ -1775,7 +2058,8 @@ namespace lumin::editor {
         }
 
         bool selectScript(scripting::ScriptHandle handle) {
-            if (!scripts.script(handle).has_value()) {
+            refreshLogicSnapshot();
+            if (snapshot().findScript(handle) == nullptr) {
                 return false;
             }
             selection = SelectionState::Script;
@@ -1787,50 +2071,74 @@ namespace lumin::editor {
 
         bool setSelectedTransform(const scene::Transform& transform) {
             if (actor.has_value()) {
-                scene::Actor* selected = level.actor(*actor);
-                if (selected == nullptr) {
-                    markStale("Selected actor is no longer alive.");
-                    return false;
-                }
-                selected->setTransform(transform);
-                return true;
-            }
-            if (model.has_value() && level.setModelTransform(*model, transform)) {
-                return true;
+                const scene::ActorHandle handle = *actor;
+                const auto immediate =
+                    submitCommand([handle, transform](scene::Level& level, scene::Camera&, scripting::ScriptRuntime&,
+                                                      project::ProjectSession& projectSession) {
+                        scene::Actor* selected = level.actor(handle);
+                        if (selected == nullptr) {
+                            return makeCommandOutcome(false, "Selected actor is no longer alive.");
+                        }
+                        selected->setTransform(transform);
+                        projectSession.markDirty();
+                        return EditorCommandOutcome{};
+                    });
+                return !immediate.has_value() || immediate->succeeded;
             }
             if (model.has_value()) {
-                markStale("Selected model is no longer alive.");
+                const scene::ModelHandle handle = *model;
+                const auto immediate = submitCommand([handle, transform](scene::Level& level, scene::Camera&,
+                                                                         scripting::ScriptRuntime&,
+                                                                         project::ProjectSession& projectSession) {
+                    const bool changed = level.setModelTransform(handle, transform);
+                    if (changed) {
+                        projectSession.markDirty();
+                    }
+                    return makeCommandOutcome(changed, changed ? std::string{} : "Selected model is no longer alive.");
+                });
+                return !immediate.has_value() || immediate->succeeded;
             }
             return false;
         }
 
         bool setSelectedMaterial(const scene::Material& material) {
             if (actor.has_value()) {
-                scene::Actor* selected = level.actor(*actor);
-                if (selected == nullptr) {
-                    markStale("Selected actor is no longer alive.");
-                    return false;
-                }
-                selected->setMaterial(material);
-                return true;
-            }
-            if (model.has_value() && level.setModelMaterial(*model, material)) {
-                return true;
+                const scene::ActorHandle handle = *actor;
+                const auto immediate =
+                    submitCommand([handle, material](scene::Level& level, scene::Camera&, scripting::ScriptRuntime&,
+                                                     project::ProjectSession& projectSession) {
+                        scene::Actor* selected = level.actor(handle);
+                        if (selected == nullptr) {
+                            return makeCommandOutcome(false, "Selected actor is no longer alive.");
+                        }
+                        selected->setMaterial(material);
+                        projectSession.markDirty();
+                        return EditorCommandOutcome{};
+                    });
+                return !immediate.has_value() || immediate->succeeded;
             }
             if (model.has_value()) {
-                markStale("Selected model is no longer alive.");
+                const scene::ModelHandle handle = *model;
+                const auto immediate = submitCommand([handle, material](scene::Level& level, scene::Camera&,
+                                                                        scripting::ScriptRuntime&,
+                                                                        project::ProjectSession& projectSession) {
+                    const bool changed = level.setModelMaterial(handle, material);
+                    if (changed) {
+                        projectSession.markDirty();
+                    }
+                    return makeCommandOutcome(changed, changed ? std::string{} : "Selected model is no longer alive.");
+                });
+                return !immediate.has_value() || immediate->succeeded;
             }
             return false;
         }
     };
 
-    Editor::Editor(scene::Level& level, scene::Camera& camera, render::RenderSettings& settings,
-                   scripting::ScriptRuntime& scripts, BackendInfoProvider backendInfo,
-                   ViewportImageProvider viewportImage, project::ProjectSession* project, EditorDialogServices dialogs,
+    Editor::Editor(EditorLogicServices logic, render::RenderSettings& settings, BackendInfoProvider backendInfo,
+                   ViewportImageProvider viewportImage, EditorDialogServices dialogs,
                    EditorSettingsServices settingsServices, FrameRateProvider frameRate)
-        : impl_(std::make_unique<Impl>(level, camera, settings, scripts, std::move(backendInfo),
-                                       std::move(viewportImage), project, std::move(dialogs),
-                                       std::move(settingsServices), std::move(frameRate))) {
+        : impl_(std::make_unique<Impl>(std::move(logic), settings, std::move(backendInfo), std::move(viewportImage),
+                                       std::move(dialogs), std::move(settingsServices), std::move(frameRate))) {
     }
 
     Editor::~Editor() = default;
@@ -1839,11 +2147,12 @@ namespace lumin::editor {
 
     void Editor::draw() {
         style::apply();
+        impl_->processLogicResults();
         synchronizeSelection();
         ImGuizmo::BeginFrame();
         const config::EditorWindowVisibility visibilityBefore = impl_->engineSettings.windows;
         impl_->drawMainMenu();
-        if (impl_->projectSession != nullptr && !impl_->projectSession->hasProject()) {
+        if (!impl_->hasProject()) {
             impl_->viewportInteraction = {};
             impl_->drawProjectNavigator();
         } else {
@@ -1869,6 +2178,9 @@ namespace lumin::editor {
             if (windows.renderSettings) {
                 impl_->drawRenderSettings();
             }
+            if (windows.projectSettings) {
+                impl_->drawProjectSettings();
+            }
             if (windows.scriptConsole) {
                 impl_->drawConsole();
             }
@@ -1878,8 +2190,7 @@ namespace lumin::editor {
         if (visibilityBefore != impl_->engineSettings.windows) {
             impl_->persistEngineSettings();
         }
-        if (impl_->projectSession != nullptr && impl_->projectSession->hasProject() && ImGui::GetIO().KeyCtrl &&
-            ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        if (impl_->hasProject() && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
             impl_->saveProject();
         }
     }
@@ -1921,11 +2232,12 @@ namespace lumin::editor {
     }
 
     void Editor::synchronizeSelection() {
-        if (impl_->actor.has_value() && !impl_->level.isActorAlive(*impl_->actor)) {
+        impl_->refreshLogicSnapshot();
+        if (impl_->actor.has_value() && impl_->snapshot().findActor(*impl_->actor) == nullptr) {
             impl_->markStale("Selected actor is no longer alive.");
-        } else if (impl_->model.has_value() && !modelAlive(impl_->level, *impl_->model)) {
+        } else if (impl_->model.has_value() && !modelAlive(impl_->snapshot(), *impl_->model)) {
             impl_->markStale("Selected model is no longer alive.");
-        } else if (impl_->script.has_value() && !impl_->scripts.script(*impl_->script).has_value()) {
+        } else if (impl_->script.has_value() && impl_->snapshot().findScript(*impl_->script) == nullptr) {
             impl_->markStale("Selected script is no longer loaded.");
         }
     }
@@ -1938,13 +2250,12 @@ namespace lumin::editor {
         return impl_->setSelectedMaterial(material);
     }
 
-    void Editor::setCameraSpeed(float speed) noexcept {
-        impl_->camera.setMoveSpeed(speed);
+    void Editor::setCameraSpeed(float speed) {
+        impl_->updateCameraSpeed(speed);
     }
 
-    void Editor::setCameraPosition(const glm::vec3& position) noexcept {
-        impl_->camera.setPosition(position);
-        impl_->camera.markCut();
+    void Editor::setCameraPosition(const glm::vec3& position) {
+        impl_->updateCameraPosition(position);
     }
 
     void Editor::setDirectLightingEnabled(bool enabled) noexcept {
@@ -2003,10 +2314,16 @@ namespace lumin::editor {
         impl_->settings.toneMapping.exposure = exposure;
     }
 
-    void Editor::setSunDirection(const glm::vec3& direction) noexcept {
-        scene::DirectionalLight sun = impl_->level.environment().sun;
-        sun.direction = direction;
-        impl_->level.setSun(sun);
+    void Editor::setSunDirection(const glm::vec3& direction) {
+        static_cast<void>(
+            impl_->submitCommand([direction](scene::Level& level, scene::Camera&, scripting::ScriptRuntime&,
+                                             project::ProjectSession& projectSession) {
+                scene::DirectionalLight sun = level.environment().sun;
+                sun.direction = direction;
+                level.setSun(sun);
+                projectSession.markDirty();
+                return EditorCommandOutcome{};
+            }));
     }
 
     scripting::ScriptResult Editor::executeCommand(std::string_view command) {

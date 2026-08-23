@@ -1,7 +1,6 @@
 #pragma once
 
 #include "render/core/RenderFramePacket.hpp"
-#include "render/core/UiDrawPacket.hpp"
 #include "render/runtime/RenderPipelineSession.hpp"
 
 #include <cstdint>
@@ -9,19 +8,18 @@
 #include <memory>
 #include <string>
 
+struct ImDrawData;
+struct ImFontAtlas;
+
 namespace lumin::render {
 
     class VulkanSurfaceBootstrap;
 
-    /** Renderer 异步 Runtime 的生命周期状态。 */
+    /** 同步 Renderer 的生命周期状态。 */
     enum class RendererState : std::uint8_t {
-        /** 正在渲染线程执行启动握手。 */
-        Starting,
-        /** 可接收 frame packet 和控制命令。 */
+        /** Renderer 已在渲染主线程完成初始化。 */
         Ready,
-        /** 已排队 stop，正在排空和销毁 GPU 资源。 */
-        Stopping,
-        /** 线程和 GPU 资源已经确定性停止。 */
+        /** GPU 资源已经确定性释放。 */
         Stopped,
         /** 启动或逐帧渲染发生不可恢复异常。 */
         Failed,
@@ -43,21 +41,17 @@ namespace lumin::render {
     /** 主线程可无锁于 GPU 状态读取的 Renderer 状态值快照。 */
     struct RendererStatusSnapshot {
         /** 当前 Runtime 生命周期状态。 */
-        RendererState state = RendererState::Starting;
-        /** 已被 `submit()` 接受的 packet 数量。 */
-        std::uint64_t submittedPacketCount = 0;
-        /** 已由渲染线程消费完成的 packet 数量，包括最小化和 acquire 重试。 */
-        std::uint64_t completedPacketCount = 0;
-        /** 在被渲染线程取走前由更新 packet 替换的数量。 */
-        std::uint64_t droppedPacketCount = 0;
-        /** 未推进 GPU 历史的最小化或交换链重试 packet 数量。 */
-        std::uint64_t skippedPacketCount = 0;
+        RendererState state = RendererState::Ready;
+        /** 已尝试同步绘制的帧数。 */
+        std::uint64_t attemptedFrameCount = 0;
+        /** 未推进 GPU 历史的最小化或交换链重试帧数。 */
+        std::uint64_t skippedFrameCount = 0;
         /** 已完成 GPU submit 和交换链 present 流程的帧数。 */
         std::uint64_t presentedFrameCount = 0;
-        /** 渲染线程按最近呈现帧统计的交换链 FPS。 */
+        /** 渲染主线程按最近呈现帧统计的交换链 FPS。 */
         float presentedFramesPerSecond = 0.0f;
         /** 最近一次成功 GPU submit 的主线程帧身份。 */
-        core::ClientFrameId lastSubmittedClientFrame;
+        core::ClientFrameId lastRenderedLogicFrame;
         /** 是否至少存在一次成功 GPU submit。 */
         bool hasSubmittedFrame = false;
         /** 当前 GPU 场景模型数量。 */
@@ -80,54 +74,60 @@ namespace lumin::render {
     };
 
     /**
-     * @brief 主线程使用的异步渲染门面。
+     * @brief 渲染主线程独占的同步渲染门面。
      *
-     * 构造函数完成启动握手后，专用渲染线程消费 surface bootstrap，并独占创建出的全部 NvRHI/Vulkan 子资源。
-     * `submit()` 使用 latest-wins 语义；`flush()` 与 `stop()` 进入独立 FIFO 控制队列，永不被 frame 替换。
+     * 构造、逐帧绘制和销毁必须发生在同一条拥有 SDL 窗口的线程。
      */
     class Renderer final {
     public:
         /**
-         * @brief 创建专用渲染线程并等待 Runtime 初始化完成。
-         * @param bootstrap 主线程完成的 SDL surface bootstrap；所有权立即转入渲染线程。
-         * @param initialWorld 完全拥有的初始不可变世界快照。
+         * @brief 在当前渲染主线程创建 Vulkan context 与默认 Pipeline session。
+         * @param bootstrap
+         * 当前线程完成的 SDL surface bootstrap；所有权转入 Renderer。
+         * @param initialWorld
+         * 完全拥有的初始不可变世界快照。
          * @param shaderDirectory 编译后 shader 目录。
-         * @param uiFontAtlas 主线程深拷贝的字体图集。
-         * @param pipelineFactory 显式静态模块组合工厂；所有权立即转入渲染线程。
-         * @throws std::invalid_argument 必需输入为空时抛出。
-         * @throws std::exception 渲染线程启动期间的初始化异常会在构造线程重新抛出。
+         * @param uiFontAtlas 当前 ImGui context 的字体图集；引用只在构造期间使用。
+         * @param pipelineFactory
+         * 显式静态模块组合工厂；所有权转入 Renderer。
+         * @throws std::invalid_argument
+         * 必需输入为空时抛出。
+         * @throws std::exception Vulkan 或 Pipeline session 初始化失败时抛出。
          */
         Renderer(std::unique_ptr<VulkanSurfaceBootstrap> bootstrap, world::RenderWorldSnapshotPtr initialWorld,
-                 std::filesystem::path shaderDirectory, core::UiFontAtlas uiFontAtlas,
+                 std::filesystem::path shaderDirectory, ImFontAtlas& uiFontAtlas,
                  std::unique_ptr<runtime::IRenderPipelineSessionFactory> pipelineFactory);
 
-        /** 停止渲染线程；析构期间不会传播停止异常。 */
+        /** 在当前线程释放 Renderer；析构期间不会传播停止异常。 */
         ~Renderer();
 
         Renderer(const Renderer&) = delete;
         Renderer& operator=(const Renderer&) = delete;
 
         /**
-         * @brief 提交一个完全拥有的最新帧；尚未消费的旧帧会被替换。
-         * @throws std::logic_error Runtime 已停止接收帧时抛出。
-         */
-        void submit(core::RenderFramePacket packet);
+         * @brief 在当前线程立即记录、提交并呈现一帧。
+         * @return 完成 GPU submit 时返回
+         * true；最小化或交换链重试时返回 false。
+         * @throws std::logic_error Renderer 已停止时抛出。
 
-        /** 返回当前线程安全状态的按值副本，不访问任何 GPU 对象。 */
+         */
+        [[nodiscard]] bool drawFrame(core::RenderFramePacket packet, const ImDrawData& ui);
+
+        /** 返回当前同步 Renderer 状态的按值副本。 */
         [[nodiscard]] RendererStatusSnapshot status() const;
 
         /**
-         * @brief 等待调用前已提交的 packet 被消费，并在渲染线程等待 GPU idle。
-         * @throws std::exception Runtime 失败时重新抛出渲染线程异常。
+         * @brief 在渲染主线程等待当前 GPU 队列 idle。
          */
-        void flush();
+        void waitIdle();
 
         /**
-         * @brief 禁止后续提交，排空此前 packet，并在渲染线程销毁全部 GPU 资源。
+         * @brief 在渲染主线程等待 GPU idle 并销毁全部 GPU 资源。
          *
-         * 可重复调用；正常返回后状态为 `Stopped`。Runtime 已失败时仍会 join 线程，但错误保留在 `status()`。
+         * 可重复调用；正常返回后状态为
+         * `Stopped`。
          */
-        void stop();
+        void shutdown();
 
     private:
         struct Impl;

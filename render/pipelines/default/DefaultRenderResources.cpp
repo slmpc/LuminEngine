@@ -375,7 +375,7 @@ namespace lumin::render {
             destroyRenderResources();
             createRenderResources();
         }
-        presentation_.initialize(context_, uiFontAtlas_, shaderDirectory_);
+        presentation_.initialize(context_, *uiFontAtlas_, shaderDirectory_);
         presentation_.setViewportTexture(viewportOutput_.texture);
         swapchainGeneration_ = context_.swapchainGeneration();
     }

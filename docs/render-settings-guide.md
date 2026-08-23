@@ -9,8 +9,8 @@ Editor panel -> RenderSettingsPanelAdapter -> RenderSettingsStore
              -> immutable RenderSettingsSnapshot -> RenderFramePacket -> Feature
 ```
 
-Feature 不包含 ImGui 代码，也不读取 Editor 的聚合 `RenderSettings` 对象。主线程 adapter 负责把面板值写入 typed store；
-packet 只携带不可变快照。渲染线程相对最近一次成功 GPU submit 的快照计算 diff，被 latest-wins mailbox 替换的 packet 不会
+Feature 不包含 ImGui 代码，也不读取 Editor 的聚合 `RenderSettings` 对象。渲染主线程 adapter 负责把面板值写入 typed
+store；packet 只携带不可变快照。同步 Renderer 相对最近一次成功 GPU submit 的快照计算 diff，跳过或提交失败的帧不会
 成为设置或历史基线。
 
 ## 注册 schema
@@ -23,7 +23,7 @@ packet 只携带不可变快照。渲染线程相对最近一次成功 GPU submi
 
 - `HotUpdate`：只更新 uniform 或 CPU 标量，不重建资源，不重置历史。
 - `HistoryReset`：资源拓扑不变，但一个或多个 `HistoryDomain` 的样本不能继续使用。
-- `PipelineRecompose`：Feature 集合、能力要求或 DAG 结构变化；在渲染线程帧边界事务式创建候选实例。
+- `PipelineRecompose`：Feature 集合、能力要求或 DAG 结构变化；在渲染主线程帧边界事务式创建候选实例。
 - `ResourceRecreate`：格式、尺寸、descriptor 容量或 shader 变体使 Feature 自有资源必须重建。
 
 影响可以组合。需要历史处理时同时返回具体 `FrameChangeSet`，不要在 session 或 Feature 内再次写一套布尔失效规则。

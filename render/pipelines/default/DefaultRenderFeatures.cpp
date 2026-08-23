@@ -284,8 +284,8 @@ namespace lumin::render {
             });
     }
 
-    void pipelines::DefaultRenderPipelineSession::addHybridSurfaceFeaturePasses(
-        core::RenderFeatureFrameContext& context) {
+    void
+    pipelines::DefaultRenderPipelineSession::addHybridSurfaceFeaturePasses(core::RenderFeatureFrameContext& context) {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
         core::RtSurfaceData& surfaceData = context.blackboard().get<core::RtSurfaceData>();
@@ -463,8 +463,8 @@ namespace lumin::render {
 #endif
     }
 
-    void pipelines::DefaultRenderPipelineSession::addAtmosphereLutFeaturePasses(
-        core::RenderFeatureFrameContext& context) {
+    void
+    pipelines::DefaultRenderPipelineSession::addAtmosphereLutFeaturePasses(core::RenderFeatureFrameContext& context) {
         const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
         AtmospherePassData& passData = context.blackboard().get<AtmospherePassData>();
         const AtmosphereRenderSettings& settings =
@@ -696,8 +696,7 @@ namespace lumin::render {
 #endif
     }
 
-    void pipelines::DefaultRenderPipelineSession::addGiDenoiserFeaturePasses(
-        core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addGiDenoiserFeaturePasses(core::RenderFeatureFrameContext& context) {
         HybridPassData& data = context.blackboard().get<HybridPassData>();
         if (!data.active) {
             // Raster recipe 已把 legacy GI 写入 DenoisedLightingData::combined，不需要任何 RT/NRD 输入。
@@ -855,8 +854,8 @@ namespace lumin::render {
 #endif
     }
 
-    void pipelines::DefaultRenderPipelineSession::addSkyCompositeFeaturePasses(
-        core::RenderFeatureFrameContext& context) {
+    void
+    pipelines::DefaultRenderPipelineSession::addSkyCompositeFeaturePasses(core::RenderFeatureFrameContext& context) {
         core::SceneHdrData& sceneHdr = context.blackboard().get<core::SceneHdrData>();
         const core::DenoisedLightingData& indirect = context.blackboard().get<core::DenoisedLightingData>();
         const std::uint32_t frameIndex = context.identity().frameSlot.value();
@@ -929,8 +928,8 @@ namespace lumin::render {
             });
     }
 
-    void pipelines::DefaultRenderPipelineSession::addDirectLightingFeaturePasses(
-        core::RenderFeatureFrameContext& context) {
+    void
+    pipelines::DefaultRenderPipelineSession::addDirectLightingFeaturePasses(core::RenderFeatureFrameContext& context) {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         const HybridPassData& hybridData = context.blackboard().get<HybridPassData>();
         if (hybridData.active) {
@@ -967,8 +966,7 @@ namespace lumin::render {
             });
     }
 
-    void pipelines::DefaultRenderPipelineSession::addTemporalAaFeaturePasses(
-        core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addTemporalAaFeaturePasses(core::RenderFeatureFrameContext& context) {
         const core::SceneHdrData& sceneHdr = context.blackboard().get<core::SceneHdrData>();
         core::TemporalOutputData& temporal = context.blackboard().get<core::TemporalOutputData>();
         PostProcessPassData& postProcess = context.blackboard().get<PostProcessPassData>();
@@ -1018,8 +1016,8 @@ namespace lumin::render {
             nullptr);
     }
 
-    void pipelines::DefaultRenderPipelineSession::addToneMappingFeaturePasses(
-        core::RenderFeatureFrameContext& context) {
+    void
+    pipelines::DefaultRenderPipelineSession::addToneMappingFeaturePasses(core::RenderFeatureFrameContext& context) {
         const core::TemporalOutputData& temporal = context.blackboard().get<core::TemporalOutputData>();
         core::ViewportOutputData& viewport = context.blackboard().get<core::ViewportOutputData>();
         const PostProcessPassData& postProcess = context.blackboard().get<PostProcessPassData>();
@@ -1038,8 +1036,7 @@ namespace lumin::render {
             });
     }
 
-    void pipelines::DefaultRenderPipelineSession::addUiPresentFeaturePasses(
-        core::RenderFeatureFrameContext& context) {
+    void pipelines::DefaultRenderPipelineSession::addUiPresentFeaturePasses(core::RenderFeatureFrameContext& context) {
         const core::ViewportOutputData& viewport = context.blackboard().get<core::ViewportOutputData>();
         const core::PresentationInputData& input = context.blackboard().get<core::PresentationInputData>();
         FrameGraph& graph = context.frameGraph();
@@ -1051,7 +1048,10 @@ namespace lumin::render {
                 builder.writeTexture(input.swapchain.graphResource, nvrhi::ResourceStates::RenderTarget);
             },
             [this, &input](const FrameGraphContext& frameContext) {
-                presentation_.record(*frameContext.commandList, input.imageIndex, input.frameSlot, input.ui);
+                if (input.ui == nullptr) {
+                    throw std::logic_error("Presentation Feature requires current ImGui draw data.");
+                }
+                presentation_.record(*frameContext.commandList, input.imageIndex, input.frameSlot, *input.ui);
             });
         graph.addPass(
             "Present", FrameGraphPassType::Present,
@@ -1062,20 +1062,21 @@ namespace lumin::render {
         context.blackboard().set(core::PresentData{.viewport = viewport.color, .swapchain = input.swapchain});
     }
 
-    void pipelines::DefaultRenderPipelineSession::recordShadowPass(
-        nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
-                                               std::uint32_t frameIndex, std::uint32_t cascadeIndex,
-                                               const glm::mat4& lightViewProjection) {
+    void pipelines::DefaultRenderPipelineSession::recordShadowPass(nvrhi::ICommandList& commandList,
+                                                                   nvrhi::IFramebuffer& framebuffer,
+                                                                   std::uint32_t frameIndex, std::uint32_t cascadeIndex,
+                                                                   const glm::mat4& lightViewProjection) {
         if (modelRenderer_ != nullptr) {
             modelRenderer_->recordShadow(commandList, framebuffer, shadowMapResolution, shadowMapResolution, frameIndex,
                                          cascadeIndex, lightViewProjection);
         }
     }
 
-    void pipelines::DefaultRenderPipelineSession::recordGBufferPass(
-        nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
-                                                std::uint32_t frameIndex, const glm::mat4& viewProjection,
-                                                const glm::mat4& previousViewProjection) {
+    void pipelines::DefaultRenderPipelineSession::recordGBufferPass(nvrhi::ICommandList& commandList,
+                                                                    nvrhi::IFramebuffer& framebuffer,
+                                                                    std::uint32_t frameIndex,
+                                                                    const glm::mat4& viewProjection,
+                                                                    const glm::mat4& previousViewProjection) {
         const RasterFeatureFrameResources& frame = rasterResources_.frame(frameIndex);
         if (modelRenderer_ != nullptr) {
             modelRenderer_->recordGBuffer(commandList, framebuffer, frame.position.width, frame.position.height,
@@ -1085,9 +1086,8 @@ namespace lumin::render {
 
     void pipelines::DefaultRenderPipelineSession::recordFullscreenPass(
         nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
-                                                   const nvrhi::GraphicsPipelineHandle& pipeline,
-                                                   std::uint32_t frameIndex,
-                                                   const nvrhi::BindingSetHandle& additionalBindingSet) {
+        const nvrhi::GraphicsPipelineHandle& pipeline, std::uint32_t frameIndex,
+        const nvrhi::BindingSetHandle& additionalBindingSet) {
         const std::uint32_t width = renderExtent_.width;
         const std::uint32_t height = renderExtent_.height;
         nvrhi::GraphicsState state;
@@ -1104,7 +1104,8 @@ namespace lumin::render {
     }
 
     void pipelines::DefaultRenderPipelineSession::recordDirectLightingPass(nvrhi::ICommandList& commandList,
-                                                       nvrhi::IFramebuffer& framebuffer, std::uint32_t frameIndex) {
+                                                                           nvrhi::IFramebuffer& framebuffer,
+                                                                           std::uint32_t frameIndex) {
         if (frameIndex >= directLightingBindingSets_.size() || !directLightingBindingSets_[frameIndex]) {
             throw std::logic_error("Direct-lighting material bindings are unavailable for the frame slot.");
         }

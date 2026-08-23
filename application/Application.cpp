@@ -1,7 +1,7 @@
 #include "application/Application.hpp"
 
+#include "application/LogicRuntime.hpp"
 #include "config/EngineSettings.hpp"
-#include "project/ProjectSession.hpp"
 #include "render/Renderer.hpp"
 #include "render/editor/Editor.hpp"
 #include "render/editor/ImGuiFrontend.hpp"
@@ -10,10 +10,7 @@
 #include "render/platform/RenderDocAttachment.hpp"
 #include "render/platform/Window.hpp"
 #include "render/platform/vulkan/VulkanContext.hpp"
-#include "scene/CameraController.hpp"
 
-#include <algorithm>
-#include <chrono>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -53,22 +50,40 @@ namespace lumin::core {
 
     struct Application::Impl {
         Impl(ApplicationConfig applicationConfig, std::unique_ptr<game::Game> applicationGame)
-            : config(std::move(applicationConfig)), game(std::move(applicationGame)),
+            : config(std::move(applicationConfig)), pendingGame(std::move(applicationGame)),
               renderDoc(attachRenderDoc(config)),
-              window(platform::WindowDesc{config.width, config.height, config.title}),
-              scripts(scripting::ScriptRuntimeOptions{.scriptRoot = config.scriptRoot,
-                                                      .diagnosticCapacity = 256,
-                                                      .consoleHistoryCapacity = 128,
-                                                      .diagnosticSink = {}}),
-              project(level, camera, scripts) {
-            if (!game) {
+              window(platform::WindowDesc{config.width, config.height, config.title}) {
+            if (!pendingGame) {
                 throw std::invalid_argument("Application requires a Game instance");
             }
         }
 
         int run() {
-            game::GameContext context{level, camera, scripts};
-            startupScript = game::initializeGame(*game, context, config.startupScript);
+            const std::filesystem::path engineSettingsPath = preferenceFilePath("engine-settings.json");
+            const config::EngineSettingsLoadResult loadedSettings =
+                config::loadEngineSettings(engineSettingsPath, preferenceFilePath("recent-projects.txt"));
+            if (!loadedSettings.diagnostic.empty()) {
+                std::cerr << loadedSettings.diagnostic << '\n';
+            }
+            if (loadedSettings.needsSave) {
+                std::string migrationError;
+                if (!config::saveEngineSettings(engineSettingsPath, loadedSettings.settings, migrationError)) {
+                    std::cerr << migrationError << '\n';
+                }
+            }
+
+            std::optional<std::filesystem::path> startupProject;
+            if (loadedSettings.settings.startupDestination == config::StartupDestination::LastProject) {
+                startupProject = loadedSettings.settings.lastProject;
+            }
+            logic = std::make_unique<LogicRuntime>(LogicRuntimeConfig{.scriptRoot = config.scriptRoot,
+                                                                      .startupScript = config.startupScript,
+                                                                      .startupProject = std::move(startupProject)},
+                                                   std::move(pendingGame));
+            frameLogicSnapshot = logic->snapshot();
+            if (frameLogicSnapshot == nullptr || frameLogicSnapshot->renderWorld == nullptr) {
+                throw std::runtime_error("Logic Runtime did not publish an initial world snapshot.");
+            }
 
             const std::filesystem::path shaderDirectory =
 #if defined(LUMIN_SHADER_DIR)
@@ -89,28 +104,23 @@ namespace lumin::core {
 #endif
                                                   .rayTracing = {}});
             viewportExtent = render::core::RenderExtent{initialExtent.width, initialExtent.height};
-            renderer = std::make_unique<render::Renderer>(std::move(vulkanBootstrap),
-                                                          render::world::RenderWorldExtractor::extract(level),
+            renderer = std::make_unique<render::Renderer>(std::move(vulkanBootstrap), frameLogicSnapshot->renderWorld,
                                                           shaderDirectory, ui->fontAtlas(),
                                                           render::pipelines::makeDefaultRenderPipelineSessionFactory());
-            const std::filesystem::path engineSettingsPath = preferenceFilePath("engine-settings.json");
-            const config::EngineSettingsLoadResult loadedSettings =
-                config::loadEngineSettings(engineSettingsPath, preferenceFilePath("recent-projects.txt"));
-            if (!loadedSettings.diagnostic.empty()) {
-                std::cerr << loadedSettings.diagnostic << '\n';
-            }
-            if (loadedSettings.needsSave) {
-                std::string migrationError;
-                if (!config::saveEngineSettings(engineSettingsPath, loadedSettings.settings, migrationError)) {
-                    std::cerr << migrationError << '\n';
-                }
-            }
-            std::optional<std::filesystem::path> startupProject;
-            if (loadedSettings.settings.startupDestination == config::StartupDestination::LastProject) {
-                startupProject = loadedSettings.settings.lastProject;
-            }
             editor = std::make_unique<editor::Editor>(
-                level, camera, renderSettingsAdapter.editable(), scripts,
+                editor::EditorLogicServices{.snapshot =
+                                                [this] {
+                                                    return frameLogicSnapshot;
+                                                },
+                                            .submit =
+                                                [this](editor::EditorLogicCommand command) {
+                                                    return logic->submit(std::move(command));
+                                                },
+                                            .drainResults =
+                                                [this] {
+                                                    return logic->drainResults();
+                                                }},
+                renderSettingsAdapter.editable(),
                 [this] {
                     rendererStatusCache = renderer->status();
                     return render::gi::BackendInfo{rendererStatusCache.globalIlluminationBackend,
@@ -123,7 +133,6 @@ namespace lumin::core {
                                                       rendererStatusCache.viewport.width,
                                                       rendererStatusCache.viewport.height};
                 },
-                &project,
                 editor::EditorDialogServices{.openProject =
                                                  [this](editor::DialogResultCallback callback) {
                                                      window.showOpenFileDialog({{"Lumin Project", "luminproject"}},
@@ -135,27 +144,29 @@ namespace lumin::core {
                                                  }},
                 editor::EditorSettingsServices{
                     .settings = loadedSettings.settings,
-                    .save = [engineSettingsPath](const config::EngineSettings& settings, std::string& error) {
-                        return config::saveEngineSettings(engineSettingsPath, settings, error);
-                    }},
+                    .save =
+                        [engineSettingsPath](const config::EngineSettings& settings, std::string& error) {
+                            return config::saveEngineSettings(engineSettingsPath, settings, error);
+                        }},
                 [this] {
                     rendererStatusCache = renderer->status();
                     return rendererStatusCache.presentedFramesPerSecond;
                 });
-            if (startupProject.has_value()) {
-                static_cast<void>(editor->openProject(*startupProject));
-            }
 
             rendererStatusCache = renderer->status();
             std::cout << "Renderer ready: models=" << rendererStatusCache.modelCount
                       << " mdiDraws=" << rendererStatusCache.mdiDrawCount
                       << " gbuffer=position+normalRoughness+albedoMetallic+motion csm=4 ssao=on taa=on\n";
 
-            auto previousTime = std::chrono::steady_clock::now();
             while (!window.shouldClose()) {
+                logic->rethrowIfFailed();
+                if (std::shared_ptr<const editor::EditorLogicSnapshot> latest = logic->snapshot(); latest != nullptr) {
+                    frameLogicSnapshot = std::move(latest);
+                }
+
                 window.pollEvents();
                 if (window.shouldClose()) {
-                    if (project.dirty()) {
+                    if (frameLogicSnapshot->project.dirty) {
                         window.cancelCloseRequest();
                         editor->requestExit();
                     } else {
@@ -172,7 +183,7 @@ namespace lumin::core {
                     viewportExtent = render::core::RenderExtent{viewport.width, viewport.height};
                 }
                 const bool middleMouseDown = window.isMouseButtonDown(platform::MouseButton::Middle);
-                if (!project.hasProject() && viewportLookActive) {
+                if (!frameLogicSnapshot->project.open && viewportLookActive) {
                     window.setRelativeMouseMode(false);
                     viewportLookActive = false;
                 }
@@ -186,8 +197,9 @@ namespace lumin::core {
                 const render::ImGuiCaptureState capture = ui->captureState();
                 const bool escapeDown = window.isKeyDown(platform::Key::Escape);
                 const game::InputRoutingDecision routing =
-                    project.hasProject() ? game::routeInput(!viewportLookActive && capture.uiClaimsInput(), escapeDown)
-                                         : game::InputRoutingDecision{};
+                    frameLogicSnapshot->project.open
+                        ? game::routeInput(!viewportLookActive && capture.uiClaimsInput(), escapeDown)
+                        : game::InputRoutingDecision{};
                 if (routing.exitOnEscape && !escapeHeld) {
                     editor->requestExit();
                 }
@@ -197,72 +209,70 @@ namespace lumin::core {
                     break;
                 }
 
-                const auto currentTime = std::chrono::steady_clock::now();
-                const float deltaSeconds =
-                    std::clamp(std::chrono::duration<float>(currentTime - previousTime).count(), 0.0f, 0.1f);
-                previousTime = currentTime;
-
-                game::GameInput input;
+                game::GameInput gameInput;
                 if (routing.dispatchGameInput || routing.updateCamera) {
-                    input.forward = static_cast<float>(window.isKeyDown(platform::Key::W)) -
-                                    static_cast<float>(window.isKeyDown(platform::Key::S));
-                    input.right = static_cast<float>(window.isKeyDown(platform::Key::D)) -
-                                  static_cast<float>(window.isKeyDown(platform::Key::A));
-                    input.up = static_cast<float>(window.isKeyDown(platform::Key::Space)) -
-                               static_cast<float>(window.isKeyDown(platform::Key::LeftControl));
+                    gameInput.forward = static_cast<float>(window.isKeyDown(platform::Key::W)) -
+                                        static_cast<float>(window.isKeyDown(platform::Key::S));
+                    gameInput.right = static_cast<float>(window.isKeyDown(platform::Key::D)) -
+                                      static_cast<float>(window.isKeyDown(platform::Key::A));
+                    gameInput.up = static_cast<float>(window.isKeyDown(platform::Key::Space)) -
+                                   static_cast<float>(window.isKeyDown(platform::Key::LeftControl));
                 }
-                if (routing.updateCamera) {
-                    const platform::MouseDelta mouseDelta =
-                        viewportLookActive ? window.mouseDelta() : platform::MouseDelta{};
-                    scene::CameraController::update(camera,
-                                                    scene::CameraInput{.forward = input.forward,
-                                                                       .right = input.right,
-                                                                       .up = input.up,
-                                                                       .lookDeltaX = mouseDelta.x,
-                                                                       .lookDeltaY = mouseDelta.y},
-                                                    deltaSeconds);
-                }
+                const platform::MouseDelta mouseDelta =
+                    routing.updateCamera && viewportLookActive ? window.mouseDelta() : platform::MouseDelta{};
+                logic->publishInput(LogicInputState{
+                    .game = routing.dispatchGameInput ? std::optional<game::GameInput>{gameInput} : std::nullopt,
+                    .camera = routing.updateCamera ? std::optional<scene::CameraInput>{{.forward = gameInput.forward,
+                                                                                        .right = gameInput.right,
+                                                                                        .up = gameInput.up,
+                                                                                        .lookDeltaX = mouseDelta.x,
+                                                                                        .lookDeltaY = mouseDelta.y}}
+                                                   : std::nullopt});
 
-                game::advanceGameFrame(*game, context,
-                                       routing.dispatchGameInput ? std::optional<game::GameInput>{input} : std::nullopt,
-                                       deltaSeconds);
-                const auto framebufferExtent = window.framebufferExtent();
+                const VkExtent2D framebufferExtent = window.framebufferExtent();
                 const bool framebufferResized = window.framebufferResized();
                 if (framebufferResized) {
                     ++surfaceRevision;
                     window.resetFramebufferResized();
                 }
-                renderer->submit(framePacketBuilder.build(
-                    level, camera, renderSettingsAdapter.snapshot(), ui->finishFrame(),
-                    render::core::SurfaceState{
-                        .windowExtent = {framebufferExtent.width, framebufferExtent.height},
-                        .viewportExtent = viewportExtent,
-                        .framebufferResized = framebufferResized,
-                        .surfaceRevision = surfaceRevision,
-                        .minimized = framebufferExtent.width == 0 || framebufferExtent.height == 0,
-                    }));
+                const ImDrawData* drawData = ui->finishFrame();
+                if (drawData == nullptr) {
+                    throw std::runtime_error("Dear ImGui did not produce draw data for the current frame.");
+                }
+                static_cast<void>(renderer->drawFrame(
+                    framePacketBuilder.build(
+                        frameLogicSnapshot->renderWorld, frameLogicSnapshot->camera, renderSettingsAdapter.snapshot(),
+                        render::core::SurfaceState{
+                            .windowExtent = {framebufferExtent.width, framebufferExtent.height},
+                            .viewportExtent = viewportExtent,
+                            .framebufferResized = framebufferResized,
+                            .surfaceRevision = surfaceRevision,
+                            .minimized = framebufferExtent.width == 0 || framebufferExtent.height == 0,
+                        }),
+                    *drawData));
             }
-            renderer->flush();
-            renderer->stop();
+
+            logic->stop();
+            renderer->waitIdle();
+            renderer->shutdown();
+            editor.reset();
+            ui.reset();
             return 0;
         }
 
         ApplicationConfig config;
-        std::unique_ptr<game::Game> game;
+        std::unique_ptr<game::Game> pendingGame;
         platform::RenderDocAttachment renderDoc;
         platform::Window window;
-        scene::Level level;
-        scene::Camera camera;
-        scripting::ScriptRuntime scripts;
         render::editor::RenderSettingsPanelAdapter renderSettingsAdapter;
         render::core::RenderFramePacketBuilder framePacketBuilder;
         render::core::RenderExtent viewportExtent{1280, 720};
-        project::ProjectSession project;
+        std::unique_ptr<LogicRuntime> logic;
+        std::shared_ptr<const editor::EditorLogicSnapshot> frameLogicSnapshot;
         std::unique_ptr<render::ImGuiFrontend> ui;
         std::unique_ptr<render::Renderer> renderer;
         render::RendererStatusSnapshot rendererStatusCache;
         std::unique_ptr<editor::Editor> editor;
-        std::optional<scripting::ScriptHandle> startupScript;
         bool viewportLookActive = false;
         bool escapeHeld = false;
         std::uint64_t surfaceRevision = 0;

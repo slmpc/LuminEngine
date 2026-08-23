@@ -57,6 +57,7 @@ add_subdirectory(render)
 # Application 是组合层：它可以同时看到 Core 和 Render，但 Render 永远不反向依赖它。
 add_library(lumin_application STATIC
     application/Application.cpp
+    application/LogicRuntime.cpp
 )
 add_library(Lumin::Application ALIAS lumin_application)
 add_library(Lumin::GameEngine ALIAS lumin_application)

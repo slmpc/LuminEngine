@@ -157,10 +157,12 @@ namespace lumin::render {
     } // namespace
 
     pipelines::DefaultRenderPipelineSession::RecordedFrameState
-    pipelines::DefaultRenderPipelineSession::recordCommandList(
-        nvrhi::ICommandList& commandList, const core::RenderFrameIdentity& identity,
-                                           const core::RenderFramePacket& packet, const RenderSettings& settings,
-                                           world::SceneChangeMask sceneChanges, const core::FrameChangeSet& changes) {
+    pipelines::DefaultRenderPipelineSession::recordCommandList(nvrhi::ICommandList& commandList,
+                                                               const core::RenderFrameIdentity& identity,
+                                                               const core::RenderFramePacket& packet,
+                                                               const RenderSettings& settings,
+                                                               world::SceneChangeMask sceneChanges,
+                                                               const core::FrameChangeSet& changes) {
         if (!identity.isValid()) {
             throw std::invalid_argument("Default pipeline session requires a valid render frame identity.");
         }
@@ -379,7 +381,10 @@ namespace lumin::render {
         }
         swapDesc.finalState = nvrhi::ResourceStates::Present;
         core::PresentationInputData presentationInput;
-        presentationInput.ui = packet.ui;
+        if (currentUiDrawData_ == nullptr) {
+            throw std::logic_error("Default pipeline session requires current ImGui draw data.");
+        }
+        presentationInput.ui = currentUiDrawData_;
         presentationInput.imageIndex = imageIndex;
         presentationInput.frameSlot = frameIndex;
         presentationInput.swapchain =

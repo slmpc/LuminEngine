@@ -41,10 +41,9 @@ namespace lumin::render::pipelines {
         /// 迁移期 Runtime 与 VulkanContext 共用的并行帧槽数量。
         static constexpr std::uint32_t frameSlotCount = 2;
 
-        DefaultRenderPipelineSession(
-            VulkanContext& context, world::RenderWorldSnapshotPtr initialWorld, std::filesystem::path shaderDirectory,
-            core::UiFontAtlas uiFontAtlas,
-            std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination = {});
+        DefaultRenderPipelineSession(VulkanContext& context, world::RenderWorldSnapshotPtr initialWorld,
+                                     std::filesystem::path shaderDirectory, ImFontAtlas& uiFontAtlas,
+                                     std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination = {});
         ~DefaultRenderPipelineSession() override;
 
         DefaultRenderPipelineSession(const DefaultRenderPipelineSession&) = delete;
@@ -100,7 +99,7 @@ namespace lumin::render::pipelines {
 #endif
         };
 
-        [[nodiscard]] bool drawFrame(core::RenderFramePacket packet) override;
+        [[nodiscard]] bool drawFrame(core::RenderFramePacket packet, const ImDrawData& ui) override;
         void waitIdle() const override;
         [[nodiscard]] runtime::RenderPipelineSessionStatus status() const override;
         [[nodiscard]] std::uint32_t modelCount() const noexcept;
@@ -122,8 +121,7 @@ namespace lumin::render::pipelines {
         class PresentationFeatureModule;
 
         void createRenderResources();
-        void createRenderFeaturePipeline(
-            DefaultRenderPipelineKind requestedPath = DefaultRenderPipelineKind::Hybrid);
+        void createRenderFeaturePipeline(DefaultRenderPipelineKind requestedPath = DefaultRenderPipelineKind::Hybrid);
         [[nodiscard]] core::RenderFeatureRegistry
         createFeatureRegistry(const DefaultRenderPipelineDefinition& definition, DefaultRenderPipelineKind path);
         void synchronizeRenderConfiguration(const RenderSettings& settings);
@@ -181,7 +179,9 @@ namespace lumin::render::pipelines {
 
         VulkanContext& context_;
         std::filesystem::path shaderDirectory_;
-        core::UiFontAtlas uiFontAtlas_;
+        ImFontAtlas* uiFontAtlas_ = nullptr;
+        /** 仅在同步 `drawFrame()` 调用期间有效。 */
+        const ImDrawData* currentUiDrawData_ = nullptr;
         RasterFeatureResources rasterResources_;
         PostFxResources postFxResources_;
         GpuResourceManager resourceFactory_;

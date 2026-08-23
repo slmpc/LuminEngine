@@ -92,8 +92,8 @@ Debug 配置过程还会生成 `out/build/debug/compile_commands.json`。本地 
 cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
-场景画面位于独立的 `Viewport` dock window，渲染分辨率会跟随其内容区物理像素尺寸。工具栏右端的 FPS 由渲染线程按
-交换链 `present` 完成次数统计，不使用可能因异步丢帧而虚高的 ImGui 主线程帧率。
+场景画面位于独立的 `Viewport` dock window，渲染分辨率会跟随其内容区物理像素尺寸。工具栏右端的 FPS 由渲染主线程按
+交换链 `present` 完成次数统计。
 鼠标悬停在 Viewport 上时，
 按住中键会隐藏并捕获鼠标，通过相对移动旋转视角；同时使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。松开中键会恢复
 普通鼠标模式。左键可拾取场景物体并通过 Move/Rotate/Scale Gizmo 编辑变换，`W`、`E`、`R` 可切换模式；右键打开
@@ -111,7 +111,8 @@ NRD 开关；TAA 是两条路径共用的选项。面板还可调整相机、曝
 `Configuration`。关闭 dirty 项目时会先显示 Save、Discard、Cancel。`Configuration` 可选择启动时显示项目导航器或
 直接打开上次成功开启的项目；路径失效或项目损坏时会安全回退到导航器。
 
-`View` 菜单控制 `Viewport`、`Scene Hierarchy`、`Details`、`Content Browser`、`Script Console` 和 `Render / GI`。
+`View` 菜单控制 `Viewport`、`Scene Hierarchy`、`Details`、`Content Browser`、`Script Console`、`Render / GI`
+和 `Project Settings`。
 通过标题栏关闭或菜单切换的状态会跨重启保存。全局设置位于 SDL 为 `Lumin/LuminEngine` 分配的首选目录中的
 `engine-settings.json`；旧 `recent-projects.txt` 会在首次启动时自动迁移。
 
@@ -121,7 +122,8 @@ NRD 开关；TAA 是两条路径共用的选项。面板还可调整相机、曝
 `Content Browser` 以目录树、面包屑和类型图标展示整个项目，可自动刷新或手动同步外部文件变化，并支持搜索、拖放
 创建模型 Actor、纹理拖放到材质槽，以及资源重命名和引用保护删除。项目清单、场景、`.lumin` 和普通文件只读。每个 Actor
 可以在 `Details` 中绑定多个 Lua 脚本，调整执行顺序、启用状态、热重载或移除。项目场景保存通用 Actor、资源引用、
-材质、脚本组件、环境、编辑器相机和渲染设置。完整目录和生命周期约定见
+材质、脚本组件、环境、编辑器相机和项目设置。`Project Settings` 面板可在 `15-240 Hz` 范围内修改固定逻辑频率，
+默认值为 `60 Hz`；修改后逻辑线程立即按新频率调度。完整目录和生命周期约定见
 [`docs/project-editor.md`](docs/project-editor.md)。
 
 示例材质位于 `assets/materials/aerial_asphalt_01`。base color 按 sRGB 解码，OpenGL normal

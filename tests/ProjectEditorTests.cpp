@@ -88,11 +88,14 @@ namespace {
         require(firstScript && secondScript && scripts.setEnabled(secondScript.script, false),
                 "Multiple Lua components must attach independently to one Actor.");
         require(scripts.reorder(secondScript.script, 0), "Script component order must be editable.");
-        project.setRenderSettings({.rayTracing = false,
-                                   .ambientOcclusionMode = lumin::project::ProjectAmbientOcclusionMode::Gtao,
-                                   .ambientOcclusionRadius = 2.5f,
-                                   .ambientOcclusionStrength = 1.4f,
-                                   .ambientOcclusionBias = 0.12f});
+        lumin::project::ProjectSettings projectSettings;
+        projectSettings.logicTickHz = 144;
+        projectSettings.render = {.rayTracing = false,
+                                  .ambientOcclusionMode = lumin::project::ProjectAmbientOcclusionMode::Gtao,
+                                  .ambientOcclusionRadius = 2.5f,
+                                  .ambientOcclusionStrength = 1.4f,
+                                  .ambientOcclusionBias = 0.12f};
+        project.setSettings(projectSettings);
         project.markDirty();
         require(project.save(error), error.c_str());
 
@@ -103,6 +106,9 @@ namespace {
             std::ifstream sceneStream(scenePath, std::ios::binary);
             sceneStream >> sceneDocument;
         }
+        require(sceneDocument["projectSettings"].value("logicTickHz", 0U) == 144U &&
+                    sceneDocument["projectSettings"].contains("render") && !sceneDocument.contains("renderSettings"),
+                "Project runtime and render settings must persist under the Project Settings object.");
         sceneDocument["actors"][0]["material"]["textures"] = {
             {"baseColor", ""}, {"normal", ""}, {"roughness", ""}, {"flipNormalY", true}};
         writeText(scenePath, sceneDocument.dump(2));
@@ -118,12 +124,12 @@ namespace {
         require(restoredScripts.size() == 2 && !restoredScripts.front().enabled && restoredScripts.back().enabled,
                 "Script order and enabled state must round-trip.");
         const auto& restoredRenderSettings = project.renderSettings();
-        require(!restoredRenderSettings.rayTracing &&
+        require(project.settings().logicTickHz == 144 && !restoredRenderSettings.rayTracing &&
                     restoredRenderSettings.ambientOcclusionMode == lumin::project::ProjectAmbientOcclusionMode::Gtao &&
                     restoredRenderSettings.ambientOcclusionRadius == 2.5f &&
                     restoredRenderSettings.ambientOcclusionStrength == 1.4f &&
                     restoredRenderSettings.ambientOcclusionBias == 0.12f,
-                "Legacy AO algorithm and tuning parameters must round-trip through the scene file.");
+                "Project tick rate and render tuning must round-trip through the scene file.");
 
         require(!project.removeAsset(meshId, error) && !error.empty(),
                 "Referenced mesh assets must be protected from deletion.");
@@ -292,8 +298,9 @@ namespace {
                     level.environment().sun.direction == defaultEnvironment.sun.direction &&
                     level.environment().sun.illuminanceLux == defaultEnvironment.sun.illuminanceLux &&
                     defaults.directLighting && defaults.shadows && defaults.rayTracing && defaults.ssao &&
-                    defaults.sharc && defaults.nrd && defaults.taa && defaults.exposure == 1.0f,
-                "A new empty project must reset scene, camera, environment, and project render settings.");
+                    defaults.sharc && defaults.nrd && defaults.taa && defaults.exposure == 1.0f &&
+                    project.settings().logicTickHz == lumin::project::DefaultLogicTickHz,
+                "A new empty project must reset scene, camera, environment, and all Project Settings.");
     }
 
     void testLegacySsaoSettingsRemainCompatible() {
@@ -312,6 +319,8 @@ namespace {
             std::ifstream stream(scenePath, std::ios::binary);
             stream >> scene;
         }
+        scene["renderSettings"] = scene["projectSettings"]["render"];
+        scene.erase("projectSettings");
         scene["renderSettings"]["ssao"] = false;
         scene["renderSettings"].erase("ambientOcclusionMode");
         scene["renderSettings"].erase("ambientOcclusionRadius");
@@ -325,6 +334,20 @@ namespace {
                     settings.ambientOcclusionRadius == 1.0f && settings.ambientOcclusionStrength == 1.0f &&
                     settings.ambientOcclusionBias == 0.08f,
                 "Projects with only the legacy ssao flag must load with SSAO defaults.");
+        require(project.settings().logicTickHz == lumin::project::DefaultLogicTickHz,
+                "Legacy projects without Project Settings must use the default logic tick rate.");
+    }
+
+    void testProjectLogicTickRateNormalization() {
+        lumin::project::ProjectSettings settings;
+        settings.logicTickHz = 1;
+        lumin::project::normalizeProjectSettings(settings);
+        require(settings.logicTickHz == lumin::project::MinimumLogicTickHz,
+                "Project logic tick rates below the supported range must clamp to the minimum.");
+        settings.logicTickHz = 1'000;
+        lumin::project::normalizeProjectSettings(settings);
+        require(settings.logicTickHz == lumin::project::MaximumLogicTickHz,
+                "Project logic tick rates above the supported range must clamp to the maximum.");
     }
 
 } // namespace
@@ -336,6 +359,7 @@ int main() {
         testViewportPickingUsesNearestHit();
         testNewProjectResetsSceneState();
         testLegacySsaoSettingsRemainCompatible();
+        testProjectLogicTickRateNormalization();
         std::cout << "ProjectEditor PASS\n";
         return 0;
     } catch (const std::exception& exception) {

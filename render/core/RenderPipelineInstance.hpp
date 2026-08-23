@@ -16,7 +16,7 @@ namespace lumin::render::core {
      *
      * 构造阶段按 DAG 顺序创建并初始化 Feature；任一步失败都会逆序调用已进入实例的 `shutdown()`。
      * 每次 `prepareFrame()` 必须由 `commitFrame()` 或 `discardFrame()` 结束，只有成功提交才推进历史。
-     * 该对象不提供内部同步，全部方法必须由独占渲染线程调用。
+     * 该对象不提供内部同步，全部方法必须由渲染主线程调用。
      */
     class RenderPipelineInstance final {
     public:

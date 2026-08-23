@@ -8,15 +8,18 @@ SDL、NvRHI 或渲染器；Render 只读取 Core 的场景和资产接口，Appl
 构建 target。`Application` 的公共头
 使用 PImpl，只公开窗口配置、脚本配置和 `Game` 注入点，不泄露 SDL、Vulkan、renderer 或场景的具体所有权。
 
-`Application` 拥有窗口、`Level`、`Camera`、`ScriptRuntime`、主线程 `RenderFramePacketBuilder`、
-`RenderSettingsPanelAdapter`、异步 `Renderer` 和 `Editor`。主线程只创建包含 Vulkan instance 与 SDL surface 的
-`VulkanSurfaceBootstrap`，随后立即把唯一所有权转入 `Renderer`；专用渲染线程才创建 `VulkanContext`、物理/逻辑设备、
-NvRHI、交换链及全部 Feature 资源。退出时先销毁 Feature，再依次销毁交换链、设备、surface 和 instance。
+`Application` 的 OS 主线程也是渲染主线程，直接拥有窗口、SDL backend、ImGui context、`RenderFramePacketBuilder`、
+`RenderSettingsPanelAdapter`、同步 `Renderer` 和 `Editor`。它创建 `VulkanSurfaceBootstrap` 后在同一线程构造
+`VulkanContext`、物理/逻辑设备、NvRHI、交换链及全部 Feature 资源；`Renderer::drawFrame()` 也在该线程同步执行。
+
+`LogicRuntime` 在独立逻辑线程拥有 `Game`、`Level`、`Camera`、`ScriptRuntime` 和 `ProjectSession`。渲染主线程
+只读取它发布的不可变 `EditorLogicSnapshot`，Editor 写操作通过命令队列返回逻辑线程。项目级 `logicTickHz` 控制固定
+Tick，范围为 `15-240 Hz`、默认 `60 Hz`；修改后重新安排下一个 deadline，过载时不追算积压。
 具体游戏通过 `GameContext` 只接收 `Level`、`Camera` 与 `ScriptRuntime`，因此场景初始化和逐帧逻辑可以脱离 Vulkan
 测试。`apps/editor` 使用无行为的 `Game` 宿主，不创建演示场景；项目内容只由 `ProjectSession` 创建或加载。
 
-正常退出通过有序控制队列执行 `flush()` 和 `stop()`；异常展开由 `Renderer` 析构等待线程结束。stop 在渲染线程等待
-GPU idle，并按 `IRenderPipelineSession -> VulkanContext -> Window` 的顺序释放；窗口与 SDL backend 始终留在主线程。
+正常退出先停止并 join 逻辑线程，再在渲染主线程等待 GPU idle，并按
+`IRenderPipelineSession -> VulkanContext -> ImGuiFrontend -> Window` 的顺序释放。Renderer 不创建内部线程。
 
 ## 模块化重构状态
 
@@ -51,17 +54,17 @@ resize 和 shutdown 在安全边界按逆序通知，使消费者先释放对上
 `Level` 管理网格、模型实例和 Actor。Actor 句柄包含索引和代数，因此槽位复用后，旧句柄不会解析到新对象。
 在 `tick`、`onSpawn` 或 `onDestroy` 中发起的生成与销毁请求会延迟处理，直到当前回调遍历可以安全提交变更。
 
-`Application` 先处理 SDL 事件并调用主线程 `ImGuiFrontend::beginFrame(editor)` 构建当前 ImGui 帧，再读取当前帧
-capture 状态。
-只有项目已打开且 UI 未捕获输入时才更新相机和派发 `GameInput`，随后调用 `Game::tick`、`Level::tick(deltaSeconds)` 和渲染。
+`Application` 先在渲染主线程读取一次最新逻辑快照，再处理 SDL 事件并调用
+`ImGuiFrontend::beginFrame(editor)` 构建当前 ImGui 帧，然后读取当前帧 capture 状态。
+只有项目已打开且 UI 未捕获输入时才发布相机和 `GameInput`；独立逻辑线程按项目固定频率调用 `Game::tick` 与
+`Level::tick(deltaSeconds)`，不会受渲染帧率影响。
 Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mouse mode；该模式隐藏并约束鼠标，以帧内相对位移
-更新相机 yaw/pitch，同时继续使用 `WASD`、`Space` 和 `Left Ctrl` 平移。松开右键后立即恢复普通鼠标模式。
-因此，即使编辑器捕获输入，游戏模拟、Actor 与 Lua 生命周期仍会推进。主线程随后通过
-`RenderFramePacketBuilder` 提取 `RenderWorldSnapshot` 和相机值快照，并在渲染前调用
-`ImGuiFrontend::finishFrame()`，将顶点、索引、裁剪命令和 reset-state 命令深拷贝到 `UiDrawPacket`；任意 user callback
-会被拒绝。typed settings、窗口/Viewport 物理尺寸和 UI 一并按值进入 `RenderFramePacket`。`drawFrame` 只消费该 packet，
-不访问活动场景、相机、ImGui context、SDL backend 或 Editor。场景变化会在 Runtime 中相对最近成功提交的世界快照
-重新比较；尚未消费的 packet 即使被替换，也不会漏掉拓扑变化或错误推进历史。
+更新相机 yaw/pitch，同时继续使用 `WASD`、`Space` 和 `Left Ctrl` 平移。松开中键后立即恢复普通鼠标模式。
+因此，即使编辑器捕获输入，游戏模拟、Actor 与 Lua 生命周期仍会推进。逻辑线程从活动场景生成
+`RenderWorldSnapshot`；渲染主线程使用同一份 `EditorLogicSnapshot` 中的世界和相机值构建 `RenderFramePacket`。
+`ImGuiFrontend::finishFrame()` 返回当前 ImGui context 的 `ImDrawData`，并由 `Renderer::drawFrame()` 在下一次
+`beginFrame()` 前同步消费。Renderer 不访问活动场景、相机、SDL backend 或 Editor。场景变化相对最近成功提交的世界
+快照重新比较，即使逻辑快照在两次渲染间被替换，也不会漏掉拓扑变化或错误推进历史。
 模型变换和材质变化会递增
 `modelRevision`；网格或模型成员变化会递增 `topologyRevision`。PBR 纹理路径变化也会递增 `topologyRevision`，
 因为材质纹理数组和 descriptor 需要重建；纯标量材质变化只更新对象 buffer。默认 Raster Feature 每帧上传对象记录，
@@ -89,14 +92,13 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 
 ## Renderer Runtime 边界
 
-`Renderer` 是主线程异步门面，公开 `submit(RenderFramePacket)`、`status()`、`flush()` 和 `stop()`。frame mailbox 只保存
-一个尚未消费的最新 packet；替换旧 packet 只增加丢帧计数，不推进历史。`flush/stop` 使用独立 FIFO 控制队列，并记录
-排队时必须先消费的 frame 序号，因此不会被 latest-wins 替换。最小化窗口的 packet 只被消费，不调用 Vulkan acquire，
-也不推进 GPU 历史。启动握手、逐帧异常和确定性退出状态通过 `RendererStatusSnapshot` 发布。
+`Renderer` 是渲染主线程的同步门面，公开 `drawFrame(RenderFramePacket, ImDrawData)`、`status()`、`waitIdle()` 和
+`shutdown()`。每次 `drawFrame()` 在返回前完成记录、GPU submit 与 present 流程；最小化窗口不调用 Vulkan acquire，
+也不推进 GPU 历史。`RendererStatusSnapshot` 区分尝试帧、跳过帧与成功呈现帧，并发布最近一次后端状态或错误。
 
 `RenderRuntime` 只依赖 `IRenderPipelineSessionFactory` 与 `IRenderPipelineSession`，不知道默认 recipe、Feature 标识或
 任何 Raster/GI/PostFX/Presentation 类型。Application 显式调用 `makeDefaultRenderPipelineSessionFactory()` 注入内置
-静态组合；渲染线程在创建 `VulkanContext` 后调用 factory，启动失败会完整回滚并通过握手重新抛到主线程。
+静态组合；渲染主线程在创建 `VulkanContext` 后调用 factory，启动失败会在当前调用栈完整回滚并抛出。
 
 `DefaultRenderPipelineSession` 位于 `Lumin::RenderPipelines`，是内置 Raster/Hybrid recipe 的帧事务协调器。它只接收
 非拥有 `VulkanContext`、初始 `RenderWorldSnapshotPtr` 和逐帧 `RenderFramePacket`，不保存活动场景、相机、ImGui 或 SDL
@@ -110,9 +112,9 @@ resolver 决定执行顺序；没有万能回调 Feature、`LevelRenderFeatureKi
 - `render/pipelines/default/DefaultRenderResources.cpp` 创建、销毁和重建 Viewport、Raster、Atmosphere 与 Hybrid GI 资源。
 - `render/pipelines/default/DefaultFeatureRegistry.cpp` 定义并显式注册默认具体 Feature 类型；每个类型直接实现自身的
   `addPasses`、提交和丢弃事务边界。
-- `render/core/RenderFramePacket.*` 定义跨线程不可变消息和主线程场景/相机快照 builder。
-- `render/runtime/RenderMailbox.*` 定义 latest-wins frame 单槽和不可丢失有序控制队列。
-- `render/runtime/Renderer.cpp` 独占渲染线程、启动/退出握手、异常传播与状态发布。
+- `render/core/RenderFramePacket.*` 定义渲染帧值对象，以及从逻辑世界/相机快照构建 packet 的主线程 builder。
+- `application/LogicRuntime.*` 定义逻辑线程、Editor 命令队列、latest-wins 输入和不可变快照发布。
+- `render/runtime/Renderer.cpp` 在渲染主线程拥有 Vulkan context、同步逐帧调用与状态发布。
 - `render/pipelines/default/DefaultRenderPipelineFrame.cpp` 从 packet 生成渲染提交相关的抖动/阴影数据，导入逐帧资源，创建 framebuffer，
   并执行 `FrameGraph`。
 - `render/pipelines/default/DefaultRenderFeatures.cpp` 实现内置模块的 pass setup/record；资源由对应 domain owner 管理。
@@ -132,12 +134,13 @@ resolver 决定执行顺序；没有万能回调 Feature、`LevelRenderFeatureKi
   `DescriptorIndexingLimits` 负责材质纹理 descriptor 的容量预检和绑定计划；两者都不依赖 Editor。
 - `render/platform/vulkan/` 包含 `VulkanSurfaceBootstrap`、`VulkanContext` 和 `VulkanRayTracingCapabilities`，是唯一
   允许直接调用原生 Vulkan 设备、交换链和能力查询的目录。bootstrap 在主线程使用 `Window` 创建 instance/surface，
-  Context 在渲染线程接管且不保存 `Window&`；交换链
-  resize 只消费 packet 中的 `SurfaceState`。单调 `surfaceRevision` 保证携带 resize 事件的 packet 被替换后仍会重建。
-- `render/editor/` 包含 `Editor`、`ImGuiContent` 和主线程 `ImGuiFrontend`。该前端独占 ImGui context 与 SDL backend，
-  并生成不含外部指针的 `UiDrawPacket` 和 `UiFontAtlas`；`RenderSettingsPanelAdapter` 负责 typed store 适配。
-- `render/presentation/` 包含渲染侧 `UiRenderer` 与 `PresentationRenderer`。它们不依赖 ImGui、SDL 或 Editor，只将
-  packet 中的稳定 `UiTextureId` 解析为当前 NvRHI 资源并合成到交换链。
+  Context 在同一渲染主线程接管且不保存 `Window&`；交换链 resize 只消费 packet 中的 `SurfaceState`。单调
+  `surfaceRevision` 保证 resize 状态在帧间稳定传递。
+- `render/editor/` 包含 `Editor`、`EditorLogicSnapshot`、`ImGuiContent` 和渲染主线程
+  `ImGuiFrontend`。该前端独占 ImGui context 与 SDL backend，并直接返回当前帧 `ImDrawData`；
+  `RenderSettingsPanelAdapter` 负责 typed store 适配。
+- `render/presentation/` 包含 `UiRenderer` 与 `PresentationRenderer`。它们不保存 ImGui、SDL 或 Editor 对象；
+  `UiRenderer` 在当前帧同步解析 `ImDrawData`，并通过稳定 `UiTextureId` 查找 NvRHI 资源后合成到交换链。
 
 `DefaultRenderPipelines` 用 typed inputs/outputs 解析执行顺序。Raster recipe 注册 shadow 与 raster surface；Hybrid
 recipe 注册 RT surface/GPU Scene producer，不包含 Raster-only 模块。RT surface descriptor 要求
@@ -238,14 +241,14 @@ Application 只通过按值 `RendererStatusSnapshot` 向 Editor 提供只读后�
 
 ## Lua 与编辑器工作流
 
-启动时，`Application` 先调用 `Game::initialize`，再通过自身拥有的 `ScriptRuntime` 加载调用方在
+启动时，逻辑线程先调用 `Game::initialize`，再通过自身拥有的 `ScriptRuntime` 加载调用方在
 `ApplicationConfig::startupScript` 中提供的可选启动脚本。`scriptRoot` 是脚本文件访问边界；加载失败会终止启动并报告
 源路径，事务式加载保证失败脚本不留下 Actor。独立 editor 应用不设置启动脚本。
 
-同一个 `ScriptRuntime` 被传给 `Game` 和 `Editor`。编辑器可以查看脚本与诊断、重新加载变更并执行 Lua 控制台命令；
-Scene 面板选择仍引用同一个 `Level`。每帧由 Application 构建 immutable packet 并调用 `Renderer::submit()`，因此编辑器
-与游戏视图共享设置快照和后端状态，但渲染线程不读取活动对象。ImGui SDL3 后端负责文本输入与 IME，应用层不重复调用
-SDL 文本输入 API。
+同一个 `ScriptRuntime` 被传给 `Game`，Editor 只读取它的快照，并把重新加载与 Lua 控制台操作提交为逻辑命令。
+Scene 面板同样只读取 Actor/Model 值快照。每个渲染帧由 Application 构建 packet 并同步调用
+`Renderer::drawFrame()`，Editor 与游戏视图共享同一份逻辑快照和后端状态，但渲染主线程不读取活动对象。ImGui SDL3
+后端负责文本输入与 IME，应用层不重复调用 SDL 文本输入 API。
 
 Application 从 SDL 首选目录加载版本化 `engine-settings.json`，并把设置快照及保存回调注入 Editor。没有项目时 Editor
 绘制全工作区 `Project Navigator`；有项目时才构建 dockspace。`File > Configuration` 修改启动目标，`View` 和面板标题栏
@@ -305,7 +308,7 @@ fence 后，才能更新帧槽。
 
 渲染实现基于 NvRHI Vulkan 后端，并通过 NvRHI 使用 Vulkan 1.3 dynamic rendering；渲染器不创建
 `VkRenderPass` 或 `VkFramebuffer`。NvRHI 不负责创建交换链。`VulkanSurfaceBootstrap` 与 `VulkanContext` 位于唯一
-原生 Vulkan backend 边界：前者只在主线程创建 instance 和 SDL surface，后者在渲染线程接管它们并保留物理/逻辑设备、
+原生 Vulkan backend 边界：前者在渲染主线程创建 instance 和 SDL surface，后者在同一线程接管它们并保留物理/逻辑设备、
 队列、交换链与 image view、图像获取/呈现、二进制信号量、能力查询和 NvRHI native interop。交换链图像对应的
 NvRHI texture 是非拥有型包装，销毁顺序固定为 renderer 及其子句柄、
 交换链 NvRHI 包装、NvRHI device、`VkDevice`。正常销毁和构造中途失败共用幂等清理路径。

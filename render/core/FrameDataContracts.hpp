@@ -2,7 +2,6 @@
 
 #include "render/core/FrameIdentity.hpp"
 #include "render/core/RenderSettingsStore.hpp"
-#include "render/core/UiDrawPacket.hpp"
 #include "render/resources/FrameGraph.hpp"
 #include "render/world/RenderWorld.hpp"
 
@@ -15,6 +14,8 @@
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 #include <nvrhi/nvrhi.h>
+
+struct ImDrawData;
 
 namespace lumin::render::core {
 
@@ -99,7 +100,7 @@ namespace lumin::render::core {
         std::uint64_t cutEpoch = 0;
     };
 
-    /** 由主线程从活动场景提取，渲染线程只读取该不可变快照。 */
+    /** 由逻辑线程从活动场景提取，渲染主线程只读取该不可变快照。 */
     struct FrameSceneData {
         /// 完全拥有且不可变的渲染世界快照。
         world::RenderWorldSnapshotPtr world;
@@ -227,8 +228,8 @@ namespace lumin::render::core {
 
     /** Runtime 在获取交换链图像后发布给 Presentation Feature 的输入。 */
     struct PresentationInputData {
-        /// 主线程深拷贝并随帧提交的 UI 绘制数据。
-        UiDrawPacket ui;
+        /// 仅在同步 `drawFrame()` 调用期间有效的 Dear ImGui 绘制数据。
+        const ImDrawData* ui = nullptr;
         /// 当前交换链图像及其唯一 FrameGraph 身份。
         TextureFrameData swapchain;
         /// Presentation 字体图集及其唯一 FrameGraph 身份。
