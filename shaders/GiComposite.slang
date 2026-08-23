@@ -45,8 +45,21 @@ void compositeMain(uint3 dispatchThreadId : SV_DispatchThreadID) {
         unpackReblurRadiance(denoisedDiffuseRadianceHitDistance.Load(int3(pixel, 0)));
     float3 specularRadiance =
         unpackReblurRadiance(denoisedSpecularRadianceHitDistance.Load(int3(pixel, 0)));
+    float4 normalRoughness = normalRoughnessTexture.Load(int3(pixel, 0));
+    float3 normal = luminPhysicalSafeNormalize(normalRoughness.xyz, float3(0.0, 0.0, 1.0));
+    GpuMaterialData primaryMaterial = materials[materialId];
+    primaryMaterial.baseColorMetallic = albedoMetallicTexture.Load(int3(pixel, 0));
+    primaryMaterial.surfaceParameters.x = normalRoughness.w;
+    LuminCookTorranceMaterial cookTorranceMaterial = luminMakeCookTorranceMaterial(primaryMaterial);
+    float3 toView = luminPhysicalSafeNormalize(frame.cameraPosition.xyz - position.xyz, normal);
+    float3 diffuseMaterialFactor;
+    float3 specularMaterialFactor;
+    NRD_MaterialFactors(normal, toView, cookTorranceMaterial.diffuseColor,
+                        cookTorranceMaterial.reflectanceAtNormal, cookTorranceMaterial.roughness,
+                        diffuseMaterialFactor, specularMaterialFactor);
 
-    // RTGI 已在采样点应用 Cook-Torrance BRDF * cos(theta) / PDF；这里只合并去噪后的两个出射辐亮度信号。
-    globalIlluminationOutput[pixel] =
-        float4(luminClampFp16Radiance(diffuseRadiance + specularRadiance), 0.0);
+    // 仅在 REBLUR 之后恢复主表面材质，避免空间滤波把 albedo、metallic 与 Fresnel 细节一起模糊。
+    float3 outgoingRadiance = diffuseRadiance * diffuseMaterialFactor +
+                              specularRadiance * specularMaterialFactor;
+    globalIlluminationOutput[pixel] = float4(luminClampFp16Radiance(outgoingRadiance), 0.0);
 }

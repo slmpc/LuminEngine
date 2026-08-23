@@ -108,14 +108,17 @@ namespace lumin::render::gi {
                                                                     std::uint32_t materialCount);
 
         /**
-         * 合并已经应用 Cook-Torrance BRDF 与采样权重的 diffuse/specular 出射辐亮度。
+         * 使用 NRD 材质因子恢复去噪后的 diffuse/specular 出射辐亮度。
          *
-         * @param diffuseRadiance 完整调制的漫反射出射辐亮度。
-         * @param specularRadiance 完整调制的镜面出射辐亮度。
-         * @return 去除 NaN、Inf 与负值后的两路辐亮度之和。
+         * @param diffuseRadiance 已解调的漫反射辐亮度。
+         * @param specularRadiance 已解调的镜面辐亮度。
+         * @param diffuseMaterialFactor NRD 漫反射材质因子。
+         * @param specularMaterialFactor NRD 镜面材质因子。
+         * @return 去除 NaN、Inf 与负值后重新调制的两路辐亮度之和。
          */
-        [[nodiscard]] glm::vec3 combineGiRadiance(const glm::vec3& diffuseRadiance,
-                                                  const glm::vec3& specularRadiance) noexcept;
+        [[nodiscard]] glm::vec3 combineGiRadiance(const glm::vec3& diffuseRadiance, const glm::vec3& specularRadiance,
+                                                  const glm::vec3& diffuseMaterialFactor,
+                                                  const glm::vec3& specularMaterialFactor) noexcept;
 
         /** 注册 composite pass，并完整声明七个 SRV/只读资源、常量和一个 UAV。 */
         [[nodiscard]] FrameGraphPassHandle addGiCompositePass(FrameGraph& frameGraph,
@@ -139,7 +142,7 @@ namespace lumin::render::gi {
     /**
      * 将 NRD 去噪后的完整出射辐亮度写入引擎现有 packed GI 纹理。
      *
-     * 有效几何直接合并 diffuse/specular，不再二次乘材质项或注入非物理环境光。
+     * 有效几何使用与 RTGI 相同的 NRD 因子恢复主表面材质，不注入非物理环境光。
      * 背景或无效材质写入 neutral output `{0, 0, 0, 1}`。
      * 本 pass 不拥有时序历史，也不导入调用方资源。
      * 调用方必须同时传入物理 NvRHI 对象及其已有 FrameGraph 身份。

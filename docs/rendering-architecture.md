@@ -208,7 +208,9 @@ RTDI、RTGI、SHARC 与 atmosphere LUT 共用 EV100 15、饱和归一化系数 `
 Ray Tracing 的所有材质统一使用 Cook-Torrance BRDF：GGX 法线分布、Smith-GGX 几何遮蔽与 Schlick Fresnel。
 Metallic-Roughness 材质使用 `F0 = lerp(0.04, baseColor, metallic)`；旧 Blinn-Phong 材质在 RT 路径中把显式
 `specularColor` 解释为介质 `F0`，不再执行未归一化的 Phong 高光。RTGI 漫反射采用 cosine-weighted sampling，镜面
-采用 GGX importance sampling，两路都在写入 NRD 前应用 `BRDF * cos(theta) / PDF`。
+采用 GGX VNDF importance sampling，以避免普通 NDF 在掠射角产生高权重无效样本。两路路径估计都先应用完整
+`BRDF * cos(theta) / PDF`，随后用 `NRD_MaterialFactors` 解调主表面材质；Composite 在 REBLUR 后用同一因子恢复材质，
+因此空间去噪不会模糊 albedo、metallic 或 Fresnel 细节。
 Cook-Torrance 的低粗糙度掠射峰值在数学上可能超过 half 范围；BRDF 计算保持不截断，仅在 FP16 scene-radiance
 纹理写入边界限制到 `65504`，防止 `Inf/NaN` 污染后续 NRD、TAA 与 tone mapping。
 
@@ -247,9 +249,9 @@ texture 和 AS；该回收是逐帧资源生命周期的一部分，不能仅依
 禁用全局光照时的中性值为 `{0, 0, 0, 1}`。屏幕空间 AO 后端写入 `{0, 0, 0, ao}`，延迟光照按
 `legacyAmbient * globalIllumination.a + globalIllumination.rgb` 合成环境光。该图像同时支持颜色附件、采样和存储图像
 用途，以便后续后端使用光线追踪或计算通道写入相同契约。
-Ray Tracing composite 写入 `alpha=0`，RGB 直接合并已经完整应用 Cook-Torrance BRDF 和采样权重的 diffuse/specular
-出射辐亮度。Composite 不再二次乘材质项，也不注入常量环境光或 Raster ambient floor；无能量路径保持为黑色，亮度
-只能来自太阳、atmosphere environment 或真实追踪到的反弹光。
+Ray Tracing composite 写入 `alpha=0`，RGB 为去噪后的 diffuse/specular 辐亮度乘各自主表面 NRD 材质因子之和。
+该调制与 RTGI 前端解调严格配对，不重复计算路径 BRDF，也不注入常量环境光或 Raster ambient floor；无能量路径保持
+为黑色，亮度只能来自太阳、atmosphere environment 或真实追踪到的反弹光。
 
 相机切换、场景拓扑变化、Legacy/Ray Tracing 模式、AO 算法或参数、Feature 开关变化以及交换链重建都会使后端历史失效。无时序历史的屏幕空间 AO 后端
 忽略失效通知；SHARC、NRD diffuse/specular 和 TAA 分域决定 keep、soft reset 或 full reset，并且都只在成功提交后

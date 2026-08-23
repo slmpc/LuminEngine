@@ -203,8 +203,11 @@ namespace lumin::render::gi {
             return result;
         }
 
-        glm::vec3 combineGiRadiance(const glm::vec3& diffuseRadiance, const glm::vec3& specularRadiance) noexcept {
-            return finitePositive(diffuseRadiance) + finitePositive(specularRadiance);
+        glm::vec3 combineGiRadiance(const glm::vec3& diffuseRadiance, const glm::vec3& specularRadiance,
+                                    const glm::vec3& diffuseMaterialFactor,
+                                    const glm::vec3& specularMaterialFactor) noexcept {
+            return finitePositive(diffuseRadiance) * finitePositive(diffuseMaterialFactor) +
+                   finitePositive(specularRadiance) * finitePositive(specularMaterialFactor);
         }
 
         FrameGraphPassHandle addGiCompositePass(FrameGraph& frameGraph, const GiCompositeGraphResources& resources,

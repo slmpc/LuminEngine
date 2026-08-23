@@ -171,6 +171,7 @@ namespace {
                     physicalLighting.find("luminGgxDistribution") != std::string::npos &&
                     physicalLighting.find("luminSmithGgxG1") != std::string::npos &&
                     physicalLighting.find("luminFresnelSchlick") != std::string::npos &&
+                    physicalLighting.find("luminSampleGgxVisibleNormal") != std::string::npos &&
                     physicalLighting.find("luminSampleCookTorranceSpecular") != std::string::npos &&
                     physicalLighting.find("luminClampFp16Radiance") != std::string::npos,
                 "Shared physical lighting must implement Cook-Torrance with GGX, Smith, Schlick, and GGX sampling.");
@@ -180,8 +181,12 @@ namespace {
         }
         require(rtGi.find("diffuseSample.throughput") != std::string::npos &&
                     rtGi.find("specularSample.throughput") != std::string::npos &&
+                    rtGi.find("NRD_MaterialFactors") != std::string::npos &&
+                    rtGi.find("/ diffuseMaterialFactor") != std::string::npos &&
+                    rtGi.find("/ specularMaterialFactor") != std::string::npos &&
+                    rtGi.find("specularSample.valid != 0u") != std::string::npos &&
                     rtGi.find("0.015") == std::string::npos,
-                "RTGI must apply BRDF/PDF throughput without a fixed ambient contribution.");
+                "RTGI must demodulate physical BRDF/PDF throughput without a fixed ambient contribution.");
     }
 
 } // namespace

@@ -58,7 +58,7 @@ float luminGgxDistribution(float normalDotHalf, float roughness) {
     float alpha = roughness * roughness;
     float alphaSquared = alpha * alpha;
     float denominator = normalDotHalf * normalDotHalf * (alphaSquared - 1.0) + 1.0;
-    return alphaSquared / max(kLuminPi * denominator * denominator, 1.0e-7);
+    return alphaSquared / max(kLuminPi * denominator * denominator, 1.0e-12);
 }
 
 float luminSmithGgxG1(float normalDotDirection, float roughness) {
@@ -96,14 +96,55 @@ LuminCookTorranceLobes luminEvaluateCookTorrance(
     return result;
 }
 
-float3 luminTangentToWorld(float3 localDirection, float3 normal) {
-    float3 tangent = luminPhysicalSafeNormalize(
+void luminBuildTangentFrame(float3 normal, out float3 tangent, out float3 bitangent) {
+    tangent = luminPhysicalSafeNormalize(
         abs(normal.z) < 0.999 ? cross(float3(0.0, 0.0, 1.0), normal)
                              : cross(float3(0.0, 1.0, 0.0), normal),
         float3(1.0, 0.0, 0.0));
-    float3 bitangent = cross(normal, tangent);
+    bitangent = cross(normal, tangent);
+}
+
+float3 luminTangentToWorld(float3 localDirection, float3 normal) {
+    float3 tangent;
+    float3 bitangent;
+    luminBuildTangentFrame(normal, tangent, bitangent);
     return luminPhysicalSafeNormalize(
         tangent * localDirection.x + bitangent * localDirection.y + normal * localDirection.z, normal);
+}
+
+float3 luminWorldToTangent(float3 worldDirection, float3 normal) {
+    float3 tangent;
+    float3 bitangent;
+    luminBuildTangentFrame(normal, tangent, bitangent);
+    return float3(dot(worldDirection, tangent), dot(worldDirection, bitangent), dot(worldDirection, normal));
+}
+
+float3 luminSampleGgxVisibleNormal(
+    float3 normal, float3 toView, float roughness, float2 random) {
+    float alpha = roughness * roughness;
+    float3 viewLocal = luminWorldToTangent(toView, normal);
+    float3 stretchedView = luminPhysicalSafeNormalize(
+        float3(alpha * viewLocal.x, alpha * viewLocal.y, max(viewLocal.z, 1.0e-6)),
+        float3(0.0, 0.0, 1.0));
+
+    // Heitz GGX VNDF：先在拉伸空间采样可见微表面法线，再映射回原始椭球分布。
+    float projectedLengthSquared = dot(stretchedView.xy, stretchedView.xy);
+    float3 tangent1 = projectedLengthSquared > 1.0e-7
+        ? float3(-stretchedView.y, stretchedView.x, 0.0) * rsqrt(projectedLengthSquared)
+        : float3(1.0, 0.0, 0.0);
+    float3 tangent2 = cross(stretchedView, tangent1);
+    float radius = sqrt(saturate(random.x));
+    float phi = 2.0 * kLuminPi * random.y;
+    float diskX = radius * cos(phi);
+    float diskY = radius * sin(phi);
+    float viewBlend = 0.5 * (1.0 + stretchedView.z);
+    diskY = lerp(sqrt(saturate(1.0 - diskX * diskX)), diskY, viewBlend);
+    float3 visibleNormal = diskX * tangent1 + diskY * tangent2 +
+                           sqrt(saturate(1.0 - diskX * diskX - diskY * diskY)) * stretchedView;
+    float3 halfLocal = luminPhysicalSafeNormalize(
+        float3(alpha * visibleNormal.x, alpha * visibleNormal.y, max(visibleNormal.z, 0.0)),
+        float3(0.0, 0.0, 1.0));
+    return luminTangentToWorld(halfLocal, normal);
 }
 
 LuminBrdfSample luminSampleCookTorranceDiffuse(
@@ -125,23 +166,27 @@ LuminBrdfSample luminSampleCookTorranceDiffuse(
 
 LuminBrdfSample luminSampleCookTorranceSpecular(
     LuminCookTorranceMaterial material, float3 normal, float3 toView, float2 random) {
-    float alpha = material.roughness * material.roughness;
-    float alphaSquared = alpha * alpha;
-    float phi = 2.0 * kLuminPi * random.x;
-    float cosineTheta = sqrt((1.0 - random.y) / max(1.0 + (alphaSquared - 1.0) * random.y, 1.0e-7));
-    float sineTheta = sqrt(max(1.0 - cosineTheta * cosineTheta, 0.0));
-    float3 halfVector = luminTangentToWorld(
-        float3(sineTheta * cos(phi), sineTheta * sin(phi), cosineTheta), normal);
-
     LuminBrdfSample result;
+    result.direction = normal;
+    result.throughput = float3(0.0);
+    result.pdf = 0.0;
+    result.valid = 0u;
+    float normalDotView = saturate(dot(normal, toView));
+    if (normalDotView <= 1.0e-6) {
+        return result;
+    }
+
+    float3 halfVector = luminSampleGgxVisibleNormal(normal, toView, material.roughness, random);
     result.direction = reflect(-toView, halfVector);
     float normalDotLight = saturate(dot(normal, result.direction));
     float normalDotHalf = saturate(dot(normal, halfVector));
     float viewDotHalf = saturate(dot(toView, halfVector));
     float distribution = luminGgxDistribution(normalDotHalf, material.roughness);
-    result.pdf = distribution * normalDotHalf / max(4.0 * viewDotHalf, 1.0e-7);
+    float geometryView = luminSmithGgxG1(normalDotView, material.roughness);
+    // VNDF half-vector PDF 经反射 Jacobian 转到出射方向后，VoH 项相消。
+    result.pdf = distribution * geometryView / max(4.0 * normalDotView, 1.0e-7);
     LuminCookTorranceLobes lobes = luminEvaluateCookTorrance(material, normal, toView, result.direction);
-    result.valid = normalDotLight > 0.0 && result.pdf > 1.0e-7 ? 1u : 0u;
+    result.valid = normalDotLight > 0.0 && viewDotHalf > 0.0 && result.pdf > 1.0e-7 ? 1u : 0u;
     result.throughput = result.valid != 0u ? lobes.specular * (normalDotLight / result.pdf) : float3(0.0);
     return result;
 }

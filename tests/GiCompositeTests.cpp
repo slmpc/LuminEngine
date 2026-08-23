@@ -189,14 +189,15 @@ namespace {
             "Packed GI output must remain both UAV-writable and shader-readable for deferred lighting.");
     }
 
-    void testCompositeCombinesFullyModulatedRadiance() {
-        const glm::vec3 combined =
-            lumin::render::gi::detail::combineGiRadiance({2.0F, -1.0F, std::numeric_limits<float>::infinity()},
-                                                         {0.5F, 0.25F, std::numeric_limits<float>::quiet_NaN()});
-        require(nearlyEqual(combined, {2.5F, 0.25F, 0.0F}),
-                "GI composite must only sanitize and add fully modulated Cook-Torrance signals.");
+    void testCompositeRemodulatesDenoisedRadiance() {
+        const glm::vec3 combined = lumin::render::gi::detail::combineGiRadiance(
+            {2.0F, -1.0F, std::numeric_limits<float>::infinity()},
+            {0.5F, 0.25F, std::numeric_limits<float>::quiet_NaN()}, {0.25F, 0.5F, 1.0F}, {0.4F, 0.8F, 1.0F});
+        require(nearlyEqual(combined, {0.7F, 0.2F, 0.0F}),
+                "GI composite must sanitize and remodulate both NRD radiance lobes.");
 
-        const glm::vec3 zero = lumin::render::gi::detail::combineGiRadiance({0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F});
+        const glm::vec3 zero = lumin::render::gi::detail::combineGiRadiance({0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F},
+                                                                            {1.0F, 1.0F, 1.0F}, {1.0F, 1.0F, 1.0F});
         require(nearlyEqual(zero, {0.0F, 0.0F, 0.0F}),
                 "A zero-energy path must remain black without an artificial ambient floor.");
     }
@@ -318,9 +319,11 @@ namespace {
                     source.find("unpackReblurRadiance(denoisedDiffuseRadianceHitDistance.Load") != std::string::npos &&
                     source.find("unpackReblurRadiance(denoisedSpecularRadianceHitDistance.Load") != std::string::npos &&
                     source.find("globalIlluminationOutput[pixel] = kNeutralOutput") != std::string::npos &&
-                    source.find("luminClampFp16Radiance(diffuseRadiance + specularRadiance)") != std::string::npos &&
+                    source.find("NRD_MaterialFactors") != std::string::npos &&
+                    source.find("diffuseRadiance * diffuseMaterialFactor") != std::string::npos &&
+                    source.find("specularRadiance * specularMaterialFactor") != std::string::npos &&
                     source.find("ambientFloor") == std::string::npos,
-                "GI composite shader must add fully modulated REBLUR signals without non-physical ambient energy.");
+                "GI composite shader must remodulate REBLUR signals without non-physical ambient energy.");
     }
 
 } // namespace
@@ -329,7 +332,7 @@ int main() {
     try {
         testConstantsAndDispatchContract();
         testBindingAbiAndResourceValidation();
-        testCompositeCombinesFullyModulatedRadiance();
+        testCompositeRemodulatesDenoisedRadiance();
         testDispatchAndFrameGraphDeclarations();
         testShaderWritesNeutralBackgroundAndReplacementAlpha();
         std::puts("GiComposite PASS");

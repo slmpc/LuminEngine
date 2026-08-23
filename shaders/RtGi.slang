@@ -141,6 +141,11 @@ void rayGenerationMain() {
     primaryMaterial.surfaceParameters.x = roughness;
     LuminCookTorranceMaterial cookTorranceMaterial = luminMakeCookTorranceMaterial(primaryMaterial);
     float3 toView = luminPhysicalSafeNormalize(frame.cameraPosition.xyz - worldPosition, normal);
+    float3 diffuseMaterialFactor;
+    float3 specularMaterialFactor;
+    NRD_MaterialFactors(normal, toView, cookTorranceMaterial.diffuseColor,
+                        cookTorranceMaterial.reflectanceAtNormal, cookTorranceMaterial.roughness,
+                        diffuseMaterialFactor, specularMaterialFactor);
     LuminBrdfSample diffuseSample = luminSampleCookTorranceDiffuse(
         cookTorranceMaterial, normal, toView,
         float2(random01(seed), random01(seed ^ 0x9e3779b9)));
@@ -155,16 +160,22 @@ void rayGenerationMain() {
         ? traceRadiance(origin, specularSample.direction) : emptyRadiancePayload();
     float primaryViewZ = max(dot(worldPosition - frame.cameraPosition.xyz, frame.cameraForward.xyz), 0.0);
     float3 hitDistanceParameters = float3(3.0, 0.1, 20.0);
-    float diffuseNormHitDistance = REBLUR_FrontEnd_GetNormHitDist(
-        diffusePayload.hitDistance, primaryViewZ, hitDistanceParameters, roughness);
-    float specularNormHitDistance = REBLUR_FrontEnd_GetNormHitDist(
-        specularPayload.hitDistance, primaryViewZ, hitDistanceParameters, roughness);
+    float diffuseNormHitDistance = diffuseSample.valid != 0u
+        ? REBLUR_FrontEnd_GetNormHitDist(
+              diffusePayload.hitDistance, primaryViewZ, hitDistanceParameters, roughness)
+        : 0.0;
+    float specularNormHitDistance = specularSample.valid != 0u
+        ? REBLUR_FrontEnd_GetNormHitDist(
+              specularPayload.hitDistance, primaryViewZ, hitDistanceParameters, roughness)
+        : 0.0;
 
-    // 每个 signal 已包含 Cook-Torrance BRDF * cos(theta) / PDF；去噪和 composite 不得再次乘材质项。
+    // 路径估计先包含完整 BRDF*cos/PDF，再按 NRD 契约解调主表面材质；Composite 使用同一因子恢复细节。
     diffuseRadianceHitDistance[pixel] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(
-        diffusePayload.radiance * diffuseSample.throughput, diffuseNormHitDistance, true);
+        diffusePayload.radiance * diffuseSample.throughput / diffuseMaterialFactor,
+        diffuseNormHitDistance, true);
     specularRadianceHitDistance[pixel] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(
-        specularPayload.radiance * specularSample.throughput, specularNormHitDistance, true);
+        specularPayload.radiance * specularSample.throughput / specularMaterialFactor,
+        specularNormHitDistance, true);
     denoiserNormalRoughness[pixel] = NRD_FrontEnd_PackNormalAndRoughness(normal, roughness, 0.0);
     viewZ[pixel] = primaryViewZ;
 }
