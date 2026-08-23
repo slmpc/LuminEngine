@@ -55,7 +55,7 @@ namespace lumin::render {
             std::vector<scene::PbrTextureSet> textureSets;
             for (const world::RenderWorldInstance& instance : worldSnapshot.instances()) {
                 const scene::ModelInstance& model = instance.model;
-                if (!model.material.textures.has_value() || !model.material.textures->complete()) {
+                if (!model.material.textures.has_value() || model.material.textures->empty()) {
                     continue;
                 }
                 const auto existing = std::find_if(textureSets.begin(), textureSets.end(), [&](const auto& candidate) {
@@ -70,7 +70,7 @@ namespace lumin::render {
 
         std::uint32_t textureDescriptorIndexFor(const scene::Material& material,
                                                 const std::vector<scene::PbrTextureSet>& textureSets) {
-            if (!material.textures.has_value() || !material.textures->complete()) {
+            if (!material.textures.has_value() || material.textures->empty()) {
                 return 0;
             }
             const auto iterator = std::find_if(textureSets.begin(), textureSets.end(), [&](const auto& candidate) {
@@ -113,16 +113,43 @@ namespace lumin::render {
             assets::ImageData roughness;
         };
 
+        assets::ImageData solidImage(std::uint32_t width, std::uint32_t height,
+                                     const std::array<std::uint8_t, 4>& color) {
+            if (width == 0 || height == 0 ||
+                static_cast<std::uint64_t>(width) * height > std::numeric_limits<std::size_t>::max() / 4U) {
+                throw std::invalid_argument("Fallback material image dimensions are invalid.");
+            }
+            assets::ImageData image;
+            image.width = width;
+            image.height = height;
+            image.pixels.resize(static_cast<std::size_t>(width) * height * 4U);
+            for (std::size_t offset = 0; offset < image.pixels.size(); offset += 4) {
+                std::copy(color.begin(), color.end(), image.pixels.begin() + static_cast<std::ptrdiff_t>(offset));
+            }
+            return image;
+        }
+
         LoadedPbrTextureSet loadTextureSet(const scene::PbrTextureSet& paths) {
-            if (paths.baseColor.empty() || paths.normal.empty() || paths.roughness.empty()) {
-                throw std::invalid_argument("PBR texture sets require base-color, normal, and roughness images.");
+            constexpr std::array<std::uint8_t, 4> white = {255, 255, 255, 255};
+            constexpr std::array<std::uint8_t, 4> flatNormal = {128, 128, 255, 255};
+            LoadedPbrTextureSet result;
+            result.baseColor =
+                paths.baseColor.empty() ? solidImage(1, 1, white) : assets::ImageLoader::load(paths.baseColor);
+            if (!paths.normal.empty()) {
+                result.normal = assets::ImageLoader::load(paths.normal);
+            }
+            if (!paths.roughness.empty()) {
+                result.roughness = assets::ImageLoader::load(paths.roughness);
             }
 
-            LoadedPbrTextureSet result{
-                assets::ImageLoader::load(paths.baseColor),
-                assets::ImageLoader::load(paths.normal),
-                assets::ImageLoader::load(paths.roughness),
-            };
+            if (result.normal.empty() && result.roughness.empty()) {
+                result.normal = solidImage(1, 1, flatNormal);
+                result.roughness = solidImage(1, 1, white);
+            } else if (result.normal.empty()) {
+                result.normal = solidImage(result.roughness.width, result.roughness.height, flatNormal);
+            } else if (result.roughness.empty()) {
+                result.roughness = solidImage(result.normal.width, result.normal.height, white);
+            }
             if (result.normal.width != result.roughness.width || result.normal.height != result.roughness.height) {
                 throw std::invalid_argument("Normal and roughness images in a PBR texture set must match dimensions.");
             }

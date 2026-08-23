@@ -44,8 +44,12 @@ namespace lumin::scene {
     /**
      * 当前材质纹理集合。
      *
-     * `roughness` 纹理对两种模型都调制逐像素高光宽度：PBR 直接使用感知粗糙度，Blinn-Phong 则从
-     * 等效粗糙度反算高光指数。normal 与 base color 同样由两种表面模型共享。
+     * `roughness` 纹理对两种模型都调制逐像素高光宽度：PBR
+     * 直接使用感知粗糙度，Blinn-Phong 则从
+     * 等效粗糙度反算高光指数。normal 与 base color
+     * 同样由两种表面模型共享。任一贴图均可缺省；渲染器会分别
+     * 使用白色、平坦法线或白色粗糙度
+     * fallback，路径由拥有项目负责保证生命周期覆盖渲染会话。
      */
     struct PbrTextureSet {
         std::filesystem::path baseColor;
@@ -53,10 +57,12 @@ namespace lumin::scene {
         std::filesystem::path roughness;
         bool flipNormalY = true;
 
+        /** 返回三个纹理槽是否均已指定；部分纹理集合仍可参与渲染。 */
         [[nodiscard]] bool complete() const noexcept {
             return !baseColor.empty() && !normal.empty() && !roughness.empty();
         }
 
+        /** 返回是否没有指定任何纹理。 */
         [[nodiscard]] bool empty() const noexcept {
             return baseColor.empty() && normal.empty() && roughness.empty();
         }

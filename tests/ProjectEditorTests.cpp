@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 
 #include <nlohmann/json.hpp>
 
@@ -148,6 +149,77 @@ namespace {
         error.clear();
         require(!project.open(maliciousProject, error) && level.actorCount() == 1,
                 "Path-escaping projects must be rejected before replacing the current scene.");
+    }
+
+    void testMultiMaterialObjCreatesPersistentActors() {
+        TemporaryDirectory temporary;
+        lumin::scene::Level level;
+        lumin::scene::Camera camera;
+        lumin::scripting::ScriptRuntime scripts({.scriptRoot = temporary.path});
+        lumin::project::ProjectSession project(level, camera, scripts);
+        std::string error;
+        require(project.create(temporary.path, "MultiMaterial", error), error.c_str());
+
+        const auto meshDirectory = project.rootDirectory() / "Content/Meshes";
+        const auto meshPath = meshDirectory / "multi.obj";
+        writeText(meshDirectory / "multi.mtl", R"(newmtl Red
+Kd 1 0 0
+Ks 0.2 0.2 0.2
+Ns 12
+newmtl Green
+Kd 0 1 0
+Ks 0.1 0.1 0.1
+Ns 64
+)");
+        writeText(meshPath, R"(mtllib multi.mtl
+v 0 0 0
+v 1 0 0
+v 1 1 0
+v 0 1 0
+vt 0 0
+vt 1 0
+vt 1 1
+vt 0 1
+vn 0 0 1
+usemtl Red
+f 1/1/1 2/2/1 3/3/1
+usemtl Green
+f 1/1/1 3/3/1 4/4/1
+)");
+
+        const auto sync = project.synchronizeProjectFiles(true);
+        const auto* asset = project.assets().findByPath("Content/Meshes/multi.obj");
+        require(sync.succeeded() && asset != nullptr, "Multi-material OBJ must be registered as a Mesh asset.");
+        const lumin::project::AssetId assetId = asset->id;
+        const auto actors = project.createActorsFromMesh(assetId);
+        require(actors.size() == 2 && level.actorCount() == 2,
+                "Each distinct OBJ material must create one persistent Actor.");
+        const lumin::scene::Actor* red = level.actor(actors[0]);
+        const lumin::scene::Actor* green = level.actor(actors[1]);
+        require(red != nullptr && green != nullptr && red->modelHandle().isValid() && green->modelHandle().isValid() &&
+                    level.model(red->modelHandle()).mesh != level.model(green->modelHandle()).mesh,
+                "OBJ material partitions must use independent runtime meshes.");
+        require(red->material().surfaceModel == lumin::scene::SurfaceModel::BlinnPhong &&
+                    red->material().albedo == glm::vec3(1.0f, 0.0f, 0.0f) &&
+                    green->material().albedo == glm::vec3(0.0f, 1.0f, 0.0f),
+                "MTL diffuse colors and surface model must be imported for every partition.");
+
+        require(project.save(error), error.c_str());
+        nlohmann::json sceneDocument;
+        {
+            std::ifstream stream(project.rootDirectory() / "Scenes/Main.lumin.scene", std::ios::binary);
+            stream >> sceneDocument;
+        }
+        require(sceneDocument["actors"].size() == 2 && sceneDocument["actors"][0].value("meshPart", "") == "Red" &&
+                    sceneDocument["actors"][1].value("meshPart", "") == "Green",
+                "Scene serialization must persist stable OBJ material partition names.");
+
+        const auto projectFile = project.projectFile();
+        project.close();
+        require(project.open(projectFile, error), error.c_str());
+        require(level.actorCount() == 2, "Reopening a project must restore all OBJ material partitions.");
+        require(!project.removeAsset(assetId, error) && !error.empty(),
+                "Any referenced OBJ partition must protect the source asset from deletion.");
     }
 
     void testFilesystemAssetIdentityAndMigration() {
@@ -350,11 +422,40 @@ namespace {
                 "Project logic tick rates above the supported range must clamp to the maximum.");
     }
 
+    void inspectProject(const std::filesystem::path& projectFile, std::size_t expectedActorCount) {
+        lumin::scene::Level level;
+        lumin::scene::Camera camera;
+        lumin::scripting::ScriptRuntime scripts({.scriptRoot = projectFile.parent_path()});
+        lumin::project::ProjectSession project(level, camera, scripts);
+        std::string error;
+        require(project.open(projectFile, error), error.c_str());
+        require(level.actorCount() == expectedActorCount, "Inspected project has an unexpected Actor count.");
+        require(std::ranges::all_of(level.actorHandles(),
+                                    [&level](lumin::scene::ActorHandle handle) {
+                                        const lumin::scene::Actor* actor = level.actor(handle);
+                                        return actor != nullptr && actor->modelHandle().isValid();
+                                    }),
+                "Every inspected project Actor must own a valid model.");
+        require(project.save(error), error.c_str());
+
+        std::size_t triangleCount = 0;
+        for (const lumin::assets::Mesh& mesh : level.meshes()) {
+            triangleCount += mesh.indices.size() / 3;
+        }
+        std::cout << "Project inspection PASS: actors=" << level.actorCount() << ", meshes=" << level.meshes().size()
+                  << ", triangles=" << triangleCount << ", assets=" << project.assets().assets().size() << '\n';
+    }
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (argc == 4 && std::string_view{argv[1]} == "--inspect-project") {
+            inspectProject(argv[2], static_cast<std::size_t>(std::stoull(argv[3])));
+            return 0;
+        }
         testProjectAssetAndSceneRoundTrip();
+        testMultiMaterialObjCreatesPersistentActors();
         testFilesystemAssetIdentityAndMigration();
         testViewportPickingUsesNearestHit();
         testNewProjectResetsSceneState();

@@ -35,7 +35,13 @@ Texture 和 Lua Script 可位于项目内任意目录；引擎发现可读文件
 
 被当前场景模型、材质或脚本组件引用的资源不能删除。已绑定脚本必须先从 Actor 移除才能重命名，以免热重载源路径
 失效。模型资源可从 `Content Browser` 双击或拖到 Viewport 创建 Actor，纹理可拖到材质的 base color、normal 和
-roughness 槽。三张贴图全部就绪前材质使用无纹理 fallback，避免编辑中的部分纹理集触发渲染失败。
+roughness 槽。缺失的 base color、normal 或 roughness 图像分别使用白色、平坦法线或白色粗糙度 fallback，因而
+只设置部分纹理也能参与渲染。
+
+OBJ 加载会读取 MTL，并按 `usemtl` 材质名稳定聚合网格。单材质 OBJ 创建一个 Actor；多材质 OBJ 会为每个材质分区
+创建一个 Actor，并导入 `Kd`、`Ks`、`Ns`、`map_Kd`、`norm` 和 `map_Pr`。场景通过 `mesh` 资源 ID 与
+`meshPart` 材质名共同引用分区，保存、重开和源文件重命名后仍能恢复正确几何。旧场景未包含 `meshPart` 时继续加载
+资源的首个分区。
 
 ## Actor 与脚本
 

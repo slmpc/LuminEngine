@@ -294,6 +294,43 @@ namespace lumin::project {
             return material;
         }
 
+        scene::Material importedMaterial(const assets::ObjMaterial& source, const std::filesystem::path& root,
+                                         std::vector<std::string>& diagnostics) {
+            scene::Material material;
+            material.albedo = source.diffuseColor;
+            material.surfaceModel = scene::SurfaceModel::BlinnPhong;
+            material.blinnPhong.specularColor = source.specularColor;
+            material.blinnPhong.shininess = source.shininess;
+
+            const auto validatedTexture = [&root, &diagnostics,
+                                           &source](const std::filesystem::path& texture) -> std::filesystem::path {
+                if (texture.empty()) {
+                    return {};
+                }
+                std::error_code error;
+                const bool usable = std::filesystem::is_regular_file(texture, error) && !error &&
+                                    existingPathInside(root, texture) &&
+                                    assetTypeForPath(texture).value_or(AssetType::Mesh) == AssetType::Texture;
+                if (!usable) {
+                    diagnostics.push_back("OBJ material '" + source.name + "' references unavailable texture '" +
+                                          texture.generic_string() + "'.");
+                    return {};
+                }
+                return texture;
+            };
+
+            scene::PbrTextureSet textures{
+                .baseColor = validatedTexture(source.diffuseTexture),
+                .normal = validatedTexture(source.normalTexture),
+                .roughness = validatedTexture(source.roughnessTexture),
+                .flipNormalY = false,
+            };
+            if (!textures.empty()) {
+                material.textures = std::move(textures);
+            }
+            return material;
+        }
+
         Json registryJson(const AssetRegistry& registry) {
             Json assets = Json::array();
             for (const AssetRecord& asset : registry.assets()) {
@@ -585,11 +622,19 @@ namespace lumin::project {
                     transform.scale = readVector(transformJson->value("scale", Json{}), transform.scale);
                 }
                 actor->setTransform(transform);
-                actor->setMaterial(readMaterial(actorJson.value("material", Json::object()), root_));
+                const auto materialJson = actorJson.find("material");
+                const bool hasSerializedMaterial = materialJson != actorJson.end() && materialJson->is_object();
+                if (hasSerializedMaterial) {
+                    actor->setMaterial(readMaterial(*materialJson, root_));
+                }
                 const AssetId meshAsset{actorJson.value("mesh", std::string{})};
                 if (meshAsset.isValid()) {
-                    if (const auto mesh = meshForAsset(meshAsset); mesh.has_value()) {
-                        actor->attachModel(*mesh, actor->material());
+                    const std::string meshPart = actorJson.value("meshPart", std::string{});
+                    if (const LoadedMeshPart* loaded = meshPartForAsset(meshAsset, meshPart); loaded != nullptr) {
+                        if (!hasSerializedMaterial) {
+                            actor->setMaterial(loaded->material);
+                        }
+                        actor->attachModel(loaded->mesh, actor->material());
                     } else {
                         diagnostics_.push_back("Missing mesh for Actor '" + actor->name() + "'.");
                     }
@@ -644,9 +689,10 @@ namespace lumin::project {
                              {"scale", vectorJson(transform.scale)}}},
                            {"material", materialJson(actor->material(), root_)}};
             if (actor->modelHandle().isValid()) {
-                if (const auto meshAsset = assetForMesh(level_.model(actor->modelHandle()).mesh);
-                    meshAsset.has_value()) {
-                    actorJson["mesh"] = meshAsset->value;
+                if (const auto meshReference = meshReferenceFor(level_.model(actor->modelHandle()).mesh);
+                    meshReference.has_value()) {
+                    actorJson["mesh"] = meshReference->asset.value;
+                    actorJson["meshPart"] = meshReference->part;
                 }
             }
             Json scriptArray = Json::array();
@@ -1006,7 +1052,9 @@ namespace lumin::project {
             if (record->type == AssetType::Mesh) {
                 if (const auto iterator = loadedMeshes_.find(asset.value); iterator != loadedMeshes_.end()) {
                     for (const scene::ModelHandle model : level_.modelHandles()) {
-                        if (level_.model(model).mesh == iterator->second) {
+                        if (std::ranges::any_of(iterator->second, [&](const LoadedMeshPart& part) {
+                                return level_.model(model).mesh == part.mesh;
+                            })) {
                             throw std::runtime_error("Asset is referenced by the current scene.");
                         }
                     }
@@ -1047,49 +1095,105 @@ namespace lumin::project {
         }
     }
 
+    std::vector<scene::ActorHandle> ProjectSession::createActorsFromMesh(const AssetId& asset,
+                                                                         scene::Transform transform) {
+        std::vector<scene::ActorHandle> actors;
+        const AssetRecord* record = assets_.find(asset);
+        const std::vector<LoadedMeshPart>* parts = meshPartsForAsset(asset);
+        if (record == nullptr || parts == nullptr) {
+            return actors;
+        }
+        actors.reserve(parts->size());
+        for (const LoadedMeshPart& part : *parts) {
+            const scene::ActorHandle handle = level_.spawnActor();
+            scene::Actor* actor = level_.actor(handle);
+            actor->setName(parts->size() == 1 ? record->displayName : record->displayName + " / " + part.name);
+            actor->setPersistentId(generateAssetId().value);
+            actor->setTransform(transform);
+            actor->setMaterial(part.material);
+            actor->attachModel(part.mesh, part.material);
+            actors.push_back(handle);
+        }
+        dirty_ = true;
+        return actors;
+    }
+
     std::optional<scene::ActorHandle> ProjectSession::createActorFromMesh(const AssetId& asset,
                                                                           scene::Transform transform) {
-        const AssetRecord* record = assets_.find(asset);
-        const auto mesh = meshForAsset(asset);
-        if (record == nullptr || !mesh.has_value()) {
-            return std::nullopt;
+        const std::vector<scene::ActorHandle> actors = createActorsFromMesh(asset, transform);
+        return actors.empty() ? std::nullopt : std::optional{actors.front()};
+    }
+
+    const std::vector<ProjectSession::LoadedMeshPart>* ProjectSession::meshPartsForAsset(const AssetId& asset) {
+        if (auto iterator = loadedMeshes_.find(asset.value); iterator != loadedMeshes_.end()) {
+            const bool ready =
+                !iterator->second.empty() && std::ranges::all_of(iterator->second, [this](const LoadedMeshPart& part) {
+                    return level_.isMeshAlive(part.mesh);
+                });
+            if (ready) {
+                return &iterator->second;
+            }
+            loadedMeshes_.erase(iterator);
         }
-        const scene::ActorHandle handle = level_.spawnActor();
-        scene::Actor* actor = level_.actor(handle);
-        actor->setName(record->displayName);
-        actor->setPersistentId(generateAssetId().value);
-        actor->setTransform(transform);
-        actor->attachModel(*mesh);
-        dirty_ = true;
-        return handle;
+
+        const AssetRecord* record = assets_.find(asset);
+        if (record == nullptr || !record->available || record->type != AssetType::Mesh) {
+            return nullptr;
+        }
+
+        std::vector<LoadedMeshPart> loaded;
+        try {
+            assets::ObjModel model = assets::ObjLoader::loadModel(root_ / record->relativePath);
+            loaded.reserve(model.parts.size());
+            for (assets::ObjMeshPart& sourcePart : model.parts) {
+                scene::Material material = importedMaterial(sourcePart.material, root_, diagnostics_);
+                const scene::MeshHandle mesh = level_.addMesh(std::move(sourcePart.mesh));
+                loaded.push_back({std::move(sourcePart.name), mesh, std::move(material)});
+            }
+        } catch (const std::exception& exception) {
+            // 部分注册失败时必须撤销已加入 Level 的 Mesh，避免无 Actor 引用的资源泄漏到当前会话。
+            for (const LoadedMeshPart& part : loaded) {
+                static_cast<void>(level_.removeMesh(part.mesh));
+            }
+            diagnostics_.push_back(exception.what());
+            return nullptr;
+        }
+
+        auto [iterator, inserted] = loadedMeshes_.emplace(asset.value, std::move(loaded));
+        return inserted && !iterator->second.empty() ? &iterator->second : nullptr;
+    }
+
+    const ProjectSession::LoadedMeshPart* ProjectSession::meshPartForAsset(const AssetId& asset,
+                                                                           std::string_view part) {
+        const std::vector<LoadedMeshPart>* parts = meshPartsForAsset(asset);
+        if (parts == nullptr || parts->empty()) {
+            return nullptr;
+        }
+        if (part.empty()) {
+            return &parts->front();
+        }
+        const auto iterator = std::ranges::find(*parts, part, &LoadedMeshPart::name);
+        return iterator == parts->end() ? nullptr : &*iterator;
     }
 
     std::optional<scene::MeshHandle> ProjectSession::meshForAsset(const AssetId& asset) {
-        if (const auto iterator = loadedMeshes_.find(asset.value);
-            iterator != loadedMeshes_.end() && level_.isMeshAlive(iterator->second)) {
-            return iterator->second;
-        }
-        const AssetRecord* record = assets_.find(asset);
-        if (record == nullptr || !record->available || record->type != AssetType::Mesh) {
-            return std::nullopt;
-        }
-        try {
-            const scene::MeshHandle mesh = level_.addMesh(assets::ObjLoader::load(root_ / record->relativePath));
-            loadedMeshes_[asset.value] = mesh;
-            return mesh;
-        } catch (const std::exception& exception) {
-            diagnostics_.push_back(exception.what());
-            return std::nullopt;
-        }
+        const LoadedMeshPart* part = meshPartForAsset(asset, {});
+        return part == nullptr ? std::nullopt : std::optional{part->mesh};
     }
 
-    std::optional<AssetId> ProjectSession::assetForMesh(scene::MeshHandle mesh) const {
-        for (const auto& [id, handle] : loadedMeshes_) {
-            if (handle == mesh) {
-                return AssetId{id};
+    std::optional<ProjectSession::MeshAssetReference> ProjectSession::meshReferenceFor(scene::MeshHandle mesh) const {
+        for (const auto& [id, parts] : loadedMeshes_) {
+            const auto part = std::ranges::find(parts, mesh, &LoadedMeshPart::mesh);
+            if (part != parts.end()) {
+                return MeshAssetReference{AssetId{id}, part->name};
             }
         }
         return std::nullopt;
+    }
+
+    std::optional<AssetId> ProjectSession::assetForMesh(scene::MeshHandle mesh) const {
+        const auto reference = meshReferenceFor(mesh);
+        return reference.has_value() ? std::optional{reference->asset} : std::nullopt;
     }
 
     void ProjectSession::setSettings(ProjectSettings settings) noexcept {

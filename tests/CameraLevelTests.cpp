@@ -336,10 +336,10 @@ namespace {
         const lumin::render::ModelBatch partialTextureBatch =
             lumin::render::ModelRenderer::buildBatch(*partialTextureWorld);
         require(partialTextureBatch.objects.size() == 1 &&
-                    nearlyEqual(partialTextureBatch.objects.front().materialParameters.z, 0.0f) &&
-                    partialTextureBatch.materials.front().metadata.y == 0U &&
-                    partialTextureBatch.materials.front().metadata.z == 0U,
-                "Incomplete texture sets must use the fallback descriptor until all images are assigned.");
+                    nearlyEqual(partialTextureBatch.objects.front().materialParameters.z, 1.0f) &&
+                    partialTextureBatch.materials.front().metadata.y == 1U &&
+                    partialTextureBatch.materials.front().metadata.z == 1U,
+                "Partial texture sets must receive a descriptor while missing images use per-channel fallbacks.");
     }
 
     struct ActorCounters {

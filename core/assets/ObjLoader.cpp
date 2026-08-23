@@ -4,8 +4,13 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <filesystem>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <utility>
 
 #include <glm/geometric.hpp>
 #include <tiny_obj_loader.h>
@@ -181,13 +186,116 @@ namespace lumin::assets {
             }
         }
 
+        struct WorkingPart {
+            ObjMeshPart part;
+            std::vector<int> sourceVertexIndices;
+            std::vector<bool> missingTexcoordVertices;
+            bool missingNormals = false;
+            bool missingTexcoords = false;
+        };
+
+        std::filesystem::path resolveTexturePath(const std::filesystem::path& objectPath, std::string textureName) {
+            if (textureName.empty()) {
+                return {};
+            }
+            // MTL exporters often write Windows separators even when the asset is consumed on another platform.
+            std::ranges::replace(textureName, '\\', '/');
+            const std::filesystem::path relative = std::filesystem::path{textureName}.lexically_normal();
+            if (relative.empty() || relative.is_absolute()) {
+                return {};
+            }
+            return (objectPath.parent_path() / relative).lexically_normal();
+        }
+
+        ObjMaterial importMaterial(const tinyobj::material_t& source, const std::filesystem::path& objectPath) {
+            return ObjMaterial{
+                .name = source.name,
+                .diffuseColor = {source.diffuse[0], source.diffuse[1], source.diffuse[2]},
+                .specularColor = {source.specular[0], source.specular[1], source.specular[2]},
+                .shininess = std::max(source.shininess, 0.0f),
+                .diffuseTexture = resolveTexturePath(objectPath, source.diffuse_texname),
+                .normalTexture = resolveTexturePath(objectPath, source.normal_texname),
+                .roughnessTexture = resolveTexturePath(objectPath, source.roughness_texname),
+            };
+        }
+
+        Vertex readVertex(const tinyobj::attrib_t& attributes, const tinyobj::index_t& index, bool& missingNormal,
+                          bool& missingTexcoord) {
+            Vertex vertex;
+            if (index.vertex_index < 0 ||
+                static_cast<std::size_t>(3 * index.vertex_index + 2) >= attributes.vertices.size()) {
+                throw std::runtime_error("OBJ face references an invalid position index.");
+            }
+            const std::size_t positionBase = static_cast<std::size_t>(3 * index.vertex_index);
+            vertex.position = {
+                attributes.vertices[positionBase + 0],
+                attributes.vertices[positionBase + 1],
+                attributes.vertices[positionBase + 2],
+            };
+
+            if (index.normal_index >= 0 &&
+                static_cast<std::size_t>(3 * index.normal_index + 2) < attributes.normals.size()) {
+                const std::size_t normalBase = static_cast<std::size_t>(3 * index.normal_index);
+                vertex.normal = {
+                    attributes.normals[normalBase + 0],
+                    attributes.normals[normalBase + 1],
+                    attributes.normals[normalBase + 2],
+                };
+            } else {
+                missingNormal = true;
+            }
+
+            if (index.texcoord_index >= 0 &&
+                static_cast<std::size_t>(2 * index.texcoord_index + 1) < attributes.texcoords.size()) {
+                const std::size_t texcoordBase = static_cast<std::size_t>(2 * index.texcoord_index);
+                vertex.texCoord = {
+                    attributes.texcoords[texcoordBase + 0],
+                    1.0f - attributes.texcoords[texcoordBase + 1],
+                };
+            } else {
+                missingTexcoord = true;
+            }
+            return vertex;
+        }
+
+        void appendTriangle(WorkingPart& destination, const tinyobj::attrib_t& attributes,
+                            const tinyobj::mesh_t& sourceMesh, std::size_t indexOffset) {
+            for (std::size_t vertexInFace = 0; vertexInFace < 3; ++vertexInFace) {
+                const tinyobj::index_t index = sourceMesh.indices[indexOffset + vertexInFace];
+                bool missingNormal = false;
+                bool missingTexcoord = false;
+                Vertex vertex = readVertex(attributes, index, missingNormal, missingTexcoord);
+
+                destination.part.mesh.indices.push_back(
+                    static_cast<std::uint32_t>(destination.part.mesh.vertices.size()));
+                destination.sourceVertexIndices.push_back(index.vertex_index);
+                destination.missingTexcoordVertices.push_back(missingTexcoord);
+                destination.part.mesh.vertices.push_back(std::move(vertex));
+                destination.missingNormals |= missingNormal;
+                destination.missingTexcoords |= missingTexcoord;
+            }
+        }
+
+        void finalizePart(WorkingPart& working, std::size_t sourceVertexCount) {
+            if (working.missingNormals) {
+                generateMissingNormals(working.part.mesh, working.sourceVertexIndices, sourceVertexCount);
+            }
+            if (working.missingTexcoords) {
+                generateMissingTexcoords(working.part.mesh, working.missingTexcoordVertices);
+            }
+        }
+
     } // namespace
 
     bool Mesh::empty() const noexcept {
         return vertices.empty() || indices.empty();
     }
 
-    Mesh ObjLoader::load(const std::filesystem::path& path) {
+    bool ObjModel::empty() const noexcept {
+        return parts.empty();
+    }
+
+    ObjModel ObjLoader::loadModel(const std::filesystem::path& path) {
         tinyobj::ObjReaderConfig config;
         config.triangulate = true;
 
@@ -210,14 +318,12 @@ namespace lumin::assets {
 
         const tinyobj::attrib_t& attributes = reader.GetAttrib();
         const std::vector<tinyobj::shape_t>& shapes = reader.GetShapes();
+        const std::vector<tinyobj::material_t>& materials = reader.GetMaterials();
 
-        Mesh mesh;
-        mesh.name = path.stem().string();
-
-        bool missingNormals = false;
-        bool missingTexcoords = false;
-        std::vector<int> sourceVertexIndices;
-        std::vector<bool> missingTexcoordVertices;
+        ObjModel model;
+        model.name = path.stem().string();
+        std::vector<WorkingPart> workingParts;
+        std::unordered_map<int, std::size_t> partByMaterial;
 
         for (const tinyobj::shape_t& shape : shapes) {
             std::size_t indexOffset = 0;
@@ -230,63 +336,58 @@ namespace lumin::assets {
                     continue;
                 }
 
-                for (int vertexInFace = 0; vertexInFace < 3; ++vertexInFace) {
-                    const tinyobj::index_t index =
-                        shape.mesh.indices[indexOffset + static_cast<std::size_t>(vertexInFace)];
-
-                    Vertex vertex;
-                    if (index.vertex_index >= 0) {
-                        const std::size_t base = static_cast<std::size_t>(3 * index.vertex_index);
-                        vertex.position = {
-                            attributes.vertices[base + 0],
-                            attributes.vertices[base + 1],
-                            attributes.vertices[base + 2],
-                        };
+                const int materialId = face < shape.mesh.material_ids.size() ? shape.mesh.material_ids[face] : -1;
+                auto [partIterator, inserted] = partByMaterial.try_emplace(materialId, workingParts.size());
+                if (inserted) {
+                    ObjMaterial material;
+                    if (materialId >= 0 && static_cast<std::size_t>(materialId) < materials.size()) {
+                        material = importMaterial(materials[static_cast<std::size_t>(materialId)], path);
                     }
-
-                    if (index.normal_index >= 0) {
-                        const std::size_t base = static_cast<std::size_t>(3 * index.normal_index);
-                        vertex.normal = {
-                            attributes.normals[base + 0],
-                            attributes.normals[base + 1],
-                            attributes.normals[base + 2],
-                        };
-                    } else {
-                        missingNormals = true;
+                    if (material.name.empty()) {
+                        material.name = materialId < 0 ? "default" : "material_" + std::to_string(materialId);
                     }
-
-                    if (index.texcoord_index >= 0) {
-                        const std::size_t base = static_cast<std::size_t>(2 * index.texcoord_index);
-                        vertex.texCoord = {
-                            attributes.texcoords[base + 0],
-                            1.0f - attributes.texcoords[base + 1],
-                        };
-                    } else {
-                        missingTexcoords = true;
-                    }
-
-                    mesh.indices.push_back(static_cast<std::uint32_t>(mesh.vertices.size()));
-                    sourceVertexIndices.push_back(index.vertex_index);
-                    missingTexcoordVertices.push_back(index.texcoord_index < 0);
-                    mesh.vertices.push_back(vertex);
+                    WorkingPart working;
+                    working.part.name = material.name;
+                    working.part.mesh.name = model.name + "/" + material.name;
+                    working.part.material = std::move(material);
+                    workingParts.push_back(std::move(working));
                 }
-
-                indexOffset += 3;
+                appendTriangle(workingParts[partIterator->second], attributes, shape.mesh, indexOffset);
+                indexOffset += static_cast<std::size_t>(vertexCount);
             }
         }
 
-        if (mesh.empty()) {
+        for (WorkingPart& working : workingParts) {
+            if (working.part.mesh.empty()) {
+                continue;
+            }
+            finalizePart(working, attributes.vertices.size() / 3);
+            model.parts.push_back(std::move(working.part));
+        }
+
+        if (model.empty()) {
             throw std::runtime_error("OBJ file did not contain any triangle geometry: " + path.string());
         }
 
-        if (missingNormals) {
-            generateMissingNormals(mesh, sourceVertexIndices, attributes.vertices.size() / 3);
-        }
+        return model;
+    }
 
-        if (missingTexcoords) {
-            generateMissingTexcoords(mesh, missingTexcoordVertices);
+    Mesh ObjLoader::load(const std::filesystem::path& path) {
+        ObjModel model = loadModel(path);
+        Mesh mesh;
+        mesh.name = model.name;
+        for (ObjMeshPart& part : model.parts) {
+            if (part.mesh.vertices.size() > std::numeric_limits<std::uint32_t>::max() - mesh.vertices.size()) {
+                throw std::length_error("OBJ contains too many vertices for 32-bit indices: " + path.string());
+            }
+            const std::uint32_t vertexOffset = static_cast<std::uint32_t>(mesh.vertices.size());
+            mesh.vertices.insert(mesh.vertices.end(), std::make_move_iterator(part.mesh.vertices.begin()),
+                                 std::make_move_iterator(part.mesh.vertices.end()));
+            mesh.indices.reserve(mesh.indices.size() + part.mesh.indices.size());
+            for (const std::uint32_t index : part.mesh.indices) {
+                mesh.indices.push_back(vertexOffset + index);
+            }
         }
-
         return mesh;
     }
 

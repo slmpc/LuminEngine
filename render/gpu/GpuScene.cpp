@@ -195,7 +195,7 @@ namespace lumin::render::gpu {
                                     : 48.0f;
         const float textureScale =
             std::isfinite(material.textureScale) ? std::max(std::abs(material.textureScale), 0.0001f) : 1.0f;
-        const bool hasTextures = material.textures.has_value() && material.textures->complete();
+        const bool hasTextures = material.textures.has_value() && !material.textures->empty();
         const float normalYSign = hasTextures && material.textures->flipNormalY ? -1.0f : 1.0f;
 
         return GpuMaterialData{
