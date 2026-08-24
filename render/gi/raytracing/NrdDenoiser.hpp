@@ -180,6 +180,9 @@ namespace lumin::render::gi {
 
     namespace detail {
 
+        /** 构造保留直接光硬阴影边界的 REBLUR 配置。 */
+        [[nodiscard]] nrd::ReblurSettings makeDirectLightingReblurSettings() noexcept;
+
         enum class NrdPoolKind : std::uint8_t {
             Permanent,
             Transient,

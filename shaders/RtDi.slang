@@ -168,10 +168,12 @@ void primaryClosestHitMain(inout PrimaryPayload payload, BuiltInTriangleIntersec
     uint lightIndex = luminSampleLightIndex(luminRandom01(lightSeed), lightCount);
     LuminLightSample lightSample = luminEvaluatePhysicalLight(
         lights[lightIndex], hitPosition, frame.traceParameters.x, frame.traceParameters.y);
+    float noL = dot(normal, lightSample.direction);
     float visibility = lightSample.castsShadows == 0u ? 1.0 : 0.0;
-    float shadowHitDistance = lightSample.valid != 0u ? lightSample.shadowTMax : frame.traceParameters.y;
+    // NRD 把零命中距离视为当前波瓣没有有效样本；背光面不能伪装成一次远距离未遮挡命中。
+    float shadowHitDistance = lightSample.valid != 0u && noL > 0.0 ? lightSample.shadowTMax : 0.0;
     if (lightSample.valid != 0u && lightSample.castsShadows != 0u && frame.traceParameters.z >= 0.5 &&
-        dot(normal, lightSample.direction) > 0.0) {
+        noL > 0.0) {
         RayDesc shadowRay;
         shadowRay.Origin = hitPosition + normal * frame.traceParameters.x;
         shadowRay.Direction = lightSample.direction;

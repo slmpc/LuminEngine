@@ -275,6 +275,15 @@ namespace lumin::render::gi {
 
     namespace detail {
 
+        nrd::ReblurSettings makeDirectLightingReblurSettings() noexcept {
+            nrd::ReblurSettings settings{};
+            // RTDI 每像素都提供完整的 diffuse/specular 样本；预滤波会把确定性的硬阴影扩成宽过渡带。
+            settings.diffusePrepassBlurRadius = 0.0F;
+            settings.minHitDistanceWeight = 0.01F;
+            settings.usePrepassOnlyForSpecularMotionEstimation = true;
+            return settings;
+        }
+
         nvrhi::Format nrdFormatToNvrhi(nrd::Format format) {
             switch (format) {
             case nrd::Format::R8_UNORM:

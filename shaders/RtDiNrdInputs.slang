@@ -58,10 +58,14 @@ void prepareMain(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float primaryViewZ = max(viewZTexture.Load(int3(pixel, 0)), 0.0);
     float4 rawDiffuse = rawDiffuseRadianceHitT.Load(int3(pixel, 0));
     float4 rawSpecular = rawSpecularRadianceHitT.Load(int3(pixel, 0));
-    float diffuseNormHitDistance = REBLUR_FrontEnd_GetNormHitDist(
-        max(rawDiffuse.a, 0.0), primaryViewZ, float3(3.0, 0.1, 20.0), physicalMaterial.roughness);
-    float specularNormHitDistance = REBLUR_FrontEnd_GetNormHitDist(
-        max(rawSpecular.a, 0.0), primaryViewZ, float3(3.0, 0.1, 20.0), physicalMaterial.roughness);
+    float diffuseNormHitDistance = rawDiffuse.a > 0.0
+        ? REBLUR_FrontEnd_GetNormHitDist(
+              rawDiffuse.a, primaryViewZ, float3(3.0, 0.1, 20.0), physicalMaterial.roughness)
+        : 0.0;
+    float specularNormHitDistance = rawSpecular.a > 0.0
+        ? REBLUR_FrontEnd_GetNormHitDist(
+              rawSpecular.a, primaryViewZ, float3(3.0, 0.1, 20.0), physicalMaterial.roughness)
+        : 0.0;
     float3 demodulatedDiffuse = max(rawDiffuse.rgb, 0.0) / max(diffuseMaterialFactor, float3(1.0e-4));
     float3 demodulatedSpecular = max(rawSpecular.rgb, 0.0) / max(specularMaterialFactor, float3(1.0e-4));
 

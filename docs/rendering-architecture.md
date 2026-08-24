@@ -221,7 +221,9 @@ sampling，镜面
 Cook-Torrance 的低粗糙度掠射峰值在数学上可能超过 half 范围；BRDF 计算保持不截断，仅在 FP16 scene-radiance
 纹理写入边界限制到 `65504`，防止 `Inf/NaN` 污染后续 NRD、TAA 与 tone mapping。
 
-Ray Tracing 模式可分别关闭 SHARC 与 NRD。运行时关闭 SHARC 后不录制 cache update/resolve/statistics 或 indirect
+Ray Tracing 模式可分别关闭 SHARC 与 NRD。Direct NRD 使用保边 REBLUR 配置：完整的 RTDI 波瓣不执行 diffuse
+辐亮度预滤波，specular 预滤波只用于命中距离跟踪，并以较低的命中距离权重下限拒绝硬阴影两侧的互相污染；SHARC
+indirect 仍使用默认 REBLUR 配置。运行时关闭 SHARC 后不录制 cache update/resolve/statistics 或 indirect
 pass，间接光清零，RTDI、天空和可选的 Direct NRD 继续工作；编译时关闭 SHARC 或设备缺少 SHARC storage 能力时行为
 相同。关闭 NRD 后，RTDI 直接使用 raw combined radiance，SHARC 的原始 diffuse/specular radiance-hit-distance 则直接
 交给 GI composite。开启 NRD 时，RTDI 与 SHARC indirect 使用互不共享历史和输出资源的两套 REBLUR 实例。

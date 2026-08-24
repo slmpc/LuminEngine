@@ -257,6 +257,7 @@ namespace lumin::render {
                 .device = context_.rhiDevice(),
                 .extent = renderExtent_,
                 .frameSlotCount = frameSlotCount,
+                .reblurSettings = gi::detail::makeDirectLightingReblurSettings(),
             });
             if (runtime->directNrdInputs->formats().normalRoughness !=
                 runtime->directNrd->expectedNormalRoughnessFormat()) {

@@ -1,3 +1,4 @@
+#include "render/gi/raytracing/NrdDenoiser.hpp"
 #include "render/gi/raytracing/RtDiNrdInputs.hpp"
 
 #include <cmath>
@@ -131,6 +132,14 @@ namespace {
             "RTDI preparation must reject empty output textures.");
     }
 
+    void testDirectLightingReblurSettingsPreserveShadowEdges() {
+        const nrd::ReblurSettings settings = lumin::render::gi::detail::makeDirectLightingReblurSettings();
+        require(settings.diffusePrepassBlurRadius == 0.0F &&
+                    settings.specularPrepassBlurRadius == nrd::ReblurSettings{}.specularPrepassBlurRadius &&
+                    settings.minHitDistanceWeight == 0.01F && settings.usePrepassOnlyForSpecularMotionEstimation,
+                "Direct-lighting REBLUR must not prefilter radiance across deterministic shadow boundaries.");
+    }
+
     void testConstantsAndDispatch() {
         const lumin::render::gi::RtDiNrdFrameParameters parameters{
             .frameSlot = lumin::render::core::FrameSlotIndex{1},
@@ -228,13 +237,18 @@ namespace {
     }
 
     void testShaderBuildsReblurSignals() {
-        const std::filesystem::path shaderPath =
-            std::filesystem::path(__FILE__).parent_path().parent_path() / "shaders/RtDiNrdInputs.slang";
-        std::ifstream shader(shaderPath, std::ios::binary);
-        const std::string source{std::istreambuf_iterator<char>(shader), std::istreambuf_iterator<char>()};
+        const std::filesystem::path shaderRoot =
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "shaders";
+        const auto readShader = [](const std::filesystem::path& path) {
+            std::ifstream shader(path, std::ios::binary);
+            return std::string{std::istreambuf_iterator<char>(shader), std::istreambuf_iterator<char>()};
+        };
+        const std::string source = readShader(shaderRoot / "RtDiNrdInputs.slang");
         require(source.find("#include \"NRD.hlsli\"") != std::string::npos &&
                     source.find("NRD_MaterialFactors") != std::string::npos &&
                     source.find("REBLUR_FrontEnd_GetNormHitDist") != std::string::npos &&
+                    source.find("rawDiffuse.a > 0.0") != std::string::npos &&
+                    source.find("rawSpecular.a > 0.0") != std::string::npos &&
                     source.find("REBLUR_FrontEnd_PackRadianceAndNormHitDist") != std::string::npos &&
                     source.find("rawDiffuse.rgb") != std::string::npos &&
                     source.find("rawSpecular.rgb") != std::string::npos &&
@@ -242,6 +256,12 @@ namespace {
                         std::string::npos &&
                     source.find("denoiserViewZ[pixel] = frame.renderParameters.z") != std::string::npos,
                 "RTDI preparation must demodulate both lobes and publish complete REBLUR auxiliary signals.");
+
+        const std::string rtDiSource = readShader(shaderRoot / "RtDi.slang");
+        require(rtDiSource.find("lightSample.valid != 0u && noL > 0.0 ? lightSample.shadowTMax : 0.0") !=
+                    std::string::npos &&
+                    rtDiSource.find("dot(normal, lightSample.direction) > 0.0") == std::string::npos,
+                "RTDI must encode back-facing or invalid direct-light samples with zero hit distance.");
     }
 
 } // namespace
@@ -249,6 +269,7 @@ namespace {
 int main() {
     try {
         testSignalFormatsAndTextureContract();
+        testDirectLightingReblurSettingsPreserveShadowEdges();
         testConstantsAndDispatch();
         testBindingAbiAndValidation();
         testShaderBuildsReblurSignals();

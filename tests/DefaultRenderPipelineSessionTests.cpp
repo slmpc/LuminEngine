@@ -240,6 +240,8 @@ namespace {
         requireAfter(level, "runtime.indirectComposite->record(", position);
         require(level.find("if (runtime.sharcEnabled)") != std::string::npos &&
                     level.find("if (settings.nrdEnabled)") != std::string::npos &&
+                    level.find(".reblurSettings = gi::detail::makeDirectLightingReblurSettings()") !=
+                        std::string::npos &&
                     level.find("return gi::BackendInfo{\"Ray Tracing Direct + NRD\"") != std::string::npos &&
                     level.find("diffuseInput = signals.diffuseRadianceHitDistance") != std::string::npos &&
                     level.find("specularInput = signals.specularRadianceHitDistance") != std::string::npos,
