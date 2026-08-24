@@ -75,27 +75,29 @@ namespace lumin::render::pipelines {
             glm::mat4 projection{1.0f};
             glm::vec2 jitter{0.0f};
             FeatureConfigurationState featureConfiguration;
-            bool usedHybridGlobalIllumination = false;
+            bool usedHybridPath = false;
         };
 
         struct HybridGiState {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-            bool sharcEnabled = true;
             std::unique_ptr<gpu::NvrhiGpuSceneBackend> sceneBackend;
             std::unique_ptr<gpu::GpuSceneResources> sceneResources;
             std::unique_ptr<gpu::GpuSceneUpdatePlanner> scenePlanner;
             std::unique_ptr<gi::RayTracedDirectLightingPass> directLighting;
-            std::unique_ptr<gi::SharcRadianceCache> sharc;
-            std::unique_ptr<gi::SharcIndirectLightingPass> indirectLighting;
-            std::unique_ptr<gi::NrdDenoiser> nrd;
-            std::unique_ptr<gi::GiCompositePass> composite;
             std::unique_ptr<gi::HybridLightingCompositePass> lightingComposite;
             std::array<gi::RayTracedDiFrameResources, frameSlotCount> directLightingFrames{};
             std::optional<gpu::GpuSceneUpdatePlan> pendingScenePlan;
             std::optional<gpu::GpuScenePreparedUpdate> pendingSceneUpdate;
-            std::optional<gi::NrdPreparedFrame> pendingNrdFrame;
             std::optional<core::RenderSequence> pendingSequence;
             std::uint32_t geometryDescriptorCapacity = 0;
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
+            bool sharcEnabled = false;
+            std::unique_ptr<gi::SharcRadianceCache> sharc;
+            std::unique_ptr<gi::SharcIndirectLightingPass> indirectLighting;
+            std::unique_ptr<gi::NrdDenoiser> nrd;
+            std::unique_ptr<gi::GiCompositePass> composite;
+            std::optional<gi::NrdPreparedFrame> pendingNrdFrame;
+#endif
 #endif
         };
 
@@ -221,7 +223,7 @@ namespace lumin::render::pipelines {
         core::RenderSettingsSchemaRegistry settingsSchemas_;
         std::optional<core::RenderSettingsSnapshot> committedSettings_;
         bool hasSubmittedFrame_ = false;
-        bool lastSubmittedFrameUsedHybridGi_ = false;
+        bool lastSubmittedFrameUsedHybridPath_ = false;
         std::uint64_t nextRenderSequence_ = 0;
         core::FrameChangeSet pendingFrameChanges_;
         std::array<bool, frameSlotCount> frameResourcesInitialized_{};

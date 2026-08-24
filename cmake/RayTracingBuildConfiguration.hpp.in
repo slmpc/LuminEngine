@@ -2,6 +2,8 @@
 
 #include "render/platform/vulkan/VulkanRayTracingCapabilities.hpp"
 
+#cmakedefine01 LUMIN_RAY_TRACING_IMPLEMENTATION_AVAILABLE
+
 namespace lumin::render {
 
     /**

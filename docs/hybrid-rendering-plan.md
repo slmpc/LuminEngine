@@ -11,7 +11,7 @@
 5. 使用 compute shader 生成大气 LUT，并以全屏 compute ray marching 计算体积云。
 6. 在统一 Composite 中按深度正确组合 RT direct、SHARC indirect、NRD 输出、大气与体积云。
 7. 支持 RT 的 Hybrid 路径不创建、不录制、不绑定 raster G-buffer、CSM 或 deferred-lighting pass。
-8. 不支持完整 RT/SHARC/NRD 能力的设备保留现有 raster deferred fallback。
+8. 不支持 raw RT pipeline 的设备保留现有 raster deferred fallback；只缺少 SHARC/NRD 时降级为 RTDI-only。
 
 本文是后续实现的唯一执行计划。现有 `docs/rendering-overhaul-plan.md` 继续作为已完成架构迁移的历史记录，
 不再承担本轮 pass、资源 ABI 和验收状态的定义。
@@ -134,12 +134,12 @@ shaders/
 | Tier | 必要能力 | 运行路径 |
 | --- | --- | --- |
 | `RasterFallback` | Vulkan 1.3 dynamic rendering | G-buffer + CSM + deferred + SSAO/TAA |
-| `HybridRt` | acceleration structure、RT pipeline、BDA、descriptor indexing、SHARC 所需 int64/float16、NRD 所需 compute 能力 | RTDI + SHARC + RT indirect + NRD + atmosphere/cloud compute |
-| `HybridRtDebugRaw` | 与 `HybridRt` 相同 | 跳过 NRD 或 SHARC 的诊断路径，不作为自动选择结果 |
+| `HybridRtDirect` | acceleration structure、RT pipeline、BDA、descriptor indexing | RTDI + atmosphere + TAA |
+| `HybridRtSharc` | `HybridRtDirect` 加 SHARC 所需 int64/float16 与 NRD compute 能力 | RTDI + SHARC indirect + NRD + atmosphere + TAA |
 
-`Auto` 只有在完整 `HybridRt` 能力集合可用时才选择 Hybrid。生产路径不静默拼出“有 RTDI、无 SHARC”或
-“有 SHARC、无 NRD”的半配置；这些组合只用于构建测试和调试。显式请求 Hybrid 但能力不足时记录缺失能力并安全
-回退，不创建任何 RT/SHARC/NRD 资源。
+`Auto` 在 `HybridRtDirect` 能力可用时选择 Hybrid；SHARC 与 NRD 构建边界和 storage 能力同时满足时升级为
+`HybridRtSharc`。缺少 SHARC 时只创建 GPU Scene、RTDI 与 direct-only composite，间接光保持为零；连 raw RT
+能力也不足时才回退 Raster。
 
 ## 6. Hybrid 帧图
 

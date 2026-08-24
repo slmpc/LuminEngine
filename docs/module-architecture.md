@@ -115,6 +115,7 @@ depfile 路径。
 `shader-targets.cmake`。CMake 不解析 JSON，也不维护入口列表；它只 include 生成文件并定义
 `lumin_shader_abi` / `lumin_shaders` 两个 target。`LUMIN_RAY_TRACING`、
 `LUMIN_ENABLE_NRD` 和 `LUMIN_ENABLE_SHARC` 会在生成阶段过滤对应 entry。
+RTDI 与 Hybrid direct-only composite 只受 `LUMIN_RAY_TRACING` 控制，不依赖 SHARC 或 NRD 的编译开关。
 
 `.slang` 源码和其 `import`/`include` 依赖由 `slangc` depfile 在构建阶段跟踪，保存源码不会触发 CMake 重新配置；
 Catalog 头、实现或生成器变化时才重新生成构建描述。生成内容未变化时会保留文件时间戳，

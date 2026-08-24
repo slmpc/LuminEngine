@@ -446,13 +446,9 @@ namespace lumin::render {
         blackboard.set(FrameImportServices{.importer = &importer});
         renderPipeline_->prepareFrame(identity, camera.cutEpoch, changes, frameGraph_, blackboard);
         frameGraph_.execute(FrameGraphContext{&commandList, nullptr, frameIndex});
-        const bool usedHybridGlobalIllumination = blackboard.get<HybridPassData>().globalIlluminationActive;
-        return RecordedFrameState{viewProjection,
-                                  view,
-                                  unjitteredProjection,
-                                  jitter,
-                                  featureConfiguration(settings),
-                                  usedHybridGlobalIllumination};
+        const bool usedHybridPath = blackboard.get<HybridPassData>().active;
+        return RecordedFrameState{viewProjection, view, unjitteredProjection, jitter, featureConfiguration(settings),
+                                  usedHybridPath};
     }
 
 } // namespace lumin::render

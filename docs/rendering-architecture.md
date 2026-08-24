@@ -219,8 +219,9 @@ sampling，镜面
 Cook-Torrance 的低粗糙度掠射峰值在数学上可能超过 half 范围；BRDF 计算保持不截断，仅在 FP16 scene-radiance
 纹理写入边界限制到 `65504`，防止 `Inf/NaN` 污染后续 NRD、TAA 与 tone mapping。
 
-Ray Tracing 模式可分别关闭 SHARC 与 NRD。关闭 SHARC 后不录制 cache update/resolve/statistics 或 indirect pass，间接光
-清零，RTDI 与天空继续工作；关闭 NRD 后，原始 diffuse/specular radiance-hit-distance 直接交给 GI composite。
+Ray Tracing 模式可分别关闭 SHARC 与 NRD。运行时关闭 SHARC 后不录制 cache update/resolve/statistics 或 indirect pass，
+间接光清零，RTDI 与天空继续工作；编译时关闭 SHARC 或设备缺少 SHARC storage 能力时同样保留 raw RTDI runtime，且不创建
+SHARC/NRD 间接光资源。关闭 NRD 后，原始 diffuse/specular radiance-hit-distance 直接交给 GI composite。
 Legacy 模式可分别关闭屏幕空间 AO 与 CSM。AO 后端共享 position/normal 输入与全分辨率输出：SSAO 使用旋转采样核，
 HBAO 对 8 个屏幕方向执行最大地平线搜索，GTAO 对 6 个切片执行双向地平线积分；三者均可调世界空间半径、强度和
 几何偏置。CSM 通过 `splitLambda` 和 `maxDistance` 控制四级联分割。TAA 是两条路径共用的

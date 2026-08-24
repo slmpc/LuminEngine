@@ -98,6 +98,12 @@ lumin_configure_render_library(lumin_render_postfx)
 target_link_libraries(lumin_render_postfx PUBLIC Lumin::RenderCore Lumin::RenderRhi)
 
 set(_lumin_gi_sources gi/legacy/LegacyBackend.cpp)
+if(LUMIN_RAY_TRACING_IMPLEMENTATION_AVAILABLE)
+    list(APPEND _lumin_gi_sources
+        gi/raytracing/HybridLightingComposite.cpp
+        gi/raytracing/RayTracedDirectLighting.cpp
+    )
+endif()
 if(LUMIN_NRD_AVAILABLE)
     list(APPEND _lumin_gi_sources
         gi/raytracing/GiComposite.cpp
@@ -106,8 +112,6 @@ if(LUMIN_NRD_AVAILABLE)
 endif()
 if(LUMIN_SHARC_AVAILABLE)
     list(APPEND _lumin_gi_sources
-        gi/raytracing/HybridLightingComposite.cpp
-        gi/raytracing/RayTracedDirectLighting.cpp
         gi/raytracing/SharcIndirectLighting.cpp
         gi/raytracing/SharcRadianceCache.cpp
     )

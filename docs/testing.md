@@ -61,7 +61,8 @@ cmake --build out/build/sharc-off --target lumin_editor lumin_shader_abi
 cmake --build out/build/nrd-off --target lumin_editor lumin_shader_abi
 ```
 
-三种配置必须分别排除不满足 `requires` 的 shader entries，并能在不引用已关闭 adapter 符号的情况下链接 editor。
+三种配置必须分别排除不满足 `requires` 的 shader entries，并能在不引用已关闭 adapter 符号的情况下链接 editor；
+`sharc-off` 仍必须编译 RTDI 与 Hybrid direct-only composite。
 
 ## 完整验证门槛
 

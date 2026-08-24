@@ -24,14 +24,16 @@
 namespace lumin::render {
     namespace {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-        constexpr float nrdDenoisingRange = 500000.0f;
-
         glm::vec3 normalizedLightDirection(glm::vec3 direction) {
             if (glm::dot(direction, direction) < 1.0e-6f) {
                 direction = glm::vec3{-0.45f, -0.8f, -0.35f};
             }
             return glm::normalize(direction);
         }
+#endif
+
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
+        constexpr float nrdDenoisingRange = 500000.0f;
 
         std::array<float, 16> matrixElements(const glm::mat4& matrix) {
             std::array<float, 16> result{};
@@ -82,7 +84,7 @@ namespace lumin::render {
 
     void pipelines::DefaultRenderPipelineSession::commitGlobalIlluminationFeature(
         const core::RenderFrameIdentity& identity) noexcept {
-#if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
         if (hybridGi_ == nullptr || !hybridGi_->pendingSequence) {
             return;
         }
@@ -90,10 +92,10 @@ namespace lumin::render {
         if (*runtime.pendingSequence != identity.sequence) {
             std::terminate();
         }
-        if (runtime.sharc->hasPendingFrame()) {
+        if (runtime.sharc != nullptr && runtime.sharc->hasPendingFrame()) {
             runtime.sharc->commitSubmittedFrame();
         }
-        if (runtime.indirectLighting->hasPendingFrame()) {
+        if (runtime.indirectLighting != nullptr && runtime.indirectLighting->hasPendingFrame()) {
             runtime.indirectLighting->commitSubmittedFrame();
         }
 #else
@@ -136,7 +138,7 @@ namespace lumin::render {
     }
 
     void pipelines::DefaultRenderPipelineSession::discardGlobalIlluminationFeature() noexcept {
-#if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
         if (hybridGi_ == nullptr) {
             return;
         }
@@ -262,11 +264,16 @@ namespace lumin::render {
         }
         HybridGiState& runtime = *hybridGi_;
         if (runtime.pendingSequence || runtime.pendingScenePlan || runtime.pendingSceneUpdate ||
-            runtime.pendingNrdFrame || runtime.sharc->hasPendingFrame() ||
-            runtime.indirectLighting->hasPendingFrame() || runtime.nrd->hasPendingFrame() ||
             runtime.directLighting->hasPendingFrame()) {
             throw std::logic_error("Hybrid surface already owns an unfinished render frame.");
         }
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
+        if (runtime.pendingNrdFrame || (runtime.sharc != nullptr && runtime.sharc->hasPendingFrame()) ||
+            (runtime.indirectLighting != nullptr && runtime.indirectLighting->hasPendingFrame()) ||
+            (runtime.nrd != nullptr && runtime.nrd->hasPendingFrame())) {
+            throw std::logic_error("Hybrid surface already owns an unfinished indirect-lighting frame.");
+        }
+#endif
         if (!atmosphereData.graphRecord || frameIndex >= atmosphereConsumerBindingSets_.size() ||
             !atmosphereConsumerBindingSets_[frameIndex]) {
             throw std::logic_error("Hybrid surface requires the current atmosphere LUT graph and binding set.");
@@ -510,14 +517,19 @@ namespace lumin::render {
         }
 
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
+        HybridGiState& runtime = *hybridGi_;
+        if (!runtime.pendingSequence || *runtime.pendingSequence != context.identity().sequence ||
+            !runtime.pendingScenePlan || !runtime.pendingSceneUpdate || !runtime.directLighting->hasPendingFrame()) {
+            throw std::logic_error("Hybrid GI requires the current frame's pending surface transaction.");
+        }
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
         HybridPassData& data = context.blackboard().get<HybridPassData>();
         const DirectLightingFeatureSettings& lightingSettings =
             sceneData.settings.get<DirectLightingFeatureSettings>(pipelines::feature_ids::lightingComposite());
-        HybridGiState& runtime = *hybridGi_;
-        if (!runtime.pendingSequence || *runtime.pendingSequence != context.identity().sequence ||
-            !runtime.pendingScenePlan || !runtime.pendingSceneUpdate || !runtime.directLighting->hasPendingFrame() ||
-            runtime.sharc->hasPendingFrame() || runtime.indirectLighting->hasPendingFrame()) {
-            throw std::logic_error("Hybrid GI requires the current frame's pending surface transaction.");
+        if (runtime.pendingNrdFrame || (runtime.sharc != nullptr && runtime.sharc->hasPendingFrame()) ||
+            (runtime.indirectLighting != nullptr && runtime.indirectLighting->hasPendingFrame()) ||
+            (runtime.nrd != nullptr && runtime.nrd->hasPendingFrame())) {
+            throw std::logic_error("Hybrid GI already owns an unfinished indirect-lighting frame.");
         }
         const AtmospherePassData& atmosphereData = context.blackboard().get<AtmospherePassData>();
         const core::RtSurfaceData& surface = context.blackboard().get<core::RtSurfaceData>();
@@ -592,6 +604,10 @@ namespace lumin::render {
                                                     static_cast<float>(context.identity().extent.height)};
         const glm::vec2 effectiveJitterDelta = currentEffectiveJitter - previousEffectiveJitter;
         if (runtime.sharcEnabled) {
+            if (runtime.sharc == nullptr || runtime.indirectLighting == nullptr || runtime.nrd == nullptr ||
+                runtime.composite == nullptr) {
+                throw std::logic_error("Enabled SHARC indirect lighting requires its complete runtime.");
+            }
             data.sharcRecord = runtime.sharc->record(
                 context.frameGraph(), frameIndex, true, sharcFrame, sharcInvalidation, environment,
                 environmentResources,
@@ -641,8 +657,11 @@ namespace lumin::render {
             static_cast<void>(runtime.sharc->recordStatisticsReadback(context.frameGraph(), *data.sharcRecord,
                                                                       data.indirectOutput->tracePass));
             data.globalIlluminationActive = true;
-        } else {
+        } else if (runtime.indirectLighting != nullptr) {
             data.indirectOutput = runtime.indirectLighting->recordClear(context.frameGraph(), frameIndex, true);
+        }
+        if (runtime.indirectLighting == nullptr || !data.indirectOutput) {
+            return;
         }
         const gi::SharcIndirectLightingFrameResources& output = runtime.indirectLighting->resources(frameIndex);
         indirect.diffuse = core::TextureFrameData{
@@ -660,10 +679,11 @@ namespace lumin::render {
             .extent = context.identity().extent,
         };
 #endif
+#endif
     }
 
     void pipelines::DefaultRenderPipelineSession::discardGiDenoiserFeature() noexcept {
-#if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
         if (hybridGi_ == nullptr) {
             return;
         }
@@ -687,6 +707,7 @@ namespace lumin::render {
         if (*runtime.pendingSequence != identity.sequence) {
             std::terminate();
         }
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
         if (runtime.pendingNrdFrame) {
             if (runtime.pendingNrdFrame->sequence() != identity.sequence ||
                 runtime.pendingNrdFrame->frameSlot() != identity.frameSlot) {
@@ -695,6 +716,7 @@ namespace lumin::render {
             runtime.nrd->commitSubmittedFrame(*runtime.pendingNrdFrame);
             runtime.pendingNrdFrame.reset();
         }
+#endif
         runtime.pendingSequence.reset();
 #else
         static_cast<void>(identity);
@@ -706,7 +728,7 @@ namespace lumin::render {
         if (!data.active) {
             return;
         }
-#if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
         const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
         const core::RtSurfaceData& surface = context.blackboard().get<core::RtSurfaceData>();
         core::DenoisedLightingData& denoised = context.blackboard().get<core::DenoisedLightingData>();

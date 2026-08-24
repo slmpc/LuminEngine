@@ -63,6 +63,9 @@ cmake --preset debug -DLUMIN_RAY_TRACING=OFF
 - `ON`：编入 RT 实现；仍由运行时策略决定是否强制要求设备能力。
 - `OFF`：不提供 RT 实现，也不配置 SHARC/NRD vendor target；运行时不会查询或启用 RT 专属 Feature 与扩展。
 
+`LUMIN_ENABLE_SHARC=OFF` 或设备缺少 SHARC storage 能力时仍保留 RTDI 与天空，只关闭并清零间接光；默认构建继续使用
+SHARC indirect，并由 NRD REBLUR 对 diffuse/specular 信号降噪。
+
 其他值会在 configure 阶段报错。该选择会写入生成头
 `generated/include/render/RayTracingBuildConfiguration.hpp`，属于构建产物能力，不能由运行时描述覆盖。
 

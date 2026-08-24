@@ -206,9 +206,13 @@ namespace {
             require(level.find(owner) != std::string::npos, "Default pipeline is missing a hybrid GI resource owner.");
         }
         require(level.find("context_.rayTracingDecision().enabled()") != std::string::npos &&
-                    level.find("supportsSharcShaderStorage()") != std::string::npos &&
+                    level.find("supportsRayTracingPipeline()") != std::string::npos &&
                     level.find("GlobalIlluminationMode::RayTracing") != std::string::npos,
-                "Hybrid GI selection must honor the explicit mode and complete runtime capability set.");
+                "Hybrid RTDI selection must honor the explicit mode without requiring SHARC storage support.");
+        require(level.find("LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT") != std::string::npos &&
+                    level.find("runtime.sharc != nullptr") != std::string::npos &&
+                    level.find("return gi::BackendInfo{\"Ray Tracing Direct\"") != std::string::npos,
+                "Missing SHARC must retain the raw RTDI path and report its effective backend.");
         require(level.find("ensureHybridGiCapacity()") != std::string::npos &&
                     level.find("std::unique_ptr<HybridGiState> candidate = buildCandidate()") != std::string::npos,
                 "Topology changes must transactionally rebuild Hybrid bindings from the waited-idle path.");

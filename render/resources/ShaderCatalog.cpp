@@ -148,7 +148,7 @@ namespace lumin::render {
                        "GiComposite.comp");
 
             builder.module("HybridLightingComposite.slang")
-                .requireFeatures({ShaderFeature::RayTracing, ShaderFeature::Nrd, ShaderFeature::Sharc})
+                .requireFeatures({ShaderFeature::RayTracing})
                 .bindings({binding("directRadiance", ShaderBindingKind::SampledImage, 0, 0),
                            binding("indirectRadiance", ShaderBindingKind::SampledImage, 0, 1),
                            binding("lightingOutput", ShaderBindingKind::StorageImage, 0, 2),

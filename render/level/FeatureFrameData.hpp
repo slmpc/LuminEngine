@@ -1,5 +1,6 @@
 #pragma once
 
+#include "render/RayTracingBuildConfiguration.hpp"
 #include "render/atmosphere/AtmosphereLutGpu.hpp"
 #include "render/core/FrameDataContracts.hpp"
 #include "render/features/postfx/PostFxResources.hpp"
@@ -13,17 +14,24 @@
 
 #include <nvrhi/nvrhi.h>
 
-#if defined(LUMIN_HAS_NRD) && LUMIN_HAS_NRD && defined(LUMIN_HAS_SHARC) && LUMIN_HAS_SHARC
+#if LUMIN_RAY_TRACING_IMPLEMENTATION_AVAILABLE
 #define LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI 1
-#include "render/gi/raytracing/GiComposite.hpp"
-#include "render/gi/raytracing/NrdDenoiser.hpp"
 #include "render/gi/raytracing/RayTracedDirectLighting.hpp"
 #include "render/gi/raytracing/RtSurfaceSignals.hpp"
-#include "render/gi/raytracing/SharcIndirectLighting.hpp"
-#include "render/gi/raytracing/SharcRadianceCache.hpp"
 #include "render/gpu/GpuScene.hpp"
 #else
 #define LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI 0
+#endif
+
+#if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI && defined(LUMIN_HAS_NRD) && LUMIN_HAS_NRD && defined(LUMIN_HAS_SHARC) &&       \
+    LUMIN_HAS_SHARC
+#define LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT 1
+#include "render/gi/raytracing/GiComposite.hpp"
+#include "render/gi/raytracing/NrdDenoiser.hpp"
+#include "render/gi/raytracing/SharcIndirectLighting.hpp"
+#include "render/gi/raytracing/SharcRadianceCache.hpp"
+#else
+#define LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT 0
 #endif
 
 namespace lumin::render {
@@ -92,9 +100,11 @@ namespace lumin::render {
         /// Normal/roughness 纹理 handles。
         std::vector<FrameGraphResourceHandle> normalRoughnessTextures;
         /// SHARC 本帧图记录。
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
         std::optional<gi::SharcGraphRecord> sharcRecord;
         /// SHARC 间接光输出图记录。
         std::optional<gi::SharcIndirectLightingGraphOutput> indirectOutput;
+#endif
         /// Primary RT surface graph resources。
         gi::RtSurfaceSignalGraphResources surface;
         /// Primary RT surface ready pass。
