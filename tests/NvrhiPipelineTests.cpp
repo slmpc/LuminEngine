@@ -118,6 +118,8 @@ int main() {
         requireEntryPoint("GBuffer.frag.spv", "fragmentMain");
         requireEntryPoint("ImGui.vert.spv", "vertexMain");
         requireEntryPoint("ImGui.frag.spv", "fragmentMain");
+        requireEntryPoint("Bloom.vert.spv", "vertexMain");
+        requireEntryPoint("Bloom.frag.spv", "fragmentMain");
         testFullscreenPipelineDescriptorIsWindingIndependent();
         return 0;
     } catch (const std::exception& error) {

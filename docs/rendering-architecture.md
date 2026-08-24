@@ -92,11 +92,12 @@ model/lighting 子 revision。网格或模型成员变化会递增 `topologyRevi
 5. 延迟光照通道，加载该目标，并结合全局光照输出和 CSM 对几何体进行着色。
 6. TAA 解析，读取 HDR 光照、运动矢量和上一帧历史。
 7. 将解析结果传输复制到当前历史图像。
-8. 使用 ACES 色调映射输出到 renderer 拥有的 Viewport 纹理。
-9. ImGui 在独立的 `Viewport` dock window 中采样该纹理，将完整编辑器界面合成到交换链并呈现。
+8. Bloom 对 TAA HDR 输出执行六级下采样、五级上采样并合成；关闭时以一次传输复制保持相同输出契约。
+9. 默认使用 AgX 显示变换完成 tone mapping，也可回退到 ACES Filmic，并输出到 renderer 拥有的 Viewport 纹理。
+10. ImGui 在独立的 `Viewport` dock window 中采样该纹理，将完整编辑器界面合成到交换链并呈现。
 
 所有图形通道均使用 Vulkan 1.3 动态渲染。`PipelineFactory` 支持 MRT 流水线和仅含顶点阶段的深度流水线；
-项目不会创建 `VkRenderPass` 或 framebuffer 对象。
+项目不会直接创建 `VkRenderPass` 或 `VkFramebuffer`，NvRHI framebuffer 只描述 dynamic rendering attachment。
 
 ## Renderer Runtime 边界
 
@@ -111,7 +112,7 @@ model/lighting 子 revision。网格或模型成员变化会递增 `topologyRevi
 `DefaultRenderPipelineSession` 位于 `Lumin::RenderPipelines`，是内置 Raster/Hybrid recipe 的帧事务协调器。它只接收
 非拥有 `VulkanContext`、初始 `RenderWorldSnapshotPtr` 和逐帧 `RenderFramePacket`，不保存活动场景、相机、ImGui 或 SDL
 引用。`DefaultFeatureRegistry.cpp` 是默认模块唯一显式组合点：Atmosphere、Raster/Hybrid surface、GI、Denoising、
-Lighting、TAA、ToneMapping 和 Presentation 都由各自具体 `IRenderFeature` 类型注册并直接处理提交/丢弃生命周期，DAG
+Lighting、TAA、Bloom、ToneMapping 和 Presentation 都由各自具体 `IRenderFeature` 类型注册并直接处理提交/丢弃生命周期，DAG
 resolver 决定执行顺序；没有万能回调 Feature、`LevelRenderFeatureKind`、中央 switch 或字符串式运行时分派。
 
 实现按职责分成以下文件：
@@ -260,7 +261,8 @@ texture 和 AS；该回收是逐帧资源生命周期的一部分，不能仅依
 读取其设备地址和内容前可见；不得仅依靠命令录制顺序、CPU fence 或捕获工具带来的隐式串行化。
 
 `PostFxResources` 为每个帧槽分别拥有 RTDI raw direct radiance、Direct NRD composite、标准 RGBA 全局光照和最终 HDR
-lighting 四张图像，四者不得发生物理资源别名。全局光照图像的 RGB 保存线性间接辐射亮度，alpha 保存环境可见度；
+lighting 四张图像，四者不得发生物理资源别名；同一 owner 还持有 TAA 结果、六级 Bloom downsample、五级 upsample 与
+全分辨率 Bloom HDR 输出。全局光照图像的 RGB 保存线性间接辐射亮度，alpha 保存环境可见度；
 禁用全局光照时的中性值为 `{0, 0, 0, 1}`。屏幕空间 AO 后端写入 `{0, 0, 0, ao}`，延迟光照按
 `legacyAmbient * globalIllumination.a + globalIllumination.rgb` 合成环境光。该图像同时支持颜色附件、采样和存储图像
 用途，以便后续后端使用光线追踪或计算通道写入相同契约。
@@ -319,7 +321,7 @@ Vulkan 后端通过负物理 viewport 高度将正 NDC Y 映射到较小的屏�
 previous jitter 基线同步到 current jitter，第一个有效帧只执行当前帧的稳定重建。
 
 TAA resolve 在 tone mapping 阶段经过 AMD FSR1 RCAS 恢复高频细节。RCAS 使用五点十字邻域、噪声抑制和
-`0..1` 锐度参数；先将每个 HDR 样本映射到 ACES 的 `[0, 1]` 线性显示域，锐化后才执行可选的 sRGB 编码。
+`0..1` 锐度参数；先将每个 HDR 样本通过当前选择的 AgX 或 ACES 曲线映射到 `[0, 1]` 线性显示域，锐化后才执行可选的 sRGB 编码。
 锐度为零时严格直通，TAA 关闭时也跳过 RCAS。历史复制仍读取未锐化的 `taaResolved`，避免锐化结果逐帧反馈并
 累积边缘光晕；因此只修改锐度属于热更新，不会使 TAA 历史失效。
 
@@ -327,10 +329,24 @@ TAA resolve 在 tone mapping 阶段经过 AMD FSR1 RCAS 恢复高频细节。RCA
 第一个有效帧会跳过时序混合。内容有效性与各持久历史图像是否完成初始化分开跟踪；使样本失效不会丢弃其真实的
 着色器读取布局和访问状态。因此，该图像被复用时，`FrameGraph` 仍可生成从着色器读取到传输写入所需的依赖。
 
+## Bloom 与 Tone Mapping
+
+Bloom 参考 Alpha-Piscium 的滤波结构，在 scene-linear HDR 域中工作。第 0 级先执行带 threshold/soft-knee 的 13-tap
+下采样，后续五级继续以同一 13-tap 核构建亮度金字塔；随后从最小层开始执行五次 tent 上采样，并逐级与对应的
+downsample base 相加。最终 pass 按 intensity 将 Bloom 合成回未 tone-map 的 TAA 输出。`radius` 只控制上采样核扩散，
+不会改变纹理数量或 recipe，因此开关和四个参数均为热更新。关闭 Bloom 时固定执行一次从 `taaResolved` 到
+`BloomOutputData` 的全分辨率复制，Tone Mapping 不需要条件化输入契约。
+
+AgX 是默认显示变换：先应用 inset 矩阵，在 16.5 EV 范围内进行 log2 编码和默认对比度近似，再通过 outset 矩阵返回
+显示颜色。其结果在 RCAS 与 render-target transfer function 前恢复到 display-linear；关闭 AgX 时沿用 ACES Filmic。
+曝光和 AgX/ACES 选择都是逐帧 uniform 热更新，不重建 pipeline，也不重置 TAA 历史。
+
 ## 资源所有权
 
 `RasterFeatureResources` 拥有两个帧槽的 G-buffer 与四张 CSM 阴影图；`PostFxResources` 独立拥有 RTDI raw 直接光、
-Direct NRD 输出、标准全局光照、最终 HDR 光照、TAA 解析/历史、后处理 uniform buffer、sampler 和 descriptor set。
+Direct NRD 输出、标准全局光照、最终 HDR 光照、TAA 解析/历史、Bloom 金字塔与全分辨率 HDR 输出、后处理 uniform
+buffer、sampler、framebuffer 和 descriptor set。每个帧槽固定拥有六张 downsample 与五张 upsample 图像；Bloom 的
+descriptor set 和 framebuffer 必须在任一底层纹理前统一释放。
 四路光照目标保持独立，因此 direct/indirect GI composite 不能覆盖各自输入，最终 Hybrid composite 也不会对同一纹理
 执行读写。PostFX 只通过显式
 `PostFxBindingInputs` 接收上游 sampled handle，销毁时必须先释放 descriptor set，再释放 Raster producer。

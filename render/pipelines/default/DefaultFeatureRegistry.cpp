@@ -158,6 +158,15 @@ namespace lumin::render::pipelines {
         }
     };
 
+    class DefaultRenderPipelineSession::BloomFeatureModule final : public FeatureModuleBase {
+    public:
+        using FeatureModuleBase::FeatureModuleBase;
+
+        void addPasses(core::RenderFeatureFrameContext& context) override {
+            session_.addBloomFeaturePasses(context);
+        }
+    };
+
     class DefaultRenderPipelineSession::PresentationFeatureModule final : public FeatureModuleBase {
     public:
         using FeatureModuleBase::FeatureModuleBase;
@@ -171,17 +180,17 @@ namespace lumin::render::pipelines {
         }
     };
 
-    core::RenderFeatureRegistry DefaultRenderPipelineSession::createFeatureRegistry(
-        const DefaultRenderPipelineDefinition& definition, DefaultRenderPipelineKind path) {
+    core::RenderFeatureRegistry
+    DefaultRenderPipelineSession::createFeatureRegistry(const DefaultRenderPipelineDefinition& definition,
+                                                        DefaultRenderPipelineKind path) {
         core::RenderFeatureRegistry registry;
         const auto registerModule = [&registry, &definition, this]<typename Module>(const core::FeatureId& id) {
             core::FeatureDescriptor descriptor = definition.descriptor(id);
             core::FeatureDescriptor instanceDescriptor = descriptor;
-            registry.registerFeature(
-                std::move(descriptor),
-                [this, descriptor = std::move(instanceDescriptor)](const core::FeatureCreateContext&) {
-                    return std::make_unique<Module>(*this, descriptor);
-                });
+            registry.registerFeature(std::move(descriptor), [this, descriptor = std::move(instanceDescriptor)](
+                                                                const core::FeatureCreateContext&) {
+                return std::make_unique<Module>(*this, descriptor);
+            });
         };
 
         using namespace feature_ids;
@@ -197,6 +206,7 @@ namespace lumin::render::pipelines {
         registerModule.template operator()<DenoisingFeatureModule>(denoising());
         registerModule.template operator()<LightingCompositeFeatureModule>(lightingComposite());
         registerModule.template operator()<TemporalAaFeatureModule>(temporalAa());
+        registerModule.template operator()<BloomFeatureModule>(bloom());
         registerModule.template operator()<ToneMappingFeatureModule>(toneMapping());
         registerModule.template operator()<PresentationFeatureModule>(presentation());
         return registry;

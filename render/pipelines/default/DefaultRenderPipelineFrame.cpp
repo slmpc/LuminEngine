@@ -245,6 +245,7 @@ namespace lumin::render {
         postProcess.uniforms.tonemapOptions.x = settings.toneMapping.exposure;
         postProcess.uniforms.tonemapOptions.y = context_.swapchainIsSrgb() ? 1.0f : 0.0f;
         postProcess.uniforms.tonemapOptions.z = std::clamp(settings.temporalAa.sharpness, 0.0f, 1.0f);
+        postProcess.uniforms.tonemapOptions.w = settings.toneMapping.agxEnabled ? 1.0f : 0.0f;
         postProcess.uniforms.ambientOcclusionOptions =
             glm::vec4{static_cast<float>(settings.globalIllumination.ambientOcclusionMode),
                       std::max(settings.globalIllumination.ambientOcclusionRadius, 0.05f),
@@ -313,14 +314,12 @@ namespace lumin::render {
             }
             const gi::RayTracedDiFrameResources& surface = hybridGi_->directLighting->signals(frameIndex);
             const nvrhi::ResourceStates rtSignalInitialState =
-                hybridGi_->directLighting->frameSlotInitialized(frameIndex)
-                    ? nvrhi::ResourceStates::ShaderResource
-                    : nvrhi::ResourceStates::Common;
+                hybridGi_->directLighting->frameSlotInitialized(frameIndex) ? nvrhi::ResourceStates::ShaderResource
+                                                                            : nvrhi::ResourceStates::Common;
             const auto importRtSurface = [&importer](std::string name, const nvrhi::TextureHandle& texture,
                                                      nvrhi::ResourceStates initialState) {
                 return textureFrameData(
-                    texture,
-                    importer.importTexture(std::move(name), textureDesc(GpuTexture{texture}, initialState)));
+                    texture, importer.importTexture(std::move(name), textureDesc(GpuTexture{texture}, initialState)));
             };
             rtSurface.worldPositionHitDistance =
                 importRtSurface("rt.surface.world-position", surface.worldPositionHitT, frameInitialState);
@@ -334,11 +333,9 @@ namespace lumin::render {
             rtSurface.visibility =
                 importRtSurface("rt.surface.visibility", surface.visibilityMask, rtSignalInitialState);
             rtSurface.directDiffuseRadianceHitDistance =
-                importRtSurface("rt.surface.direct-diffuse", surface.directDiffuseRadianceHitT,
-                                rtSignalInitialState);
+                importRtSurface("rt.surface.direct-diffuse", surface.directDiffuseRadianceHitT, rtSignalInitialState);
             rtSurface.directSpecularRadianceHitDistance =
-                importRtSurface("rt.surface.direct-specular", surface.directSpecularRadianceHitT,
-                                rtSignalInitialState);
+                importRtSurface("rt.surface.direct-specular", surface.directSpecularRadianceHitT, rtSignalInitialState);
             hybridData.surface.worldPositionHitT = rtSurface.worldPositionHitDistance.graphResource;
             hybridData.surface.normalRoughness = rtSurface.normalRoughness.graphResource;
             hybridData.surface.albedoMetallic = rtSurface.albedoMetallic.graphResource;
@@ -351,13 +348,12 @@ namespace lumin::render {
         }
 #endif
         core::IndirectLightingData indirectLighting;
-        indirectLighting.combined =
-            textureFrameData(postFxFrame.globalIllumination,
-                             importer.importTexture("global-illumination.output",
-                                                    textureDesc(postFxFrame.globalIllumination,
-                                                                globalIlluminationInitialized_[frameIndex]
-                                                                    ? nvrhi::ResourceStates::ShaderResource
-                                                                    : nvrhi::ResourceStates::Common)));
+        indirectLighting.combined = textureFrameData(
+            postFxFrame.globalIllumination,
+            importer.importTexture("global-illumination.output", textureDesc(postFxFrame.globalIllumination,
+                                                                             globalIlluminationInitialized_[frameIndex]
+                                                                                 ? nvrhi::ResourceStates::ShaderResource
+                                                                                 : nvrhi::ResourceStates::Common)));
         core::DenoisedLightingData denoisedLighting{
             .direct = {},
             .diffuse = {},
@@ -372,19 +368,19 @@ namespace lumin::render {
         if (hybridPathActive) {
             rtSurface.directRadiance =
                 textureFrameData(postFxFrame.directRadiance,
-                                 importer.importTexture("rt.surface.direct-radiance",
-                                                        textureDesc(postFxFrame.directRadiance,
-                                                                    directRadianceInitialized_[frameIndex]
+                                 importer.importTexture(
+                                     "rt.surface.direct-radiance",
+                                     textureDesc(postFxFrame.directRadiance, directRadianceInitialized_[frameIndex]
+                                                                                 ? nvrhi::ResourceStates::ShaderResource
+                                                                                 : nvrhi::ResourceStates::Common)));
+            hybridData.surface.directRadiance = rtSurface.directRadiance.graphResource;
+            denoisedLighting.direct =
+                textureFrameData(postFxFrame.denoisedDirectRadiance,
+                                 importer.importTexture("rt.direct-radiance.denoised",
+                                                        textureDesc(postFxFrame.denoisedDirectRadiance,
+                                                                    directNrdOutputInitialized_[frameIndex]
                                                                         ? nvrhi::ResourceStates::ShaderResource
                                                                         : nvrhi::ResourceStates::Common)));
-            hybridData.surface.directRadiance = rtSurface.directRadiance.graphResource;
-            denoisedLighting.direct = textureFrameData(
-                postFxFrame.denoisedDirectRadiance,
-                importer.importTexture("rt.direct-radiance.denoised",
-                                       textureDesc(postFxFrame.denoisedDirectRadiance,
-                                                   directNrdOutputInitialized_[frameIndex]
-                                                       ? nvrhi::ResourceStates::ShaderResource
-                                                       : nvrhi::ResourceStates::Common)));
         }
 #endif
         sceneHdr.position = hybridPathActive ? rtSurface.worldPositionHitDistance : rasterSurface.position;
@@ -403,6 +399,10 @@ namespace lumin::render {
             postFxFrame.history,
             importer.importTexture("taa.history.write",
                                    textureDesc(postFxFrame.history, postFxResources_.historyInitialState(frameIndex))));
+        core::BloomOutputData bloomOutput;
+        bloomOutput.color = textureFrameData(
+            postFxFrame.bloomOutput,
+            importer.importTexture("bloom.output", textureDesc(postFxFrame.bloomOutput, frameInitialState)));
 
         FrameGraphTextureDesc viewportDesc =
             textureDesc(viewportOutput_, viewportOutputInitialized_ ? nvrhi::ResourceStates::ShaderResource
@@ -468,6 +468,7 @@ namespace lumin::render {
         blackboard.set(std::move(denoisedLighting));
         blackboard.set(std::move(sceneHdr));
         blackboard.set(std::move(temporalOutput));
+        blackboard.set(std::move(bloomOutput));
         blackboard.set(std::move(viewportOutput));
         blackboard.set(std::move(presentationInput));
         blackboard.set(std::move(rasterTargets));
@@ -491,6 +492,7 @@ namespace lumin::render {
             .usedHybridPath = usedHybridPath,
             .usedDirectNrd = usedDirectNrd,
             .usedIndirectLighting = usedHybridPath && completedHybrid.globalIlluminationActive,
+            .usedBloom = settings.bloom.enabled,
         };
     }
 

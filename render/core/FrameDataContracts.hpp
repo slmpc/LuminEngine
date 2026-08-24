@@ -234,6 +234,12 @@ namespace lumin::render::core {
         TextureFrameData historyWrite;
     };
 
+    /// Bloom Feature 发布的 HDR 后处理结果。
+    struct BloomOutputData {
+        /// 已合成多级泛光的线性 HDR 颜色；Bloom 关闭时为 Temporal 输出的逐像素副本。
+        TextureFrameData color;
+    };
+
     /** Runtime 在获取交换链图像后发布给 Presentation Feature 的输入。 */
     struct PresentationInputData {
         /// 仅在同步 `drawFrame()` 调用期间有效的 Dear ImGui 绘制数据。
@@ -310,6 +316,10 @@ namespace lumin::render::core {
         /// 返回 `TemporalOutputData` 契约。
         [[nodiscard]] inline const FrameDataContract& temporalOutput() {
             return contract<TemporalOutputData>("temporal-output");
+        }
+        /// 返回 `BloomOutputData` 契约。
+        [[nodiscard]] inline const FrameDataContract& bloomOutput() {
+            return contract<BloomOutputData>("bloom-output");
         }
         /// 返回 `PresentationInputData` 契约。
         [[nodiscard]] inline const FrameDataContract& presentationInput() {

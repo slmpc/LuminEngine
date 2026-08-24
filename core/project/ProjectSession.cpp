@@ -438,6 +438,10 @@ namespace lumin::project {
     void normalizeProjectSettings(ProjectSettings& settings) noexcept {
         settings.logicTickHz = std::clamp(settings.logicTickHz, MinimumLogicTickHz, MaximumLogicTickHz);
         settings.render.taaSharpness = std::clamp(settings.render.taaSharpness, 0.0f, 1.0f);
+        settings.render.bloomIntensity = std::max(settings.render.bloomIntensity, 0.0f);
+        settings.render.bloomThreshold = std::max(settings.render.bloomThreshold, 0.0f);
+        settings.render.bloomSoftKnee = std::clamp(settings.render.bloomSoftKnee, 0.0f, 1.0f);
+        settings.render.bloomRadius = std::clamp(settings.render.bloomRadius, 0.5f, 4.0f);
     }
 
     bool AssetId::isValid() const noexcept {
@@ -658,6 +662,12 @@ namespace lumin::project {
                 settings_.render.splitLambda = render->value("splitLambda", 0.68f);
                 settings_.render.shadowDistance = render->value("shadowDistance", 200.0f);
                 settings_.render.exposure = render->value("exposure", 1.0f);
+                settings_.render.agx = render->value("agx", true);
+                settings_.render.bloom = render->value("bloom", true);
+                settings_.render.bloomIntensity = render->value("bloomIntensity", 0.08f);
+                settings_.render.bloomThreshold = render->value("bloomThreshold", 1.0f);
+                settings_.render.bloomSoftKnee = render->value("bloomSoftKnee", 0.5f);
+                settings_.render.bloomRadius = render->value("bloomRadius", 1.0f);
             }
             normalizeProjectSettings(settings_);
             for (const Json& actorJson : sceneJson["actors"]) {
@@ -796,7 +806,13 @@ namespace lumin::project {
                            {"taaSharpness", settings_.render.taaSharpness},
                            {"splitLambda", settings_.render.splitLambda},
                            {"shadowDistance", settings_.render.shadowDistance},
-                           {"exposure", settings_.render.exposure}}}}},
+                           {"exposure", settings_.render.exposure},
+                           {"agx", settings_.render.agx},
+                           {"bloom", settings_.render.bloom},
+                           {"bloomIntensity", settings_.render.bloomIntensity},
+                           {"bloomThreshold", settings_.render.bloomThreshold},
+                           {"bloomSoftKnee", settings_.render.bloomSoftKnee},
+                           {"bloomRadius", settings_.render.bloomRadius}}}}},
                        {"actors", std::move(actors)}};
         if (!writeJsonAtomic(projectFile_, manifestJson, error) ||
             !writeJsonAtomic(root_ / ".lumin/AssetRegistry.json", registryJson(assets_), error) ||
@@ -1285,6 +1301,10 @@ namespace lumin::project {
 
     void ProjectSession::setRenderSettings(ProjectRenderSettings settings) noexcept {
         settings.taaSharpness = std::clamp(settings.taaSharpness, 0.0f, 1.0f);
+        settings.bloomIntensity = std::max(settings.bloomIntensity, 0.0f);
+        settings.bloomThreshold = std::max(settings.bloomThreshold, 0.0f);
+        settings.bloomSoftKnee = std::clamp(settings.bloomSoftKnee, 0.0f, 1.0f);
+        settings.bloomRadius = std::clamp(settings.bloomRadius, 0.5f, 4.0f);
         if (settings_.render != settings) {
             settings_.render = std::move(settings);
             dirty_ = true;

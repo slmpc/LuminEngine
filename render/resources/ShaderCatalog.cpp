@@ -58,6 +58,7 @@ namespace lumin::render {
                 .abiStruct("ShadowUniforms", 64, {field("lightViewProjection", 0, 64)})
                 .abiStruct("PushConstants", 32,
                            {field("scale", 0, 8), field("translate", 8, 8), field("outputConfig", 16, 16)})
+                .abiStruct("BloomPushConstants", 32, {field("filter", 0, 16), field("controls", 16, 16)})
                 .abiStruct("GpuPackedVertex", 32,
                            {field("position", 0, 12), field("positionPadding", 12, 4), field("normal", 16, 12),
                             field("normalPadding", 28, 4)})
@@ -78,12 +79,11 @@ namespace lumin::render {
                             field("cameraPosition", 128, 16), field("cameraForward", 144, 16),
                             field("toSunWorld", 160, 16), field("sunIrradiance", 176, 16), field("renderSize", 192, 16),
                             field("traceParameters", 208, 16), field("samplingParameters", 224, 16)})
-                .abiStruct("RtDiNrdInputsConstants", 48,
-                           {field("cameraPosition", 0, 16), field("renderParameters", 16, 16),
-                            field("renderInfo", 32, 16)})
+                .abiStruct(
+                    "RtDiNrdInputsConstants", 48,
+                    {field("cameraPosition", 0, 16), field("renderParameters", 16, 16), field("renderInfo", 32, 16)})
                 .abiStruct("GiCompositeConstants", 48,
-                           {field("cameraPosition", 0, 16), field("renderInfo", 16, 16),
-                            field("options", 32, 16)})
+                           {field("cameraPosition", 0, 16), field("renderInfo", 16, 16), field("options", 32, 16)})
                 .abiStruct("HybridLightingCompositeConstants", 16, {field("renderInfo", 0, 16)})
                 .abiStruct("SharcGpuConstants", 128,
                            {field("cameraPositionSceneScale", 0, 16),
@@ -170,8 +170,17 @@ namespace lumin::render {
                 .entry(ShaderId::ImGuiVertex, "imgui.vertex", "vertexMain", ShaderStage::Vertex, "ImGui.vert")
                 .entry(ShaderId::ImGuiFragment, "imgui.fragment", "fragmentMain", ShaderStage::Fragment, "ImGui.frag");
 
+            builder.module("Bloom.slang")
+                .bindings({pushConstant("constants", 0),
+                           binding("sourceTexture", ShaderBindingKind::SampledImage, 0, 0),
+                           binding("baseTexture", ShaderBindingKind::SampledImage, 0, 1),
+                           binding("bloomSampler", ShaderBindingKind::Sampler, 0, 2)})
+                .abiStructs({"BloomPushConstants"})
+                .entry(ShaderId::BloomVertex, "bloom.vertex", "vertexMain", ShaderStage::Vertex, "Bloom.vert")
+                .entry(ShaderId::BloomFragment, "bloom.fragment", "fragmentMain", ShaderStage::Fragment, "Bloom.frag");
+
             builder.module("PostProcess.slang")
-                .bindings({binding("resolvedTexture", ShaderBindingKind::SampledImage, 0, 7),
+                .bindings({binding("bloomTexture", ShaderBindingKind::SampledImage, 0, 14),
                            binding("renderSampler", ShaderBindingKind::Sampler, 0, 12),
                            binding("frame", ShaderBindingKind::ConstantBuffer, 0, 13)})
                 .abiStructs({"PostProcessUniforms"})
@@ -234,8 +243,8 @@ namespace lumin::render {
                            binding("denoiserNormalRoughness", ShaderBindingKind::StorageImage, 0, 13),
                            binding("denoiserMotion", ShaderBindingKind::StorageImage, 0, 14)})
                 .abiStructs({"GpuMaterialData", "RtDiNrdInputsConstants"})
-                .entry(ShaderId::RtDiNrdInputsCompute, "rt-di-nrd-inputs.compute", "prepareMain",
-                       ShaderStage::Compute, "RtDiNrdInputs.comp");
+                .entry(ShaderId::RtDiNrdInputsCompute, "rt-di-nrd-inputs.compute", "prepareMain", ShaderStage::Compute,
+                       "RtDiNrdInputs.comp");
 
             auto& sharcIndirect = builder.module("SharcIndirectLighting.slang");
             sharcIndirect.requireFeatures({ShaderFeature::RayTracing, ShaderFeature::Nrd, ShaderFeature::Sharc})

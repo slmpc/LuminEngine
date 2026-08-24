@@ -78,6 +78,7 @@ namespace lumin::render::pipelines {
             bool usedHybridPath = false;
             bool usedDirectNrd = false;
             bool usedIndirectLighting = false;
+            bool usedBloom = false;
         };
 
         struct HybridGiState {
@@ -127,6 +128,7 @@ namespace lumin::render::pipelines {
         class DenoisingFeatureModule;
         class LightingCompositeFeatureModule;
         class TemporalAaFeatureModule;
+        class BloomFeatureModule;
         class ToneMappingFeatureModule;
         class PresentationFeatureModule;
 
@@ -169,6 +171,7 @@ namespace lumin::render::pipelines {
         void addSkyCompositeFeaturePasses(core::RenderFeatureFrameContext& context);
         void addDirectLightingFeaturePasses(core::RenderFeatureFrameContext& context);
         void addTemporalAaFeaturePasses(core::RenderFeatureFrameContext& context);
+        void addBloomFeaturePasses(core::RenderFeatureFrameContext& context);
         void addToneMappingFeaturePasses(core::RenderFeatureFrameContext& context);
         void addUiPresentFeaturePasses(core::RenderFeatureFrameContext& context);
         [[nodiscard]] static FeatureConfigurationState featureConfiguration(const RenderSettings& settings) noexcept;
@@ -186,6 +189,9 @@ namespace lumin::render::pipelines {
         void recordDirectLightingPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
                                       std::uint32_t frameIndex);
         void recordHistoryCopy(nvrhi::ICommandList& commandList, std::uint32_t frameIndex);
+        void recordBloomPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
+                             const nvrhi::BindingSetHandle& bindingSet, std::uint32_t width, std::uint32_t height,
+                             const BloomPushConstants& constants);
 
         VulkanContext& context_;
         std::filesystem::path shaderDirectory_;
@@ -201,6 +207,7 @@ namespace lumin::render::pipelines {
         nvrhi::GraphicsPipelineHandle skyPipeline_;
         nvrhi::GraphicsPipelineHandle directLightingPipeline_;
         nvrhi::GraphicsPipelineHandle temporalAaPipeline_;
+        nvrhi::GraphicsPipelineHandle bloomPipeline_;
         nvrhi::GraphicsPipelineHandle toneMappingPipeline_;
         std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination_;
         PresentationRenderer presentation_;
@@ -235,6 +242,8 @@ namespace lumin::render::pipelines {
         std::uint64_t nextRenderSequence_ = 0;
         core::FrameChangeSet pendingFrameChanges_;
         std::array<bool, frameSlotCount> frameResourcesInitialized_{};
+        /// Bloom 金字塔只在启用并成功提交后才能以 ShaderResource 状态重新导入。
+        std::array<bool, frameSlotCount> bloomChainInitialized_{};
         /// RTDI 合并直接光由成功 Hybrid 提交单独发布，不能沿用 Raster/PostFX 的粗粒度状态。
         std::array<bool, frameSlotCount> directRadianceInitialized_{};
         /// Direct NRD composite 只在 NRD 实际启用并成功提交后进入 ShaderResource 状态。

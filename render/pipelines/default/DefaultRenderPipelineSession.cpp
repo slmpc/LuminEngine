@@ -155,6 +155,7 @@ namespace lumin::render {
         } else {
             globalIlluminationInitialized_[frame->frameIndex] = true;
         }
+        bloomChainInitialized_[frame->frameIndex] = bloomChainInitialized_[frame->frameIndex] || recorded.usedBloom;
         previousViewProjection_ = recorded.viewProjection;
         previousView_ = recorded.view;
         previousProjection_ = recorded.projection;
@@ -208,8 +209,8 @@ namespace lumin::render {
         if (lastSubmittedFrameUsedHybridPath_) {
             bool nrdActive = false;
 #if LUMIN_LEVEL_RENDERER_HAS_NRD
-            nrdActive = hybridGi_ != nullptr && hybridGi_->directNrd != nullptr &&
-                        committedFeatureConfiguration_.nrdEnabled;
+            nrdActive =
+                hybridGi_ != nullptr && hybridGi_->directNrd != nullptr && committedFeatureConfiguration_.nrdEnabled;
 #endif
 #if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
             const bool sharcActive = hybridGi_ != nullptr && hybridGi_->sharcEnabled;

@@ -61,6 +61,7 @@ namespace lumin::render {
         try {
             createImages(width, height);
             createSamplerAndBindings(inputs);
+            createBloomBindings();
         } catch (...) {
             destroy();
             throw;
@@ -69,10 +70,27 @@ namespace lumin::render {
 
     void PostFxResources::destroy() noexcept {
         std::ranges::fill(bindingSets_, nullptr);
+        // 描述符与 framebuffer 可能强引用跨帧槽资源，必须在任一底层纹理前统一释放。
+        for (PostFxFrameResources& frameResources : frames_) {
+            frameResources.bloomCompositeBinding = nullptr;
+            frameResources.bloomUpsampleBindings.fill(nullptr);
+            frameResources.bloomDownsampleBindings.fill(nullptr);
+            frameResources.bloomOutputFramebuffer = nullptr;
+            frameResources.bloomUpsampleFramebuffers.fill(nullptr);
+            frameResources.bloomDownsampleFramebuffers.fill(nullptr);
+        }
+        bloomBindingLayout_ = nullptr;
         bindingLayout_ = nullptr;
         sampler_ = nullptr;
         for (PostFxFrameResources& frameResources : frames_) {
             resources_.destroyBuffer(frameResources.uniforms);
+            resources_.destroyTexture(frameResources.bloomOutput);
+            for (GpuTexture& texture : frameResources.bloomUpsample) {
+                resources_.destroyTexture(texture);
+            }
+            for (GpuTexture& texture : frameResources.bloomDownsample) {
+                resources_.destroyTexture(texture);
+            }
             resources_.destroyTexture(frameResources.history);
             resources_.destroyTexture(frameResources.taaResolved);
             resources_.destroyTexture(frameResources.lighting);
@@ -151,6 +169,10 @@ namespace lumin::render {
         return bindingLayout_;
     }
 
+    nvrhi::BindingLayoutHandle PostFxResources::bloomBindingLayout() const noexcept {
+        return bloomBindingLayout_;
+    }
+
     nvrhi::BindingSetHandle PostFxResources::bindingSet(std::uint32_t frameIndex) const {
         if (frameIndex >= bindingSets_.size()) {
             throw std::out_of_range("PostFX binding frame index is out of range.");
@@ -225,6 +247,28 @@ namespace lumin::render {
             desc.isShaderResource = true;
             frameResources.history = createTexture(desc);
 
+            std::uint32_t bloomWidth = width;
+            std::uint32_t bloomHeight = height;
+            for (GpuTexture& texture : frameResources.bloomDownsample) {
+                bloomWidth = std::max((bloomWidth + 1U) / 2U, 1U);
+                bloomHeight = std::max((bloomHeight + 1U) / 2U, 1U);
+                desc = textureDesc(bloomWidth, bloomHeight, lightingFormat_, "Bloom downsample");
+                desc.isRenderTarget = true;
+                desc.isShaderResource = true;
+                texture = createTexture(desc);
+            }
+            for (std::uint32_t level = 0; level < frameResources.bloomUpsample.size(); ++level) {
+                const GpuTexture& downsample = frameResources.bloomDownsample[level];
+                desc = textureDesc(downsample.width, downsample.height, lightingFormat_, "Bloom upsample");
+                desc.isRenderTarget = true;
+                desc.isShaderResource = true;
+                frameResources.bloomUpsample[level] = createTexture(desc);
+            }
+            desc = textureDesc(width, height, lightingFormat_, "Bloom HDR output");
+            desc.isRenderTarget = true;
+            desc.isShaderResource = true;
+            frameResources.bloomOutput = createTexture(desc);
+
             nvrhi::BufferDesc bufferDesc;
             bufferDesc.byteSize = sizeof(PostProcessUniforms);
             bufferDesc.debugName = "Post-process uniforms";
@@ -253,6 +297,7 @@ namespace lumin::render {
         }
         layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(fullscreenSamplerBinding));
         layoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(fullscreenUniformBinding));
+        layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(fullscreenBloomBinding));
         bindingLayout_ = device_.createBindingLayout(layoutDesc);
         if (!bindingLayout_) {
             throw std::runtime_error("Failed to create the fullscreen binding layout.");
@@ -282,10 +327,65 @@ namespace lumin::render {
             bindingDesc.addItem(nvrhi::BindingSetItem::Sampler(fullscreenSamplerBinding, sampler_));
             bindingDesc.addItem(
                 nvrhi::BindingSetItem::ConstantBuffer(fullscreenUniformBinding, frameResources.uniforms.buffer));
+            bindingDesc.addItem(
+                nvrhi::BindingSetItem::Texture_SRV(fullscreenBloomBinding, frameResources.bloomOutput.texture));
             bindingSets_[frameIndex] = device_.createBindingSet(bindingDesc, bindingLayout_);
             if (!bindingSets_[frameIndex]) {
                 throw std::runtime_error("Failed to create a fullscreen binding set.");
             }
+        }
+    }
+
+    void PostFxResources::createBloomBindings() {
+        nvrhi::BindingLayoutDesc layoutDesc;
+        layoutDesc.setVisibility(nvrhi::ShaderType::Pixel).setRegisterSpaceAndDescriptorSet(0);
+        layoutDesc.bindingOffsets.setShaderResourceOffset(0).setSamplerOffset(0).setConstantBufferOffset(0);
+        layoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(BloomPushConstants)))
+            .addItem(nvrhi::BindingLayoutItem::Texture_SRV(0))
+            .addItem(nvrhi::BindingLayoutItem::Texture_SRV(1))
+            .addItem(nvrhi::BindingLayoutItem::Sampler(2));
+        bloomBindingLayout_ = device_.createBindingLayout(layoutDesc);
+        if (!bloomBindingLayout_) {
+            throw std::runtime_error("Failed to create the Bloom binding layout.");
+        }
+
+        const auto createBinding = [this](nvrhi::ITexture* source, nvrhi::ITexture* base) {
+            nvrhi::BindingSetDesc desc;
+            desc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(BloomPushConstants)))
+                .addItem(nvrhi::BindingSetItem::Texture_SRV(0, source))
+                .addItem(nvrhi::BindingSetItem::Texture_SRV(1, base))
+                .addItem(nvrhi::BindingSetItem::Sampler(2, sampler_));
+            nvrhi::BindingSetHandle result = device_.createBindingSet(desc, bloomBindingLayout_);
+            if (!result) {
+                throw std::runtime_error("Failed to create a Bloom binding set.");
+            }
+            return result;
+        };
+        const auto createFramebuffer = [this](nvrhi::ITexture* output) {
+            nvrhi::FramebufferHandle result =
+                device_.createFramebuffer(nvrhi::FramebufferDesc().addColorAttachment(output));
+            if (!result) {
+                throw std::runtime_error("Failed to create a Bloom framebuffer.");
+            }
+            return result;
+        };
+
+        for (PostFxFrameResources& frame : frames_) {
+            for (std::uint32_t level = 0; level < bloomLevelCount; ++level) {
+                nvrhi::ITexture* source =
+                    level == 0 ? frame.taaResolved.texture.Get() : frame.bloomDownsample[level - 1].texture.Get();
+                frame.bloomDownsampleBindings[level] = createBinding(source, source);
+                frame.bloomDownsampleFramebuffers[level] = createFramebuffer(frame.bloomDownsample[level].texture);
+            }
+            for (std::uint32_t level = 0; level < bloomUpsampleLevelCount; ++level) {
+                nvrhi::ITexture* source = level + 1 == bloomLevelCount - 1
+                                              ? frame.bloomDownsample[level + 1].texture.Get()
+                                              : frame.bloomUpsample[level + 1].texture.Get();
+                frame.bloomUpsampleBindings[level] = createBinding(source, frame.bloomDownsample[level].texture);
+                frame.bloomUpsampleFramebuffers[level] = createFramebuffer(frame.bloomUpsample[level].texture);
+            }
+            frame.bloomCompositeBinding = createBinding(frame.bloomUpsample[0].texture, frame.taaResolved.texture);
+            frame.bloomOutputFramebuffer = createFramebuffer(frame.bloomOutput.texture);
         }
     }
 

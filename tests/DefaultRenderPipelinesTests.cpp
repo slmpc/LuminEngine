@@ -72,14 +72,19 @@ namespace {
             pipelines::feature_ids::atmosphere(),    pipelines::feature_ids::shadow(),
             pipelines::feature_ids::rasterSurface(), pipelines::feature_ids::globalIllumination(),
             pipelines::feature_ids::denoising(),     pipelines::feature_ids::lightingComposite(),
-            pipelines::feature_ids::temporalAa(),    pipelines::feature_ids::toneMapping(),
-            pipelines::feature_ids::presentation(),
+            pipelines::feature_ids::temporalAa(),    pipelines::feature_ids::bloom(),
+            pipelines::feature_ids::toneMapping(),   pipelines::feature_ids::presentation(),
         };
         require(std::ranges::equal(resolved.executionOrder(), expected),
                 "Raster recipe must be ordered by typed producer/consumer contracts.");
         require(definition.descriptor(pipelines::feature_ids::rasterSurface()).outputs ==
                     std::vector{core::frame_data::rasterSurface()},
                 "Raster surface Feature must publish the typed RasterSurfaceData contract.");
+        require(definition.descriptor(pipelines::feature_ids::bloom()).outputs ==
+                        std::vector{core::frame_data::bloomOutput()} &&
+                    definition.descriptor(pipelines::feature_ids::toneMapping()).requiredInputs ==
+                        std::vector{core::frame_data::scene(), core::frame_data::bloomOutput()},
+                "Bloom must publish the HDR input consumed by Tone Mapping.");
         require(!registry.contains(pipelines::feature_ids::hybridSurface()),
                 "Raster registration must not contain the Hybrid surface module.");
     }
@@ -127,6 +132,16 @@ namespace {
                     !core::hasAnyImpact(hotUpdate.impact, core::SettingsChangeImpact::PipelineRecompose),
                 "Exposure changes must remain hot updates.");
 
+        core::RenderSettingsStore bloomStore{schemas};
+        BloomSettings bloom = defaults.get<BloomSettings>(pipelines::feature_ids::bloom());
+        bloom.enabled = false;
+        bloom.intensity = 0.2f;
+        bloomStore.set(pipelines::feature_ids::bloom(), bloom);
+        const core::FeatureSettingsChange bloomChange = schemas.diff(defaults, bloomStore.snapshot());
+        require(core::hasAnyImpact(bloomChange.impact, core::SettingsChangeImpact::HotUpdate) &&
+                    bloomChange.historyReasons.empty(),
+                "Bloom controls must update after TAA without invalidating temporal histories.");
+
         core::RenderSettingsStore sharpnessStore{schemas};
         TemporalAaSettings temporalAa = defaults.get<TemporalAaSettings>(pipelines::feature_ids::temporalAa());
         temporalAa.sharpness = 0.75f;
@@ -173,6 +188,13 @@ namespace {
                 topologyStore.set(pipelines::feature_ids::temporalAa(), invalid);
             },
             "Temporal AA settings must reject RCAS sharpness outside [0, 1].");
+        requireThrows<std::invalid_argument>(
+            [&] {
+                BloomSettings invalid;
+                invalid.radius = 4.5f;
+                topologyStore.set(pipelines::feature_ids::bloom(), invalid);
+            },
+            "Bloom settings must reject a radius outside the supported filter range.");
     }
 
 } // namespace

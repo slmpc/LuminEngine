@@ -12,7 +12,7 @@ struct PostProcessUniforms {
     float4 lightDirection; // xyz = world-space sun direction, w = direct-lighting feature enabled
     float4 renderSize;
     float4 renderOptions;
-    float4 tonemapOptions; // x = exposure, y = sRGB target, z = post-TAA FSR1 RCAS sharpness
+    float4 tonemapOptions; // x = exposure, y = sRGB target, z = post-TAA FSR1 RCAS sharpness, w = AgX enabled
     float4 ambientOcclusionOptions; // x = algorithm, y = world radius, z = strength, w = geometric bias
     float4 temporalOptions; // xy = current screen-UV jitter, zw = previous submitted screen-UV jitter
 };

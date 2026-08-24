@@ -1,7 +1,7 @@
 import PostProcessUniforms;
 import Fsr1Rcas;
 
-[[vk::binding(7, 0)]] Texture2D<float4> resolvedTexture;
+[[vk::binding(14, 0)]] Texture2D<float4> bloomTexture;
 [[vk::binding(12, 0)]] SamplerState renderSampler;
 [[vk::binding(13, 0)]] ConstantBuffer<PostProcessUniforms> frame;
 
@@ -28,20 +28,53 @@ float3 acesFilm(float3 color) {
     return saturate((color * (a * color + b)) / (color * (c * color + d) + e));
 }
 
+float3 agxInset(float3 color) {
+    return float3(dot(float3(0.842479062253094, 0.0784335999999992, 0.0792237451477643), color),
+                  dot(float3(0.0423282422610123, 0.878468636469772, 0.0791661274605434), color),
+                  dot(float3(0.0423756549057051, 0.0784336, 0.879142973793104), color));
+}
+
+float3 agxOutset(float3 color) {
+    return float3(dot(float3(1.19687900512017, -0.0980208811401368, -0.0990297440797205), color),
+                  dot(float3(-0.0528968517574562, 1.15190312990417, -0.0989611768448433), color),
+                  dot(float3(-0.0529716355144438, -0.0980434501171241, 1.15107367264116), color));
+}
+
+float3 agxDefaultContrastApprox(float3 value) {
+    value -= 20.0 / 33.0;
+    const bool3 negative = value < 0.0;
+    const float3 scale = select(negative, 59.507875, 69.862789);
+    const float3 power0 = select(negative, 3.0, 13.0 / 4.0);
+    const float3 power1 = select(negative, -1.0 / 3.0, -4.0 / 13.0);
+    return 2.0 * value * pow(1.0 + scale * pow(abs(value), power0), power1) + 0.5;
+}
+
+float3 agxDisplayLinear(float3 color) {
+    color = max(agxInset(max(color, 0.0)), 1.0e-10);
+    const float dynamicRange = 16.5;
+    const float halfRange = dynamicRange * 0.5;
+    color = clamp(log2(color), -halfRange, halfRange);
+    color = (color + halfRange) / dynamicRange;
+    color = agxDefaultContrastApprox(color);
+    // AgX curve output is display encoded; return to linear before RCAS and the render-target transfer function.
+    return pow(max(agxOutset(color), 0.0), 2.2);
+}
+
 float3 toDisplayLinear(float3 hdrColor) {
-    return acesFilm(hdrColor * max(frame.tonemapOptions.x, 0.01));
+    const float3 exposed = hdrColor * max(frame.tonemapOptions.x, 0.0);
+    return frame.tonemapOptions.w >= 0.5 ? agxDisplayLinear(exposed) : acesFilm(exposed);
 }
 
 float3 loadDisplayLinear(int2 pixel) {
     const int2 extent = int2(frame.renderSize.xy);
     const int2 clampedPixel = clamp(pixel, int2(0), extent - 1);
-    return toDisplayLinear(resolvedTexture.Load(int3(clampedPixel, 0)).rgb);
+    return toDisplayLinear(bloomTexture.Load(int3(clampedPixel, 0)).rgb);
 }
 
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target {
     const int2 pixel = int2(input.position.xy);
-    float3 mapped = toDisplayLinear(resolvedTexture.SampleLevel(renderSampler, input.uv, 0.0).rgb);
+    float3 mapped = toDisplayLinear(bloomTexture.SampleLevel(renderSampler, input.uv, 0.0).rgb);
     if (frame.renderOptions.w >= 0.5 && frame.tonemapOptions.z > 0.0) {
         mapped = luminFsr1Rcas(loadDisplayLinear(pixel + int2(0, -1)),
                               loadDisplayLinear(pixel + int2(-1, 0)), mapped,

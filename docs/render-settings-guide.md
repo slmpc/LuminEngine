@@ -40,3 +40,22 @@ store；packet 只携带不可变快照。同步 Renderer 相对最近一次成�
 
 公开设置、实际 UI、默认 recipe 和文档必须在同一提交中保持一致。删除或重命名字段时，不得保留已经失效的面板说明或
 架构描述。
+
+## 内置后处理设置
+
+`postfx.bloom` 使用独立的 `BloomSettings` schema，`postfx.tonemap` 使用 `ToneMappingSettings`。当前后处理项全部归类为
+`HotUpdate`：它们只改变下一帧的 pass 分支、push constants 或 uniform，不触发 pipeline 重组、资源重建或 TAA 历史失效。
+
+Editor 的 `Render / GI` 面板提供以下设置：
+
+- `AgX`：默认开启；关闭后使用 ACES Filmic。
+- `Bloom`：默认开启；关闭时跳过多级滤波并复制 TAA HDR 输出。
+- `Intensity`：默认 `0.08`，面板范围 `[0, 0.5]`。
+- `Threshold`：默认 `1.0`，面板范围 `[0, 8]`。
+- `Soft knee`：默认 `0.5`，范围 `[0, 1]`。
+- `Radius`：默认 `1.0`，范围 `[0.5, 4]`。
+
+项目保存时，这些值写入场景 JSON 的 `projectSettings.render`：`agx`、`bloom`、`bloomIntensity`、
+`bloomThreshold`、`bloomSoftKnee` 和 `bloomRadius`。旧项目缺失字段时使用上述默认值；加载后会将越界的有限数值
+归一化到 schema 支持范围，非有限值由 typed schema 拒绝。Editor 修改设置后仍通过 `ProjectSession` 的
+dirty/save 流程持久化，不直接写项目文件。

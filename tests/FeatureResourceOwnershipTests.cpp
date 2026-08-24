@@ -26,6 +26,8 @@ namespace {
 
     static_assert(std::same_as<decltype(RasterFeatureFrameResources::position), lumin::render::GpuTexture>);
     static_assert(std::same_as<decltype(PostFxFrameResources::uniforms), lumin::render::GpuBuffer>);
+    static_assert(std::same_as<decltype(PostFxFrameResources::bloomDownsample),
+                               std::array<lumin::render::GpuTexture, lumin::render::bloomLevelCount>>);
     static_assert(
         std::same_as<decltype(std::declval<const RasterFeatureResources&>().positionFormat()), nvrhi::Format>);
     static_assert(std::same_as<decltype(std::declval<const PostFxResources&>().sampler()), nvrhi::SamplerHandle>);
@@ -40,6 +42,7 @@ namespace {
         int samplers = 0;
         int layouts = 0;
         int bindingSets = 0;
+        int framebuffers = 0;
         std::vector<std::string> releases;
     };
 
@@ -168,6 +171,33 @@ namespace {
         LiveCounts& counts_;
     };
 
+    class FakeFramebuffer final : public nvrhi::RefCounter<nvrhi::IFramebuffer> {
+    public:
+        FakeFramebuffer(nvrhi::FramebufferDesc desc, LiveCounts& counts) : desc_(std::move(desc)), counts_(counts) {
+            ++counts_.framebuffers;
+            const nvrhi::TextureDesc& color = desc_.colorAttachments.front().texture->getDesc();
+            info_.setWidth(color.width).setHeight(color.height).setArraySize(1).addColorFormat(color.format);
+        }
+
+        ~FakeFramebuffer() override {
+            counts_.releases.emplace_back("framebuffer");
+            --counts_.framebuffers;
+        }
+
+        [[nodiscard]] const nvrhi::FramebufferDesc& getDesc() const override {
+            return desc_;
+        }
+
+        [[nodiscard]] const nvrhi::FramebufferInfoEx& getFramebufferInfo() const override {
+            return info_;
+        }
+
+    private:
+        nvrhi::FramebufferDesc desc_;
+        nvrhi::FramebufferInfoEx info_;
+        LiveCounts& counts_;
+    };
+
     class FakeDevice final : public nvrhi::RefCounter<nvrhi::IDevice> {
     public:
         LiveCounts live;
@@ -276,8 +306,8 @@ namespace {
         nvrhi::GraphicsAPI getGraphicsAPI() override {
             return nvrhi::GraphicsAPI::VULKAN;
         }
-        nvrhi::FramebufferHandle createFramebuffer(const nvrhi::FramebufferDesc&) override {
-            return nullptr;
+        nvrhi::FramebufferHandle createFramebuffer(const nvrhi::FramebufferDesc& desc) override {
+            return nvrhi::FramebufferHandle::Create(new FakeFramebuffer(desc, live));
         }
         nvrhi::GraphicsPipelineHandle createGraphicsPipeline(const nvrhi::GraphicsPipelineDesc&,
                                                              const nvrhi::FramebufferInfo&) override {
@@ -401,6 +431,7 @@ namespace {
         require(device.live.samplers == 0, "Sampler handles leaked after rollback or destroy.");
         require(device.live.layouts == 0, "Binding layout handles leaked after rollback or destroy.");
         require(device.live.bindingSets == 0, "Binding set handles leaked after rollback or destroy.");
+        require(device.live.framebuffers == 0, "Framebuffer handles leaked after rollback or destroy.");
     }
 
     const nvrhi::TextureDesc& desc(const lumin::render::GpuTexture& texture) {
@@ -427,9 +458,11 @@ namespace {
         raster.create(64, 32);
         postFx.create(64, 32, bindingInputs(raster));
 
-        require(device.live.textures == 32, "Two frame slots must own sixteen textures each.");
+        require(device.live.textures == 56,
+                "Two frame slots must own the Raster/PostFX set plus twelve Bloom textures.");
         require(device.live.buffers == 2, "Two frame slots must own independent uniform buffers.");
-        require(device.live.bindingSets == 2, "Two frame slots must own independent binding sets.");
+        require(device.live.bindingSets == 26, "Two frame slots must own fullscreen plus all Bloom pass binding sets.");
+        require(device.live.framebuffers == 24, "Two frame slots must own all Bloom pass framebuffers.");
         require(postFx.bindingSet(0) != postFx.bindingSet(1), "Frame-slot binding sets must be distinct.");
         require(lumin::render::shadowCascadeCount == 4, "The CSM cascade count must remain four.");
         require(raster.positionFormat() == nvrhi::Format::RGBA16_FLOAT &&
@@ -444,15 +477,18 @@ namespace {
                 "Texture formats must preserve the legacy preferred-format contract.");
 
         const auto* layout = postFx.bindingLayout()->getDesc();
-        require(layout != nullptr && layout->bindings.size() == 14, "Fullscreen layout must expose bindings 0-13.");
-        for (std::uint32_t binding = 0; binding < 14; ++binding) {
+        require(layout != nullptr && layout->bindings.size() == 15, "Fullscreen layout must expose bindings 0-14.");
+        for (std::uint32_t binding = 0; binding < 15; ++binding) {
             require(layout->bindings[binding].slot == binding,
-                    "Fullscreen binding numbers must remain contiguous 0-13.");
-            const nvrhi::ResourceType expected = binding < 12    ? nvrhi::ResourceType::Texture_SRV
-                                                 : binding == 12 ? nvrhi::ResourceType::Sampler
-                                                                 : nvrhi::ResourceType::ConstantBuffer;
-            require(layout->bindings[binding].type == expected, "Fullscreen binding types must preserve 0-13.");
+                    "Fullscreen binding numbers must remain contiguous 0-14.");
+            const nvrhi::ResourceType expected = binding < 12 || binding == 14 ? nvrhi::ResourceType::Texture_SRV
+                                                 : binding == 12               ? nvrhi::ResourceType::Sampler
+                                                                               : nvrhi::ResourceType::ConstantBuffer;
+            require(layout->bindings[binding].type == expected, "Fullscreen binding types must preserve 0-14.");
         }
+        const auto* bloomLayout = postFx.bloomBindingLayout()->getDesc();
+        require(bloomLayout != nullptr && bloomLayout->bindings.size() == 4,
+                "Bloom layout must expose push constants, two sampled images, and one sampler.");
 
         for (std::uint32_t frameIndex = 0; frameIndex < 2; ++frameIndex) {
             const RasterFeatureFrameResources& frame = raster.frame(frameIndex);
@@ -499,6 +535,27 @@ namespace {
             require(!desc(effects.history).isRenderTarget && desc(effects.history).isShaderResource &&
                         !desc(effects.history).isUAV,
                     "TAA history must remain sampled and copy-destination compatible without render-target usage.");
+            require(desc(effects.bloomOutput).isRenderTarget && desc(effects.bloomOutput).isShaderResource &&
+                        !desc(effects.bloomOutput).isUAV,
+                    "Bloom output must remain a sampled HDR render target without storage usage.");
+            std::uint32_t expectedWidth = 64;
+            std::uint32_t expectedHeight = 32;
+            for (std::uint32_t level = 0; level < lumin::render::bloomLevelCount; ++level) {
+                expectedWidth = std::max((expectedWidth + 1U) / 2U, 1U);
+                expectedHeight = std::max((expectedHeight + 1U) / 2U, 1U);
+                require(effects.bloomDownsample[level].width == expectedWidth &&
+                            effects.bloomDownsample[level].height == expectedHeight &&
+                            effects.bloomDownsampleFramebuffers[level] && effects.bloomDownsampleBindings[level],
+                        "Bloom downsample levels must halve the extent and own complete pass state.");
+                if (level < lumin::render::bloomUpsampleLevelCount) {
+                    require(effects.bloomUpsample[level].width == expectedWidth &&
+                                effects.bloomUpsample[level].height == expectedHeight &&
+                                effects.bloomUpsampleFramebuffers[level] && effects.bloomUpsampleBindings[level],
+                            "Bloom upsample levels must mirror their downsample extent and own complete pass state.");
+                }
+            }
+            require(effects.bloomOutputFramebuffer && effects.bloomCompositeBinding,
+                    "Bloom composite must own a full-resolution framebuffer and descriptor set.");
             for (const lumin::render::GpuTexture& shadow : frame.shadowCascades) {
                 require(desc(shadow).width == lumin::render::shadowMapResolution &&
                             desc(shadow).height == lumin::render::shadowMapResolution && desc(shadow).isRenderTarget &&
@@ -514,15 +571,17 @@ namespace {
                     "Uninitialized history imports must use NvRHI's supported Common/Undefined source state.");
 
             const nvrhi::BindingSetDesc* setDesc = postFx.bindingSet(frameIndex)->getDesc();
-            require(setDesc != nullptr && setDesc->bindings.size() == 14,
-                    "Every frame binding set must contain bindings 0-13.");
-            for (std::uint32_t binding = 0; binding < 14; ++binding) {
+            require(setDesc != nullptr && setDesc->bindings.size() == 15,
+                    "Every frame binding set must contain bindings 0-14.");
+            for (std::uint32_t binding = 0; binding < 15; ++binding) {
                 require(setDesc->bindings[binding].slot == binding,
-                        "Every frame binding set must preserve shader binding numbers 0-13.");
+                        "Every frame binding set must preserve shader binding numbers 0-14.");
             }
             const std::uint32_t previousIndex = (frameIndex + 1) % 2;
             require(setDesc->bindings[6].resourceHandle == postFx.frame(previousIndex).history.texture.Get(),
                     "Binding 6 must sample the previous frame slot's history texture.");
+            require(setDesc->bindings[14].resourceHandle == effects.bloomOutput.texture.Get(),
+                    "Binding 14 must sample the current frame slot's Bloom HDR output.");
         }
 
         postFx.markHistoryValid(0);
@@ -606,7 +665,7 @@ int main() {
     verifyFailureRollback();
     verifyMalformedExtent();
     verifyForbiddenTokens();
-    std::puts("PASS: Raster and PostFX owners expose independent frame resources, CSM=4, and bindings 0-13.");
+    std::puts("PASS: Raster/PostFX owners expose independent frame resources, CSM=4, Bloom=6 down/5 up.");
     std::puts("PASS: history Unknown/ShaderResource states and invalidate semantics are preserved.");
     std::puts("PASS: second-slot binding failure rolls back to zero live handles.");
     std::puts("PASS: empty extents are rejected with zero live handles.");

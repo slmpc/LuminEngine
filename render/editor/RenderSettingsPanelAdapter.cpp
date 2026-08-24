@@ -33,6 +33,7 @@ namespace lumin::render::editor {
         state_->store->set(pipelines::feature_ids::globalIllumination(), editable_.globalIllumination);
         state_->store->set(pipelines::feature_ids::lightingComposite(), editable_.directLighting);
         state_->store->set(pipelines::feature_ids::temporalAa(), editable_.temporalAa);
+        state_->store->set(pipelines::feature_ids::bloom(), editable_.bloom);
         state_->store->set(pipelines::feature_ids::toneMapping(), editable_.toneMapping);
         state_->store->set(pipelines::feature_ids::atmosphere(), editable_.atmosphere);
         return state_->store->snapshot();

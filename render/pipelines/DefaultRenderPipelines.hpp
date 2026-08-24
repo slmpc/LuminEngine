@@ -58,6 +58,7 @@ namespace lumin::render::pipelines {
         [[nodiscard]] const core::FeatureId& denoising();
         [[nodiscard]] const core::FeatureId& lightingComposite();
         [[nodiscard]] const core::FeatureId& temporalAa();
+        [[nodiscard]] const core::FeatureId& bloom();
         [[nodiscard]] const core::FeatureId& toneMapping();
         [[nodiscard]] const core::FeatureId& presentation();
 

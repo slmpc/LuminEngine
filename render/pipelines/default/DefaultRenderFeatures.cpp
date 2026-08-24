@@ -784,8 +784,7 @@ namespace lumin::render {
         const bool resetCameraHistory = !hasSubmittedFrame_ || diffuseAction == core::HistoryAction::FullReset ||
                                         specularAction == core::HistoryAction::FullReset;
         const glm::mat4& previousView = resetCameraHistory ? sceneData.camera.view : previousView_;
-        const glm::mat4& previousProjection =
-            resetCameraHistory ? sceneData.camera.projection : previousProjection_;
+        const glm::mat4& previousProjection = resetCameraHistory ? sceneData.camera.projection : previousProjection_;
         const glm::vec2 previousJitter = resetCameraHistory ? sceneData.camera.jitter : previousJitter_;
         gi::NrdCameraData cameraData;
         cameraData.viewToClip = matrixElements(sceneData.camera.projection);
@@ -818,9 +817,8 @@ namespace lumin::render {
             const glm::vec2 currentJitterUv{
                 -sceneData.camera.jitter.x / static_cast<float>(context.identity().extent.width),
                 sceneData.camera.jitter.y / static_cast<float>(context.identity().extent.height)};
-            const glm::vec2 previousJitterUv{
-                -previousJitter.x / static_cast<float>(context.identity().extent.width),
-                previousJitter.y / static_cast<float>(context.identity().extent.height)};
+            const glm::vec2 previousJitterUv{-previousJitter.x / static_cast<float>(context.identity().extent.width),
+                                             previousJitter.y / static_cast<float>(context.identity().extent.height)};
             const gi::RtDiNrdGraphOutput prepared = runtime.directNrdInputs->record(
                 context.frameGraph(),
                 gi::RtDiNrdFrameParameters{
@@ -932,12 +930,10 @@ namespace lumin::render {
                 runtime.pendingIndirectNrdFrame = runtime.indirectNrd->record(
                     context.frameGraph(), nrdParameters,
                     gi::NrdSignalBindings{
-                        .diffuseRadianceHitDistance =
-                            gi::NrdTextureBinding{signals.diffuseRadianceHitDistance.Get(),
-                                                  graphSignals.diffuseRadianceHitDistance},
-                        .specularRadianceHitDistance =
-                            gi::NrdTextureBinding{signals.specularRadianceHitDistance.Get(),
-                                                  graphSignals.specularRadianceHitDistance},
+                        .diffuseRadianceHitDistance = gi::NrdTextureBinding{signals.diffuseRadianceHitDistance.Get(),
+                                                                            graphSignals.diffuseRadianceHitDistance},
+                        .specularRadianceHitDistance = gi::NrdTextureBinding{signals.specularRadianceHitDistance.Get(),
+                                                                             graphSignals.specularRadianceHitDistance},
                         .viewZ = gi::NrdTextureBinding{signals.viewZ.Get(), graphSignals.viewZ},
                         .normalRoughness =
                             gi::NrdTextureBinding{signals.normalRoughness.Get(), graphSignals.normalRoughness},
@@ -967,38 +963,38 @@ namespace lumin::render {
                                                        .readyPass = signalReadyPass,
                                                        .format = specularInput->getDesc().format,
                                                        .extent = context.identity().extent};
-            denoised.combined.readyPass = runtime.indirectComposite->record(
-                context.frameGraph(),
-                gi::GiCompositeFrameParameters{
-                    .frameSlot = context.identity().frameSlot,
-                    .extent = context.identity().extent,
-                    .cameraPosition = glm::vec3{sceneData.camera.position},
-                    .mode = gi::GiCompositeMode::Indirect,
-                    .frameSlotFenceWaited = true,
-                },
-                gi::GiCompositeResources{
-                    .diffuseRadianceHitDistance = diffuseInput,
-                    .specularRadianceHitDistance = specularInput,
-                    .position = surface.worldPositionHitDistance.texture,
-                    .normalRoughness = surface.normalRoughness.texture,
-                    .albedoMetallic = surface.albedoMetallic.texture,
-                    .materialId = surface.materialId.texture,
-                    .materials = data.sceneDescriptors.materials,
-                    .fallbackRadiance = surface.directRadiance.texture,
-                    .output = denoised.combined.texture,
-                },
-                gi::GiCompositeGraphResources{
-                    .diffuseRadianceHitDistance = diffuseGraphInput,
-                    .specularRadianceHitDistance = specularGraphInput,
-                    .position = surface.worldPositionHitDistance.graphResource,
-                    .normalRoughness = surface.normalRoughness.graphResource,
-                    .albedoMetallic = surface.albedoMetallic.graphResource,
-                    .materialId = surface.materialId.graphResource,
-                    .materials = data.materials,
-                    .fallbackRadiance = surface.directRadiance.graphResource,
-                    .output = denoised.combined.graphResource,
-                },
-                signalReadyPass);
+            denoised.combined.readyPass =
+                runtime.indirectComposite->record(context.frameGraph(),
+                                                  gi::GiCompositeFrameParameters{
+                                                      .frameSlot = context.identity().frameSlot,
+                                                      .extent = context.identity().extent,
+                                                      .cameraPosition = glm::vec3{sceneData.camera.position},
+                                                      .mode = gi::GiCompositeMode::Indirect,
+                                                      .frameSlotFenceWaited = true,
+                                                  },
+                                                  gi::GiCompositeResources{
+                                                      .diffuseRadianceHitDistance = diffuseInput,
+                                                      .specularRadianceHitDistance = specularInput,
+                                                      .position = surface.worldPositionHitDistance.texture,
+                                                      .normalRoughness = surface.normalRoughness.texture,
+                                                      .albedoMetallic = surface.albedoMetallic.texture,
+                                                      .materialId = surface.materialId.texture,
+                                                      .materials = data.sceneDescriptors.materials,
+                                                      .fallbackRadiance = surface.directRadiance.texture,
+                                                      .output = denoised.combined.texture,
+                                                  },
+                                                  gi::GiCompositeGraphResources{
+                                                      .diffuseRadianceHitDistance = diffuseGraphInput,
+                                                      .specularRadianceHitDistance = specularGraphInput,
+                                                      .position = surface.worldPositionHitDistance.graphResource,
+                                                      .normalRoughness = surface.normalRoughness.graphResource,
+                                                      .albedoMetallic = surface.albedoMetallic.graphResource,
+                                                      .materialId = surface.materialId.graphResource,
+                                                      .materials = data.materials,
+                                                      .fallbackRadiance = surface.directRadiance.graphResource,
+                                                      .output = denoised.combined.graphResource,
+                                                  },
+                                                  signalReadyPass);
         }
 #endif
 #endif
@@ -1171,18 +1167,126 @@ namespace lumin::render {
             nullptr);
     }
 
+    void pipelines::DefaultRenderPipelineSession::addBloomFeaturePasses(core::RenderFeatureFrameContext& context) {
+        const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
+        const BloomSettings& settings = sceneData.settings.get<BloomSettings>(pipelines::feature_ids::bloom());
+        const core::TemporalOutputData& temporal = context.blackboard().get<core::TemporalOutputData>();
+        core::BloomOutputData& bloom = context.blackboard().get<core::BloomOutputData>();
+        FrameGraph& graph = context.frameGraph();
+        if (!settings.enabled) {
+            graph.addPass(
+                "Bloom bypass", FrameGraphPassType::Transfer,
+                [&temporal, &bloom](FrameGraphBuilder& builder) {
+                    builder.readTexture(temporal.color.graphResource, nvrhi::ResourceStates::CopySource);
+                    builder.writeTexture(bloom.color.graphResource, nvrhi::ResourceStates::CopyDest);
+                },
+                [source = temporal.color.texture, output = bloom.color.texture](const FrameGraphContext& frameContext) {
+                    frameContext.commandList->copyTexture(output, nvrhi::TextureSlice{}, source, nvrhi::TextureSlice{});
+                });
+            return;
+        }
+
+        const std::uint32_t frameIndex = context.identity().frameSlot.value();
+        const PostFxFrameResources& resources = postFxResources_.frame(frameIndex);
+        FrameGraphResourceImporter* importer = context.blackboard().get<FrameImportServices>().importer;
+        if (importer == nullptr) {
+            throw std::logic_error("Bloom requires the current FrameGraph importer.");
+        }
+        const nvrhi::ResourceStates initialState =
+            bloomChainInitialized_[frameIndex] ? nvrhi::ResourceStates::ShaderResource : nvrhi::ResourceStates::Common;
+        const auto importTexture = [importer, initialState](std::string name, const GpuTexture& texture) {
+            FrameGraphTextureDesc desc;
+            desc.texture = texture.texture;
+            desc.initialState = initialState;
+            desc.finalState = nvrhi::ResourceStates::ShaderResource;
+            return importer->importTexture(std::move(name), desc);
+        };
+
+        std::array<FrameGraphResourceHandle, bloomLevelCount> downsample{};
+        std::array<FrameGraphResourceHandle, bloomUpsampleLevelCount> upsample{};
+        for (std::uint32_t level = 0; level < bloomLevelCount; ++level) {
+            downsample[level] =
+                importTexture("bloom.downsample." + std::to_string(level), resources.bloomDownsample[level]);
+        }
+        for (std::uint32_t level = 0; level < bloomUpsampleLevelCount; ++level) {
+            upsample[level] = importTexture("bloom.upsample." + std::to_string(level), resources.bloomUpsample[level]);
+        }
+
+        const auto makeConstants = [&settings](const GpuTexture& source, float mode) {
+            BloomPushConstants constants;
+            constants.filter =
+                glm::vec4{1.0f / static_cast<float>(source.width), 1.0f / static_cast<float>(source.height),
+                          settings.threshold, settings.softKnee};
+            constants.controls = glm::vec4{settings.intensity, settings.radius, mode, 0.0f};
+            return constants;
+        };
+
+        for (std::uint32_t level = 0; level < bloomLevelCount; ++level) {
+            const FrameGraphResourceHandle source = level == 0 ? temporal.color.graphResource : downsample[level - 1];
+            const GpuTexture& sourceTexture = level == 0 ? resources.taaResolved : resources.bloomDownsample[level - 1];
+            const GpuTexture& outputTexture = resources.bloomDownsample[level];
+            const BloomPushConstants constants = makeConstants(sourceTexture, level == 0 ? 0.0f : 1.0f);
+            graph.addPass(
+                "Bloom downsample " + std::to_string(level), FrameGraphPassType::Graphics,
+                [source, output = downsample[level]](FrameGraphBuilder& builder) {
+                    builder.readTexture(source, nvrhi::ResourceStates::ShaderResource);
+                    builder.writeTexture(output, nvrhi::ResourceStates::RenderTarget);
+                },
+                [this, framebuffer = resources.bloomDownsampleFramebuffers[level],
+                 binding = resources.bloomDownsampleBindings[level], width = outputTexture.width,
+                 height = outputTexture.height, constants](const FrameGraphContext& frameContext) {
+                    recordBloomPass(*frameContext.commandList, *framebuffer, binding, width, height, constants);
+                });
+        }
+
+        for (std::uint32_t level = bloomUpsampleLevelCount; level-- > 0;) {
+            const bool readsSmallestDownsample = level + 1 == bloomLevelCount - 1;
+            const FrameGraphResourceHandle source =
+                readsSmallestDownsample ? downsample[level + 1] : upsample[level + 1];
+            const GpuTexture& sourceTexture =
+                readsSmallestDownsample ? resources.bloomDownsample[level + 1] : resources.bloomUpsample[level + 1];
+            const GpuTexture& outputTexture = resources.bloomUpsample[level];
+            const BloomPushConstants constants = makeConstants(sourceTexture, 2.0f);
+            graph.addPass(
+                "Bloom upsample " + std::to_string(level), FrameGraphPassType::Graphics,
+                [source, base = downsample[level], output = upsample[level]](FrameGraphBuilder& builder) {
+                    builder.readTexture(source, nvrhi::ResourceStates::ShaderResource);
+                    builder.readTexture(base, nvrhi::ResourceStates::ShaderResource);
+                    builder.writeTexture(output, nvrhi::ResourceStates::RenderTarget);
+                },
+                [this, framebuffer = resources.bloomUpsampleFramebuffers[level],
+                 binding = resources.bloomUpsampleBindings[level], width = outputTexture.width,
+                 height = outputTexture.height, constants](const FrameGraphContext& frameContext) {
+                    recordBloomPass(*frameContext.commandList, *framebuffer, binding, width, height, constants);
+                });
+        }
+
+        const BloomPushConstants compositeConstants = makeConstants(resources.bloomUpsample[0], 3.0f);
+        graph.addPass(
+            "Bloom composite", FrameGraphPassType::Graphics,
+            [&temporal, &bloom, bloomInput = upsample[0]](FrameGraphBuilder& builder) {
+                builder.readTexture(temporal.color.graphResource, nvrhi::ResourceStates::ShaderResource);
+                builder.readTexture(bloomInput, nvrhi::ResourceStates::ShaderResource);
+                builder.writeTexture(bloom.color.graphResource, nvrhi::ResourceStates::RenderTarget);
+            },
+            [this, framebuffer = resources.bloomOutputFramebuffer, binding = resources.bloomCompositeBinding,
+             width = resources.bloomOutput.width, height = resources.bloomOutput.height,
+             compositeConstants](const FrameGraphContext& frameContext) {
+                recordBloomPass(*frameContext.commandList, *framebuffer, binding, width, height, compositeConstants);
+            });
+    }
+
     void
     pipelines::DefaultRenderPipelineSession::addToneMappingFeaturePasses(core::RenderFeatureFrameContext& context) {
-        const core::TemporalOutputData& temporal = context.blackboard().get<core::TemporalOutputData>();
+        const core::BloomOutputData& bloom = context.blackboard().get<core::BloomOutputData>();
         core::ViewportOutputData& viewport = context.blackboard().get<core::ViewportOutputData>();
         const PostProcessPassData& postProcess = context.blackboard().get<PostProcessPassData>();
         const std::uint32_t frameIndex = context.identity().frameSlot.value();
         FrameGraph& graph = context.frameGraph();
         graph.addPass(
             "Tonemap", FrameGraphPassType::Graphics,
-            [&temporal, &viewport](FrameGraphBuilder& builder) {
-                builder.readTexture(temporal.color.graphResource, nvrhi::ResourceStates::ShaderResource);
-                builder.readTexture(temporal.historyWrite.graphResource, nvrhi::ResourceStates::ShaderResource);
+            [&bloom, &viewport](FrameGraphBuilder& builder) {
+                builder.readTexture(bloom.color.graphResource, nvrhi::ResourceStates::ShaderResource);
                 builder.writeTexture(viewport.color.graphResource, nvrhi::ResourceStates::RenderTarget);
             },
             [this, frameIndex,
@@ -1280,6 +1384,22 @@ namespace lumin::render {
         const PostFxFrameResources& frame = postFxResources_.frame(frameIndex);
         commandList.copyTexture(frame.history.texture, nvrhi::TextureSlice{}, frame.taaResolved.texture,
                                 nvrhi::TextureSlice{});
+    }
+
+    void pipelines::DefaultRenderPipelineSession::recordBloomPass(nvrhi::ICommandList& commandList,
+                                                                  nvrhi::IFramebuffer& framebuffer,
+                                                                  const nvrhi::BindingSetHandle& bindingSet,
+                                                                  std::uint32_t width, std::uint32_t height,
+                                                                  const BloomPushConstants& constants) {
+        nvrhi::GraphicsState state;
+        state.setPipeline(bloomPipeline_)
+            .setFramebuffer(&framebuffer)
+            .setViewport(nvrhi::ViewportState().addViewportAndScissorRect(
+                nvrhi::Viewport(static_cast<float>(width), static_cast<float>(height))))
+            .addBindingSet(bindingSet);
+        commandList.setGraphicsState(state);
+        commandList.setPushConstants(&constants, sizeof(constants));
+        commandList.draw(nvrhi::DrawArguments().setVertexCount(3));
     }
 
 } // namespace lumin::render

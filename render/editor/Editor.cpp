@@ -399,6 +399,12 @@ namespace lumin::editor {
             settings.shadows.splitLambda = value.splitLambda;
             settings.shadows.maxDistance = value.shadowDistance;
             settings.toneMapping.exposure = value.exposure;
+            settings.toneMapping.agxEnabled = value.agx;
+            settings.bloom.enabled = value.bloom;
+            settings.bloom.intensity = std::max(value.bloomIntensity, 0.0f);
+            settings.bloom.threshold = std::max(value.bloomThreshold, 0.0f);
+            settings.bloom.softKnee = std::clamp(value.bloomSoftKnee, 0.0f, 1.0f);
+            settings.bloom.radius = std::clamp(value.bloomRadius, 0.5f, 4.0f);
         }
 
         void refreshLogicSnapshot() {
@@ -547,7 +553,13 @@ namespace lumin::editor {
                     .taaSharpness = settings.temporalAa.sharpness,
                     .splitLambda = settings.shadows.splitLambda,
                     .shadowDistance = settings.shadows.maxDistance,
-                    .exposure = settings.toneMapping.exposure};
+                    .exposure = settings.toneMapping.exposure,
+                    .agx = settings.toneMapping.agxEnabled,
+                    .bloom = settings.bloom.enabled,
+                    .bloomIntensity = settings.bloom.intensity,
+                    .bloomThreshold = settings.bloom.threshold,
+                    .bloomSoftKnee = settings.bloom.softKnee,
+                    .bloomRadius = settings.bloom.radius};
         }
 
         void clearSelection() noexcept {
@@ -2041,8 +2053,21 @@ namespace lumin::editor {
                 ImGui::SliderFloat("##taaSharpness", &settings.temporalAa.sharpness, 0.0f, 1.0f, "%.2f");
             }
             section("Tonemap");
+            ImGui::Checkbox("AgX", &settings.toneMapping.agxEnabled);
             propertyLabel("Exposure");
             ImGui::SliderFloat("##exposure", &settings.toneMapping.exposure, 0.1f, 4.0f);
+            section("Bloom");
+            ImGui::Checkbox("Bloom", &settings.bloom.enabled);
+            if (settings.bloom.enabled) {
+                propertyLabel("Intensity");
+                ImGui::SliderFloat("##bloomIntensity", &settings.bloom.intensity, 0.0f, 0.5f, "%.3f");
+                propertyLabel("Threshold");
+                ImGui::SliderFloat("##bloomThreshold", &settings.bloom.threshold, 0.0f, 8.0f, "%.2f");
+                propertyLabel("Soft knee");
+                ImGui::SliderFloat("##bloomSoftKnee", &settings.bloom.softKnee, 0.0f, 1.0f, "%.2f");
+                propertyLabel("Radius");
+                ImGui::SliderFloat("##bloomRadius", &settings.bloom.radius, 0.5f, 4.0f, "%.2f");
+            }
             section("Lighting");
             propertyLabel("Sun direction");
             scene::DirectionalLight sun = snapshot().environment.sun;

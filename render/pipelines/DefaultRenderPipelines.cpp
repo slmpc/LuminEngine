@@ -83,6 +83,11 @@ namespace lumin::render::pipelines {
             return id;
         }
 
+        const core::FeatureId& bloom() {
+            static const core::FeatureId id{"postfx.bloom"};
+            return id;
+        }
+
         const core::FeatureId& toneMapping() {
             static const core::FeatureId id{"postfx.tone-mapping"};
             return id;
@@ -169,8 +174,13 @@ namespace lumin::render::pipelines {
         temporalFeature.historyDomains = {HistoryDomain::Taa};
         add(std::move(temporalFeature));
 
+        FeatureDescriptor bloomFeature = graphicsFeature(bloom());
+        bloomFeature.requiredInputs = {frame_data::scene(), frame_data::temporalOutput()};
+        bloomFeature.outputs = {frame_data::bloomOutput()};
+        add(std::move(bloomFeature));
+
         FeatureDescriptor toneMappingFeature = graphicsFeature(toneMapping());
-        toneMappingFeature.requiredInputs = {frame_data::scene(), frame_data::temporalOutput()};
+        toneMappingFeature.requiredInputs = {frame_data::scene(), frame_data::bloomOutput()};
         toneMappingFeature.outputs = {frame_data::viewportOutput()};
         add(std::move(toneMappingFeature));
 
@@ -275,7 +285,24 @@ namespace lumin::render::pipelines {
                 }
             },
             [](const ToneMappingSettings& before, const ToneMappingSettings& after) {
-                return before.exposure == after.exposure
+                return before.exposure == after.exposure && before.agxEnabled == after.agxEnabled
+                           ? FeatureSettingsChange{}
+                           : FeatureSettingsChange{.impact = SettingsChangeImpact::HotUpdate, .historyReasons = {}};
+            });
+        registry.registerSchema<BloomSettings>(
+            feature_ids::bloom(), BloomSettings{},
+            [](const BloomSettings& value) {
+                if (!std::isfinite(value.intensity) || !std::isfinite(value.threshold) ||
+                    !std::isfinite(value.softKnee) || !std::isfinite(value.radius) || value.intensity < 0.0f ||
+                    value.threshold < 0.0f || value.softKnee < 0.0f || value.softKnee > 1.0f || value.radius < 0.5f ||
+                    value.radius > 4.0f) {
+                    throw std::invalid_argument("Bloom settings contain an invalid filter range.");
+                }
+            },
+            [](const BloomSettings& before, const BloomSettings& after) {
+                return before.enabled == after.enabled && before.intensity == after.intensity &&
+                               before.threshold == after.threshold && before.softKnee == after.softKnee &&
+                               before.radius == after.radius
                            ? FeatureSettingsChange{}
                            : FeatureSettingsChange{.impact = SettingsChangeImpact::HotUpdate, .historyReasons = {}};
             });
@@ -298,6 +325,7 @@ namespace lumin::render::pipelines {
         store.set(feature_ids::globalIllumination(), settings.globalIllumination);
         store.set(feature_ids::lightingComposite(), settings.directLighting);
         store.set(feature_ids::temporalAa(), settings.temporalAa);
+        store.set(feature_ids::bloom(), settings.bloom);
         store.set(feature_ids::toneMapping(), settings.toneMapping);
         store.set(feature_ids::atmosphere(), settings.atmosphere);
         return store.snapshot();
@@ -310,6 +338,7 @@ namespace lumin::render::pipelines {
             .globalIllumination = snapshot.get<GlobalIlluminationSettings>(feature_ids::globalIllumination()),
             .temporalAa = snapshot.get<TemporalAaSettings>(feature_ids::temporalAa()),
             .toneMapping = snapshot.get<ToneMappingSettings>(feature_ids::toneMapping()),
+            .bloom = snapshot.get<BloomSettings>(feature_ids::bloom()),
             .atmosphere = snapshot.get<AtmosphereRenderSettings>(feature_ids::atmosphere()),
         };
     }

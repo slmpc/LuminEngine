@@ -54,6 +54,9 @@ namespace lumin::render {
             ShaderId::DeferredVertex, ShaderId::DeferredFragment, postFxResources_.lightingFormat(), lightingLayouts);
         temporalAaPipeline_ = fullscreenPipelineFactory_.create(ShaderId::TaaVertex, ShaderId::TaaFragment,
                                                                 postFxResources_.lightingFormat(), fullscreenLayouts);
+        const std::array<nvrhi::BindingLayoutHandle, 1> bloomLayouts = {postFxResources_.bloomBindingLayout()};
+        bloomPipeline_ = fullscreenPipelineFactory_.create(ShaderId::BloomVertex, ShaderId::BloomFragment,
+                                                           postFxResources_.lightingFormat(), bloomLayouts);
         toneMappingPipeline_ =
             fullscreenPipelineFactory_.create(ShaderId::PostProcessVertex, ShaderId::PostProcessFragment,
                                               context_.swapchainRhiFormat(), fullscreenLayouts);
@@ -80,6 +83,7 @@ namespace lumin::render {
         createModelRenderer();
         createHybridGiResources();
         frameResourcesInitialized_.fill(false);
+        bloomChainInitialized_.fill(false);
         directRadianceInitialized_.fill(false);
         directNrdOutputInitialized_.fill(false);
         globalIlluminationInitialized_.fill(false);
@@ -376,6 +380,7 @@ namespace lumin::render {
         directLightingBindingSets_.fill(nullptr);
         modelRenderer_.reset();
         toneMappingPipeline_ = nullptr;
+        bloomPipeline_ = nullptr;
         temporalAaPipeline_ = nullptr;
         directLightingPipeline_ = nullptr;
         skyPipeline_ = nullptr;

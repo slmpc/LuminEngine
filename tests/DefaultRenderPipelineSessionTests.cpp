@@ -45,13 +45,14 @@ namespace {
         require(position != std::string::npos, "NvRHI frame recorder entry point is missing.");
         for (const std::string& pass : std::vector<std::string>{
                  "CSM cascade ", "G-buffer", "globalIllumination_->addPasses", "Procedural sky", "Deferred lighting",
-                 "TAA resolve", "TAA history copy", "TAA history ready", "Tonemap", "ImGui overlay", "Present"}) {
+                 "TAA resolve", "TAA history copy", "TAA history ready", "Bloom downsample ", "Bloom upsample ",
+                 "Bloom composite", "Tonemap", "ImGui overlay", "Present"}) {
             position = requireAfter(level, pass, position);
         }
         require(level.find("builder.readTexture(lighting.combined.graphResource") != std::string::npos,
                 "Sky must read the GI output to preserve its FrameGraph dependency.");
-        require(level.find("builder.readTexture(temporal.historyWrite.graphResource") != std::string::npos,
-                "Tonemap must read historyWrite to preserve history-ready ordering.");
+        require(level.find("builder.readTexture(bloom.color.graphResource") != std::string::npos,
+                "Tonemap must read the completed Bloom HDR output.");
         require(
             level.find("builder.readTexture(viewport.color.graphResource, nvrhi::ResourceStates::ShaderResource)") !=
                 std::string::npos,
@@ -60,18 +61,23 @@ namespace {
         for (const std::string& contract :
              {"frame_data::atmosphere()", "frame_data::shadows()", "frame_data::rasterSurface()",
               "frame_data::indirectLighting()", "frame_data::denoisedLighting()", "frame_data::sceneHdr()",
-              "frame_data::temporalOutput()", "frame_data::viewportOutput()", "frame_data::present()"}) {
+              "frame_data::temporalOutput()", "frame_data::bloomOutput()", "frame_data::viewportOutput()",
+              "frame_data::present()"}) {
             require(pipelineDefinition.find(contract) != std::string::npos,
                     "Default recipes must declare every typed producer output.");
         }
-        std::cout << "PASS_ORDER=CSMx4>G-buffer>GI>sky>deferred>TAA>history-copy>history-ready>tonemap>ImGui>Present\n";
+        std::cout << "PASS_ORDER=CSMx4>G-buffer>GI>sky>deferred>TAA>Bloom6x5>tonemap>ImGui>Present\n";
     }
 
     void verifyNvrhiRecording(const std::string& level) {
         require(level.find("frame->commandList") != std::string::npos,
                 "drawFrame must use the active NvRHI command list.");
-        require(level.find("copyTexture") != std::string::npos, "TAA history must be copied with copyTexture.");
-        require(countOccurrences(level, "copyTexture") == 1, "Exactly one TAA history copy must be recorded.");
+        require(level.find("recordHistoryCopy") != std::string::npos &&
+                    level.find("frame.history.texture, nvrhi::TextureSlice{}, frame.taaResolved.texture") !=
+                        std::string::npos,
+                "TAA history must be copied explicitly from the unsharpened resolve.");
+        require(countOccurrences(level, "copyTexture") == 2,
+                "Only TAA history and the disabled-Bloom bypass may use texture copies.");
         require(level.find("ResourceStates::CopySource") != std::string::npos,
                 "TAA history source must be declared CopySource.");
         require(level.find("ResourceStates::CopyDest") != std::string::npos,
@@ -122,7 +128,7 @@ namespace {
             require(level.find(forbidden) == std::string::npos,
                     std::string{"Forbidden direct Vulkan recorder token remains: "} + std::string{forbidden});
         }
-        std::cout << "TAA_COPY_COUNT=1\nMODEL_CAPABILITIES=explicit-device-derived\n";
+        std::cout << "COPY_PASSES=TAA-history,Bloom-bypass\nMODEL_CAPABILITIES=explicit-device-derived\n";
     }
 
     void verifyHistoryAndErrorPaths(const std::string& level) {
@@ -260,8 +266,7 @@ namespace {
         const std::size_t runtimeCommit = level.find("commitHybridSurfaceFeature(identity)", submit);
         const std::size_t plannerCommit = level.find("runtime.scenePlanner->commit", runtimeCommit);
         const std::size_t physicalCommit = level.find("runtime.sceneResources->finishUpdate", plannerCommit);
-        const std::size_t directNrdCommit =
-            level.find("runtime.directNrd->commitSubmittedFrame", physicalCommit);
+        const std::size_t directNrdCommit = level.find("runtime.directNrd->commitSubmittedFrame", physicalCommit);
         const std::size_t directInputsCommit =
             level.find("runtime.directNrdInputs->commitSubmittedFrame", directNrdCommit);
         const std::size_t indirectNrdCommit =
@@ -270,16 +275,15 @@ namespace {
                     physicalCommit < directNrdCommit && directNrdCommit < directInputsCommit &&
                     directInputsCommit < indirectNrdCommit,
                 "Hybrid candidates must publish only after queue submission succeeds.");
-        require(level.find("runtime.sceneResources->finishUpdate(*runtime.pendingSceneUpdate, false)") !=
-                        std::string::npos &&
-                    level.find("runtime.sharc->discardPendingFrame()") != std::string::npos &&
-                    level.find("runtime.indirectLighting->discardPendingFrame()") != std::string::npos &&
-                    level.find("runtime.directNrd->discardFrame(*runtime.pendingDirectNrdFrame)") !=
-                        std::string::npos &&
-                    level.find("runtime.directNrdInputs->discardPendingFrame()") != std::string::npos &&
-                    level.find("runtime.indirectNrd->discardFrame(*runtime.pendingIndirectNrdFrame)") !=
-                        std::string::npos,
-                "Record and submit failures must discard every hybrid GI candidate.");
+        require(
+            level.find("runtime.sceneResources->finishUpdate(*runtime.pendingSceneUpdate, false)") !=
+                    std::string::npos &&
+                level.find("runtime.sharc->discardPendingFrame()") != std::string::npos &&
+                level.find("runtime.indirectLighting->discardPendingFrame()") != std::string::npos &&
+                level.find("runtime.directNrd->discardFrame(*runtime.pendingDirectNrdFrame)") != std::string::npos &&
+                level.find("runtime.directNrdInputs->discardPendingFrame()") != std::string::npos &&
+                level.find("runtime.indirectNrd->discardFrame(*runtime.pendingIndirectNrdFrame)") != std::string::npos,
+            "Record and submit failures must discard every hybrid GI candidate.");
         require(level.find("DefaultRenderPipelineKind::Hybrid") != std::string::npos &&
                     level.find("rt.surface.world-position") != std::string::npos &&
                     level.find("hybridData.active = hybridPathActive") != std::string::npos,
@@ -291,10 +295,10 @@ namespace {
     void verifyHybridLightingResourceIsolation(const std::string& level) {
         for (const std::string& token : {
                  ".directRadiance = postFx.directRadiance.texture",
-                 "importer.importTexture(\"rt.surface.direct-radiance\"",
-                 "importer.importTexture(\"rt.direct-radiance.denoised\"",
-                 "importer.importTexture(\"global-illumination.output\"",
-                 "importer.importTexture(\"lighting.hdr\"",
+                 "\"rt.surface.direct-radiance\"",
+                 "\"rt.direct-radiance.denoised\"",
+                 "\"global-illumination.output\"",
+                 "\"lighting.hdr\"",
                  ".directRadiance = lighting.direct.texture",
                  ".indirectRadiance = lighting.combined.texture",
                  ".output = sceneHdr.color.texture",
@@ -410,7 +414,7 @@ namespace {
         const std::string fullscreenPosition =
             "output.position = float4(triangleUv.x * 2.0 - 1.0, 1.0 - triangleUv.y * 2.0, 0.0, 1.0);";
         for (const std::string& path : {"shaders/Deferred.slang", "shaders/ao/AoCommon.slang", "shaders/Sky.slang",
-                                        "shaders/Taa.slang", "shaders/PostProcess.slang"}) {
+                                        "shaders/Taa.slang", "shaders/Bloom.slang", "shaders/PostProcess.slang"}) {
             require(readSource(path).find(fullscreenPosition) != std::string::npos,
                     path + " must map logical top UV to positive clip-space Y.");
         }
@@ -488,7 +492,33 @@ namespace {
         require(level.find("frame.history.texture, nvrhi::TextureSlice{}, frame.taaResolved.texture") !=
                     std::string::npos,
                 "TAA history must copy the unsharpened resolve so RCAS cannot accumulate edge halos.");
-        std::cout << "TAA_SHARPEN=FSR1-RCAS;DOMAIN=post-ACES-linear;HISTORY=unsharpened\n";
+        std::cout << "TAA_SHARPEN=FSR1-RCAS;DOMAIN=post-tonemap-linear;HISTORY=unsharpened\n";
+    }
+
+    void verifyBloomAndAgxIntegration(const std::string& level) {
+        const std::string bloom = readSource("shaders/Bloom.slang");
+        const std::string postProcess = readSource("shaders/PostProcess.slang");
+        require(bloom.find("float3 downsample13Tap") != std::string::npos &&
+                    bloom.find("(a + b + c + d) * 0.125") != std::string::npos &&
+                    bloom.find("float3 upsampleTent") != std::string::npos &&
+                    bloom.find("result += sourceTexture.SampleLevel") != std::string::npos,
+                "Bloom must retain the Alpha-Piscium 13-tap downsample and tent upsample filters.");
+        require(level.find("bloomLevelCount = 6") != std::string::npos ||
+                    readSource("render/features/postfx/PostFxResources.hpp").find("bloomLevelCount = 6") !=
+                        std::string::npos,
+                "Bloom must keep a six-level HDR downsample pyramid.");
+        require(level.find("\"Bloom bypass\", FrameGraphPassType::Transfer") != std::string::npos &&
+                    level.find("\"Bloom downsample \"") != std::string::npos &&
+                    level.find("\"Bloom upsample \"") != std::string::npos &&
+                    level.find("\"Bloom composite\", FrameGraphPassType::Graphics") != std::string::npos,
+                "Bloom must expose bypass, downsample, upsample, and composite FrameGraph passes.");
+        require(postProcess.find("[[vk::binding(14, 0)]] Texture2D<float4> bloomTexture") != std::string::npos &&
+                    postProcess.find("float3 agxInset") != std::string::npos &&
+                    postProcess.find("agxDefaultContrastApprox") != std::string::npos &&
+                    postProcess.find("frame.tonemapOptions.w >= 0.5 ? agxDisplayLinear(exposed) : acesFilm(exposed)") !=
+                        std::string::npos,
+                "Tone Mapping must read Bloom HDR and switch between AgX and the ACES fallback.");
+        std::cout << "BLOOM=6-down,5-up,composite;TONEMAP=AgX-or-ACES\n";
     }
 
     void verifyHybridRaySidednessContract() {
@@ -533,6 +563,7 @@ int main() {
         verifyHybridMotionContract();
         verifyStableTaaContract(level);
         verifyFsr1RcasIntegration(level);
+        verifyBloomAndAgxIntegration(level);
         verifyHybridRaySidednessContract();
         std::cout << "DEFAULT_PIPELINE_SESSION=PASS\n";
         return 0;

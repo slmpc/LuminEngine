@@ -13,6 +13,7 @@
 
 namespace {
 
+    using lumin::render::BloomPushConstants;
     using lumin::render::ObjectData;
     using lumin::render::PostProcessUniforms;
 
@@ -32,6 +33,10 @@ namespace {
     static_assert(offsetof(PostProcessUniforms, tonemapOptions) == 480);
     static_assert(offsetof(PostProcessUniforms, ambientOcclusionOptions) == 496);
     static_assert(offsetof(PostProcessUniforms, temporalOptions) == 512);
+
+    static_assert(std::is_standard_layout_v<BloomPushConstants>);
+    static_assert(sizeof(BloomPushConstants) == 32 && alignof(BloomPushConstants) == 16);
+    static_assert(offsetof(BloomPushConstants, filter) == 0 && offsetof(BloomPushConstants, controls) == 16);
 
     static_assert(sizeof(ObjectData) == 240 && alignof(ObjectData) == 16);
     static_assert(offsetof(ObjectData, model) == 0 && offsetof(ObjectData, previousModel) == 64 &&

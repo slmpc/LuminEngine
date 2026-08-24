@@ -23,6 +23,23 @@ namespace lumin::render {
     inline constexpr std::uint32_t fullscreenSamplerBinding = fullscreenSampledImageCount;
     /// Fullscreen set 0 的 post-process constant buffer binding。
     inline constexpr std::uint32_t fullscreenUniformBinding = fullscreenSampledImageCount + 1;
+    /// Tone Mapping 读取 Bloom HDR 输出的额外 sampled image binding。
+    inline constexpr std::uint32_t fullscreenBloomBinding = fullscreenUniformBinding + 1;
+    /// 固定 Bloom downsample 层级数；每级尺寸向上取整减半。
+    inline constexpr std::uint32_t bloomLevelCount = 6;
+    /// Bloom upsample 输出数量；最小层直接作为第一次上采样输入。
+    inline constexpr std::uint32_t bloomUpsampleLevelCount = bloomLevelCount - 1;
+
+    /** Bloom shader 的 push-constant ABI。 */
+    struct alignas(16) BloomPushConstants {
+        /// xy 为 source texel size，z 为高光阈值，w 为 soft-knee 比例。
+        glm::vec4 filter{0.0f};
+        /// x 为合成强度，y 为扩散半径，z 为 pass mode，w 保留。
+        glm::vec4 controls{0.0f};
+    };
+
+    static_assert(sizeof(BloomPushConstants) == 32);
+    static_assert(alignof(BloomPushConstants) == 16);
 
     /** 与内置 Raster/PostFX shader 共享的逐帧常量 ABI。 */
     struct alignas(16) PostProcessUniforms {
@@ -44,7 +61,7 @@ namespace lumin::render {
         glm::vec4 renderSize{1.0f};
         /// Feature 开关及 TAA 历史有效性，布局由 shader ABI 文档定义。
         glm::vec4 renderOptions{0.0f};
-        /// x 为 exposure，y 表示交换链是否为 sRGB，z 为 TAA 后 FSR1 RCAS 锐度。
+        /// x 为 exposure，y 表示交换链是否为 sRGB，z 为 TAA 后 FSR1 RCAS 锐度，w 表示启用 AgX。
         glm::vec4 tonemapOptions{1.0f, 0.0f, 0.0f, 0.0f};
         /// x 为 AO mode，y 为世界半径，z 为强度，w 为几何偏置。
         glm::vec4 ambientOcclusionOptions{0.0f, 1.0f, 1.0f, 0.08f};
@@ -77,6 +94,24 @@ namespace lumin::render {
         GpuTexture taaResolved;
         /// 只在 queue submit 成功后发布的新 TAA history。
         GpuTexture history;
+        /// 从 TAA HDR 逐级下采样得到的 Bloom 金字塔。
+        std::array<GpuTexture, bloomLevelCount> bloomDownsample;
+        /// 从最小 Bloom 层逐级累加得到的上采样金字塔。
+        std::array<GpuTexture, bloomUpsampleLevelCount> bloomUpsample;
+        /// Bloom 合成后的全分辨率 HDR 输出；关闭 Bloom 时保存 TAA 直通副本。
+        GpuTexture bloomOutput;
+        /// Bloom downsample 颜色附件，生命周期与对应纹理一致。
+        std::array<nvrhi::FramebufferHandle, bloomLevelCount> bloomDownsampleFramebuffers{};
+        /// Bloom upsample 颜色附件，生命周期与对应纹理一致。
+        std::array<nvrhi::FramebufferHandle, bloomUpsampleLevelCount> bloomUpsampleFramebuffers{};
+        /// 全分辨率 Bloom 合成颜色附件。
+        nvrhi::FramebufferHandle bloomOutputFramebuffer;
+        /// 每级 downsample 的 source/base/sampler 绑定。
+        std::array<nvrhi::BindingSetHandle, bloomLevelCount> bloomDownsampleBindings{};
+        /// 每级 upsample 的 lower/base/sampler 绑定。
+        std::array<nvrhi::BindingSetHandle, bloomUpsampleLevelCount> bloomUpsampleBindings{};
+        /// 最终 TAA 与 Bloom 合成绑定。
+        nvrhi::BindingSetHandle bloomCompositeBinding;
         /// 当前帧槽可写的 shader constant buffer。
         GpuBuffer uniforms;
     };
@@ -150,6 +185,8 @@ namespace lumin::render {
         [[nodiscard]] nvrhi::SamplerHandle sampler() const noexcept;
         /// 返回 fullscreen set 0 layout；handle 由本对象拥有。
         [[nodiscard]] nvrhi::BindingLayoutHandle bindingLayout() const noexcept;
+        /// 返回 Bloom set 0 layout；handle 由本对象拥有。
+        [[nodiscard]] nvrhi::BindingLayoutHandle bloomBindingLayout() const noexcept;
         /**
          * @brief 返回指定帧槽的 fullscreen set 0。
          * @throws std::out_of_range 帧槽索引越界时抛出。
@@ -162,6 +199,7 @@ namespace lumin::render {
         [[nodiscard]] GpuTexture createTexture(const nvrhi::TextureDesc& desc) const;
         void createImages(std::uint32_t width, std::uint32_t height);
         void createSamplerAndBindings(std::span<const PostFxBindingInputs> inputs);
+        void createBloomBindings();
 
         nvrhi::IDevice& device_;
         GpuResourceManager resources_;
@@ -170,6 +208,7 @@ namespace lumin::render {
         nvrhi::Format lightingFormat_ = nvrhi::Format::UNKNOWN;
         nvrhi::SamplerHandle sampler_;
         nvrhi::BindingLayoutHandle bindingLayout_;
+        nvrhi::BindingLayoutHandle bloomBindingLayout_;
         std::vector<nvrhi::BindingSetHandle> bindingSets_;
         std::vector<bool> historyValid_;
         std::vector<bool> historyInitialized_;

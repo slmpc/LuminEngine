@@ -127,6 +127,18 @@ namespace lumin::project {
         float splitLambda = 0.68f;
         float shadowDistance = 200.0f;
         float exposure = 1.0f;
+        /** 是否使用 AgX 显示变换；关闭时回退到 ACES Filmic。 */
+        bool agx = true;
+        /** 是否启用 HDR 多 Pass Bloom。 */
+        bool bloom = true;
+        /** Bloom 合成强度，必须为有限非负数。 */
+        float bloomIntensity = 0.08f;
+        /** Bloom 高光提取阈值，必须为有限非负数。 */
+        float bloomThreshold = 1.0f;
+        /** Bloom 阈值的柔和过渡宽度，范围为 `[0, 1]`。 */
+        float bloomSoftKnee = 0.5f;
+        /** Bloom 上采样扩散半径，范围为 `[0.5, 4]`。 */
+        float bloomRadius = 1.0f;
 
         friend bool operator==(const ProjectRenderSettings&, const ProjectRenderSettings&) = default;
     };

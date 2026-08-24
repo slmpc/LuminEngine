@@ -68,6 +68,22 @@ namespace lumin::render {
     struct ToneMappingSettings {
         /// 线性曝光倍率，必须为有限非负数。
         float exposure = 1.0f;
+        /// 为 `true` 时使用 AgX 显示变换；关闭时回退到原有 ACES Filmic 曲线。
+        bool agxEnabled = true;
+    };
+
+    /** Bloom Feature 的逐帧配置。 */
+    struct BloomSettings {
+        /// 为 `false` 时跳过多级滤波，仅保留 HDR 直通输出。
+        bool enabled = true;
+        /// 合成到 HDR 场景的泛光倍率，必须为有限非负数。
+        float intensity = 0.08f;
+        /// 开始提取泛光的线性 HDR 亮度阈值，必须为有限非负数。
+        float threshold = 1.0f;
+        /// 阈值附近的柔和过渡宽度，范围为 `[0, 1]`。
+        float softKnee = 0.5f;
+        /// 上采样 tent filter 的扩散半径，范围为 `[0.5, 4]`。
+        float radius = 1.0f;
     };
 
     /** 大气 feature 的渲染质量配置；物理参数属于 scene::SceneEnvironment。 */
@@ -94,6 +110,8 @@ namespace lumin::render {
         TemporalAaSettings temporalAa;
         /// Tone mapping 设置。
         ToneMappingSettings toneMapping;
+        /// HDR Bloom 设置。
+        BloomSettings bloom;
         /// 大气渲染设置。
         AtmosphereRenderSettings atmosphere;
     };
