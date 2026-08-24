@@ -93,8 +93,9 @@ model/lighting 子 revision。网格或模型成员变化会递增 `topologyRevi
 6. TAA 解析，读取 HDR 光照、运动矢量和上一帧历史。
 7. 将解析结果传输复制到当前历史图像。
 8. Bloom 对 TAA HDR 输出执行六级下采样、五级上采样并合成；关闭时以一次传输复制保持相同输出契约。
-9. 默认使用 AgX 显示变换完成 tone mapping，也可回退到 ACES Filmic，并输出到 renderer 拥有的 Viewport 纹理。
-10. ImGui 在独立的 `Viewport` dock window 中采样该纹理，将完整编辑器界面合成到交换链并呈现。
+9. 自动曝光对 Bloom HDR 输出执行中心加权测光，并将候选 EV 状态写入当前帧槽的 1x1 纹理。
+10. 默认使用 AgX 显示变换完成 tone mapping，也可回退到 ACES Filmic，并输出到 renderer 拥有的 Viewport 纹理。
+11. ImGui 在独立的 `Viewport` dock window 中采样该纹理，将完整编辑器界面合成到交换链并呈现。
 
 所有图形通道均使用 Vulkan 1.3 动态渲染。`PipelineFactory` 支持 MRT 流水线和仅含顶点阶段的深度流水线；
 项目不会直接创建 `VkRenderPass` 或 `VkFramebuffer`，NvRHI framebuffer 只描述 dynamic rendering attachment。
@@ -261,8 +262,8 @@ texture 和 AS；该回收是逐帧资源生命周期的一部分，不能仅依
 读取其设备地址和内容前可见；不得仅依靠命令录制顺序、CPU fence 或捕获工具带来的隐式串行化。
 
 `PostFxResources` 为每个帧槽分别拥有 RTDI raw direct radiance、Direct NRD composite、标准 RGBA 全局光照和最终 HDR
-lighting 四张图像，四者不得发生物理资源别名；同一 owner 还持有 TAA 结果、六级 Bloom downsample、五级 upsample 与
-全分辨率 Bloom HDR 输出。全局光照图像的 RGB 保存线性间接辐射亮度，alpha 保存环境可见度；
+lighting 四张图像，四者不得发生物理资源别名；同一 owner 还持有 TAA 结果、六级 Bloom downsample、五级 upsample、
+全分辨率 Bloom HDR 输出与 1x1 自动曝光状态。全局光照图像的 RGB 保存线性间接辐射亮度，alpha 保存环境可见度；
 禁用全局光照时的中性值为 `{0, 0, 0, 1}`。屏幕空间 AO 后端写入 `{0, 0, 0, ao}`，延迟光照按
 `legacyAmbient * globalIllumination.a + globalIllumination.rgb` 合成环境光。该图像同时支持颜色附件、采样和存储图像
 用途，以便后续后端使用光线追踪或计算通道写入相同契约。
@@ -337,16 +338,24 @@ downsample base 相加。最终 pass 按 intensity 将 Bloom 合成回未 tone-m
 不会改变纹理数量或 recipe，因此开关和四个参数均为热更新。关闭 Bloom 时固定执行一次从 `taaResolved` 到
 `BloomOutputData` 的全分辨率复制，Tone Mapping 不需要条件化输入契约。
 
-AgX 是默认显示变换：先应用 inset 矩阵，在 16.5 EV 范围内进行 log2 编码和默认对比度近似，再通过 outset 矩阵返回
-显示颜色。其结果在 RCAS 与 render-target transfer function 前恢复到 display-linear；关闭 AgX 时沿用 ACES Filmic。
-曝光和 AgX/ACES 选择都是逐帧 uniform 热更新，不重建 pipeline，也不重置 TAA 历史。
+AgX 是默认显示变换：先应用 inset 矩阵，在标准非对称窗口 `[-12.47393, 4.026069] EV` 内进行 log2 编码和默认对比度
+近似，再通过 outset 矩阵返回显示颜色。该窗口相对旧的对称 16.5 EV 窗口提供约 `+4.22 EV` 的中灰标定，适配 Lumin
+默认 `Exposure = 1.0` 的 scene-linear 信号。其结果在 RCAS 与 render-target transfer function 前恢复到 display-linear；
+关闭 AgX 时沿用 ACES Filmic。
+
+自动曝光参考 Alpha-Piscium：以 16x16 网格采样 Bloom 后的 HDR 画面，使用中心优先权重，同时计算平均显示亮度、5%
+高光目标和 3% 阴影目标；平均亮度分支与高光/阴影保护分支合成目标 EV，再按 `Brighten speed` 或 `Darken speed` 和最近
+成功提交帧的真实时间间隔进行指数适应。最终曝光倍率为
+`Exposure * exp2(autoExposureEV + compensationEV)`。自动曝光状态按帧槽持有；当前帧读取上一成功帧槽并写入当前候选，
+只有 queue submit 成功后候选才成为有效历史。首次使用、资源重建或重新开启自动曝光时直接从当前画面初始化，不读取未
+初始化纹理。自动曝光开关和参数、手动曝光以及 AgX/ACES 选择都是热更新，不重建 pipeline，也不重置 TAA 历史。
 
 ## 资源所有权
 
 `RasterFeatureResources` 拥有两个帧槽的 G-buffer 与四张 CSM 阴影图；`PostFxResources` 独立拥有 RTDI raw 直接光、
-Direct NRD 输出、标准全局光照、最终 HDR 光照、TAA 解析/历史、Bloom 金字塔与全分辨率 HDR 输出、后处理 uniform
-buffer、sampler、framebuffer 和 descriptor set。每个帧槽固定拥有六张 downsample 与五张 upsample 图像；Bloom 的
-descriptor set 和 framebuffer 必须在任一底层纹理前统一释放。
+Direct NRD 输出、标准全局光照、最终 HDR 光照、TAA 解析/历史、Bloom 金字塔与全分辨率 HDR 输出、1x1 自动曝光历史、
+后处理 uniform buffer、sampler、framebuffer 和 descriptor set。每个帧槽固定拥有六张 downsample 与五张 upsample
+图像；Bloom/自动曝光的 descriptor set 和 framebuffer 必须在任一底层纹理前统一释放。
 四路光照目标保持独立，因此 direct/indirect GI composite 不能覆盖各自输入，最终 Hybrid composite 也不会对同一纹理
 执行读写。PostFX 只通过显式
 `PostFxBindingInputs` 接收上游 sampled handle，销毁时必须先释放 descriptor set，再释放 Raster producer。

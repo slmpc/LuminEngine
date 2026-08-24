@@ -13,13 +13,14 @@
 
 namespace {
 
+    using lumin::render::AutoExposurePushConstants;
     using lumin::render::BloomPushConstants;
     using lumin::render::ObjectData;
     using lumin::render::PostProcessUniforms;
 
     // CPU 结构必须逐字段匹配 shaders/include/PostProcessUniforms.slang 的反射布局。
     static_assert(std::is_standard_layout_v<PostProcessUniforms>);
-    static_assert(sizeof(PostProcessUniforms) == 528);
+    static_assert(sizeof(PostProcessUniforms) == 544);
     static_assert(alignof(PostProcessUniforms) == 16);
     static_assert(offsetof(PostProcessUniforms, inverseViewProjection) == 0);
     static_assert(offsetof(PostProcessUniforms, viewProjection) == 64);
@@ -33,6 +34,12 @@ namespace {
     static_assert(offsetof(PostProcessUniforms, tonemapOptions) == 480);
     static_assert(offsetof(PostProcessUniforms, ambientOcclusionOptions) == 496);
     static_assert(offsetof(PostProcessUniforms, temporalOptions) == 512);
+    static_assert(offsetof(PostProcessUniforms, autoExposureOptions) == 528);
+
+    static_assert(std::is_standard_layout_v<AutoExposurePushConstants>);
+    static_assert(sizeof(AutoExposurePushConstants) == 32 && alignof(AutoExposurePushConstants) == 16);
+    static_assert(offsetof(AutoExposurePushConstants, exposureRange) == 0 &&
+                  offsetof(AutoExposurePushConstants, adaptation) == 16);
 
     static_assert(std::is_standard_layout_v<BloomPushConstants>);
     static_assert(sizeof(BloomPushConstants) == 32 && alignof(BloomPushConstants) == 16);

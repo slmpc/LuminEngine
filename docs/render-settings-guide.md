@@ -49,13 +49,20 @@ store；packet 只携带不可变快照。同步 Renderer 相对最近一次成�
 Editor 的 `Render / GI` 面板提供以下设置：
 
 - `AgX`：默认开启；关闭后使用 ACES Filmic。
+- `Exposure`：保留原有线性倍率语义，默认 `1.0`；自动曝光开启时仍作为最终倍率参与合成。
+- `Auto exposure`：默认开启；在 GPU 上对 Bloom 后的 scene-linear HDR 画面测光。
+- `Compensation EV`：默认 `0 EV`，范围 `[-8, 8]`，叠加到自动曝光结果。
+- `EV range`：默认 `[-3, 10] EV`，完整 schema 范围 `[-16, 16]`，最小值与最大值至少相差 `0.1 EV`。
+- `Brighten speed` / `Darken speed`：默认 `3.0/s` 与 `1.0/s`，按真实成功提交帧间隔进行指数适应。
 - `Bloom`：默认开启；关闭时跳过多级滤波并复制 TAA HDR 输出。
 - `Intensity`：默认 `0.08`，面板范围 `[0, 0.5]`。
 - `Threshold`：默认 `1.0`，面板范围 `[0, 8]`。
 - `Soft knee`：默认 `0.5`，范围 `[0, 1]`。
 - `Radius`：默认 `1.0`，范围 `[0.5, 4]`。
 
-项目保存时，这些值写入场景 JSON 的 `projectSettings.render`：`agx`、`bloom`、`bloomIntensity`、
-`bloomThreshold`、`bloomSoftKnee` 和 `bloomRadius`。旧项目缺失字段时使用上述默认值；加载后会将越界的有限数值
+项目保存时，这些值写入场景 JSON 的 `projectSettings.render`：`agx`、`autoExposure`、
+`exposureCompensationEv`、`minimumExposureEv`、`maximumExposureEv`、`adaptationSpeedUp`、
+`adaptationSpeedDown`、`bloom`、`bloomIntensity`、`bloomThreshold`、`bloomSoftKnee` 和 `bloomRadius`。旧项目缺失字段时
+使用上述默认值；加载后会将越界的有限数值
 归一化到 schema 支持范围，非有限值由 typed schema 拒绝。Editor 修改设置后仍通过 `ProjectSession` 的
 dirty/save 流程持久化，不直接写项目文件。

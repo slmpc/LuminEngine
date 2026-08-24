@@ -27,7 +27,8 @@ namespace lumin::render {
 
     PostFxResources::PostFxResources(nvrhi::IDevice& device, std::uint32_t frameSlotCount)
         : device_(device), resources_(device), frames_(frameSlotCount), bindingSets_(frameSlotCount),
-          historyValid_(frameSlotCount, false), historyInitialized_(frameSlotCount, false) {
+          historyValid_(frameSlotCount, false), historyInitialized_(frameSlotCount, false),
+          autoExposureValid_(frameSlotCount, false), autoExposureInitialized_(frameSlotCount, false) {
         if (frameSlotCount == 0) {
             throw std::invalid_argument("PostFX resources require at least one frame slot.");
         }
@@ -62,6 +63,7 @@ namespace lumin::render {
             createImages(width, height);
             createSamplerAndBindings(inputs);
             createBloomBindings();
+            createAutoExposureBindings();
         } catch (...) {
             destroy();
             throw;
@@ -72,6 +74,8 @@ namespace lumin::render {
         std::ranges::fill(bindingSets_, nullptr);
         // 描述符与 framebuffer 可能强引用跨帧槽资源，必须在任一底层纹理前统一释放。
         for (PostFxFrameResources& frameResources : frames_) {
+            frameResources.autoExposureBinding = nullptr;
+            frameResources.autoExposureFramebuffer = nullptr;
             frameResources.bloomCompositeBinding = nullptr;
             frameResources.bloomUpsampleBindings.fill(nullptr);
             frameResources.bloomDownsampleBindings.fill(nullptr);
@@ -79,11 +83,13 @@ namespace lumin::render {
             frameResources.bloomUpsampleFramebuffers.fill(nullptr);
             frameResources.bloomDownsampleFramebuffers.fill(nullptr);
         }
+        autoExposureBindingLayout_ = nullptr;
         bloomBindingLayout_ = nullptr;
         bindingLayout_ = nullptr;
         sampler_ = nullptr;
         for (PostFxFrameResources& frameResources : frames_) {
             resources_.destroyBuffer(frameResources.uniforms);
+            resources_.destroyTexture(frameResources.autoExposure);
             resources_.destroyTexture(frameResources.bloomOutput);
             for (GpuTexture& texture : frameResources.bloomUpsample) {
                 resources_.destroyTexture(texture);
@@ -102,6 +108,8 @@ namespace lumin::render {
         lightingFormat_ = nvrhi::Format::UNKNOWN;
         std::ranges::fill(historyValid_, false);
         std::ranges::fill(historyInitialized_, false);
+        std::ranges::fill(autoExposureValid_, false);
+        std::ranges::fill(autoExposureInitialized_, false);
     }
 
     void PostFxResources::updateUniforms(std::uint32_t frameIndex, const PostProcessUniforms& uniforms) {
@@ -115,6 +123,10 @@ namespace lumin::render {
         std::ranges::fill(historyValid_, false);
     }
 
+    void PostFxResources::invalidateAutoExposure() noexcept {
+        std::ranges::fill(autoExposureValid_, false);
+    }
+
     void PostFxResources::markHistoryValid(std::uint32_t frameIndex) {
         if (frameIndex >= frames_.size()) {
             throw std::out_of_range("PostFX history frame index is out of range.");
@@ -122,6 +134,15 @@ namespace lumin::render {
         historyValid_[frameIndex] = true;
         historyInitialized_[frameIndex] = true;
         frames_[frameIndex].history.initialState = nvrhi::ResourceStates::ShaderResource;
+    }
+
+    void PostFxResources::markAutoExposureValid(std::uint32_t frameIndex) {
+        if (frameIndex >= autoExposureValid_.size()) {
+            throw std::out_of_range("PostFX auto-exposure frame index is out of range.");
+        }
+        autoExposureValid_[frameIndex] = true;
+        autoExposureInitialized_[frameIndex] = true;
+        frames_[frameIndex].autoExposure.initialState = nvrhi::ResourceStates::ShaderResource;
     }
 
     const PostFxFrameResources& PostFxResources::frame(std::uint32_t frameIndex) const {
@@ -153,6 +174,25 @@ namespace lumin::render {
         return historyInitialized(frameIndex) ? nvrhi::ResourceStates::ShaderResource : nvrhi::ResourceStates::Common;
     }
 
+    bool PostFxResources::autoExposureValid(std::uint32_t frameIndex) const {
+        if (frameIndex >= autoExposureValid_.size()) {
+            throw std::out_of_range("PostFX auto-exposure frame index is out of range.");
+        }
+        return autoExposureValid_[frameIndex];
+    }
+
+    bool PostFxResources::autoExposureInitialized(std::uint32_t frameIndex) const {
+        if (frameIndex >= autoExposureInitialized_.size()) {
+            throw std::out_of_range("PostFX auto-exposure frame index is out of range.");
+        }
+        return autoExposureInitialized_[frameIndex];
+    }
+
+    nvrhi::ResourceStates PostFxResources::autoExposureInitialState(std::uint32_t frameIndex) const {
+        return autoExposureInitialized(frameIndex) ? nvrhi::ResourceStates::ShaderResource
+                                                   : nvrhi::ResourceStates::Common;
+    }
+
     nvrhi::Format PostFxResources::lightingFormat() const noexcept {
         return lightingFormat_;
     }
@@ -171,6 +211,10 @@ namespace lumin::render {
 
     nvrhi::BindingLayoutHandle PostFxResources::bloomBindingLayout() const noexcept {
         return bloomBindingLayout_;
+    }
+
+    nvrhi::BindingLayoutHandle PostFxResources::autoExposureBindingLayout() const noexcept {
+        return autoExposureBindingLayout_;
     }
 
     nvrhi::BindingSetHandle PostFxResources::bindingSet(std::uint32_t frameIndex) const {
@@ -269,6 +313,11 @@ namespace lumin::render {
             desc.isShaderResource = true;
             frameResources.bloomOutput = createTexture(desc);
 
+            desc = textureDesc(1, 1, lightingFormat_, "Auto exposure state");
+            desc.isRenderTarget = true;
+            desc.isShaderResource = true;
+            frameResources.autoExposure = createTexture(desc);
+
             nvrhi::BufferDesc bufferDesc;
             bufferDesc.byteSize = sizeof(PostProcessUniforms);
             bufferDesc.debugName = "Post-process uniforms";
@@ -278,6 +327,8 @@ namespace lumin::render {
         }
         std::ranges::fill(historyValid_, false);
         std::ranges::fill(historyInitialized_, false);
+        std::ranges::fill(autoExposureValid_, false);
+        std::ranges::fill(autoExposureInitialized_, false);
     }
 
     void PostFxResources::createSamplerAndBindings(std::span<const PostFxBindingInputs> inputs) {
@@ -298,6 +349,7 @@ namespace lumin::render {
         layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(fullscreenSamplerBinding));
         layoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(fullscreenUniformBinding));
         layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(fullscreenBloomBinding));
+        layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(fullscreenAutoExposureBinding));
         bindingLayout_ = device_.createBindingLayout(layoutDesc);
         if (!bindingLayout_) {
             throw std::runtime_error("Failed to create the fullscreen binding layout.");
@@ -329,6 +381,8 @@ namespace lumin::render {
                 nvrhi::BindingSetItem::ConstantBuffer(fullscreenUniformBinding, frameResources.uniforms.buffer));
             bindingDesc.addItem(
                 nvrhi::BindingSetItem::Texture_SRV(fullscreenBloomBinding, frameResources.bloomOutput.texture));
+            bindingDesc.addItem(
+                nvrhi::BindingSetItem::Texture_SRV(fullscreenAutoExposureBinding, frameResources.autoExposure.texture));
             bindingSets_[frameIndex] = device_.createBindingSet(bindingDesc, bindingLayout_);
             if (!bindingSets_[frameIndex]) {
                 throw std::runtime_error("Failed to create a fullscreen binding set.");
@@ -386,6 +440,39 @@ namespace lumin::render {
             }
             frame.bloomCompositeBinding = createBinding(frame.bloomUpsample[0].texture, frame.taaResolved.texture);
             frame.bloomOutputFramebuffer = createFramebuffer(frame.bloomOutput.texture);
+        }
+    }
+
+    void PostFxResources::createAutoExposureBindings() {
+        nvrhi::BindingLayoutDesc layoutDesc;
+        layoutDesc.setVisibility(nvrhi::ShaderType::Pixel).setRegisterSpaceAndDescriptorSet(0);
+        layoutDesc.bindingOffsets.setShaderResourceOffset(0).setSamplerOffset(0).setConstantBufferOffset(0);
+        layoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(AutoExposurePushConstants)))
+            .addItem(nvrhi::BindingLayoutItem::Texture_SRV(0))
+            .addItem(nvrhi::BindingLayoutItem::Texture_SRV(1))
+            .addItem(nvrhi::BindingLayoutItem::Sampler(2));
+        autoExposureBindingLayout_ = device_.createBindingLayout(layoutDesc);
+        if (!autoExposureBindingLayout_) {
+            throw std::runtime_error("Failed to create the auto-exposure binding layout.");
+        }
+
+        for (std::uint32_t frameIndex = 0; frameIndex < frames_.size(); ++frameIndex) {
+            PostFxFrameResources& frame = frames_[frameIndex];
+            const PostFxFrameResources& previousFrame = frames_[(frameIndex + frames_.size() - 1) % frames_.size()];
+            nvrhi::BindingSetDesc bindingDesc;
+            bindingDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(AutoExposurePushConstants)))
+                .addItem(nvrhi::BindingSetItem::Texture_SRV(0, frame.bloomOutput.texture))
+                .addItem(nvrhi::BindingSetItem::Texture_SRV(1, previousFrame.autoExposure.texture))
+                .addItem(nvrhi::BindingSetItem::Sampler(2, sampler_));
+            frame.autoExposureBinding = device_.createBindingSet(bindingDesc, autoExposureBindingLayout_);
+            if (!frame.autoExposureBinding) {
+                throw std::runtime_error("Failed to create an auto-exposure binding set.");
+            }
+            frame.autoExposureFramebuffer =
+                device_.createFramebuffer(nvrhi::FramebufferDesc().addColorAttachment(frame.autoExposure.texture));
+            if (!frame.autoExposureFramebuffer) {
+                throw std::runtime_error("Failed to create an auto-exposure framebuffer.");
+            }
         }
     }
 

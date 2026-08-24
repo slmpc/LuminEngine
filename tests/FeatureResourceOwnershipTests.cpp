@@ -458,11 +458,12 @@ namespace {
         raster.create(64, 32);
         postFx.create(64, 32, bindingInputs(raster));
 
-        require(device.live.textures == 56,
-                "Two frame slots must own the Raster/PostFX set plus twelve Bloom textures.");
+        require(device.live.textures == 58,
+                "Two frame slots must own the Raster/PostFX set, Bloom textures, and exposure histories.");
         require(device.live.buffers == 2, "Two frame slots must own independent uniform buffers.");
-        require(device.live.bindingSets == 26, "Two frame slots must own fullscreen plus all Bloom pass binding sets.");
-        require(device.live.framebuffers == 24, "Two frame slots must own all Bloom pass framebuffers.");
+        require(device.live.bindingSets == 28,
+                "Two frame slots must own fullscreen, Bloom, and auto-exposure binding sets.");
+        require(device.live.framebuffers == 26, "Two frame slots must own all Bloom and auto-exposure framebuffers.");
         require(postFx.bindingSet(0) != postFx.bindingSet(1), "Frame-slot binding sets must be distinct.");
         require(lumin::render::shadowCascadeCount == 4, "The CSM cascade count must remain four.");
         require(raster.positionFormat() == nvrhi::Format::RGBA16_FLOAT &&
@@ -477,18 +478,21 @@ namespace {
                 "Texture formats must preserve the legacy preferred-format contract.");
 
         const auto* layout = postFx.bindingLayout()->getDesc();
-        require(layout != nullptr && layout->bindings.size() == 15, "Fullscreen layout must expose bindings 0-14.");
-        for (std::uint32_t binding = 0; binding < 15; ++binding) {
+        require(layout != nullptr && layout->bindings.size() == 16, "Fullscreen layout must expose bindings 0-15.");
+        for (std::uint32_t binding = 0; binding < 16; ++binding) {
             require(layout->bindings[binding].slot == binding,
-                    "Fullscreen binding numbers must remain contiguous 0-14.");
-            const nvrhi::ResourceType expected = binding < 12 || binding == 14 ? nvrhi::ResourceType::Texture_SRV
+                    "Fullscreen binding numbers must remain contiguous 0-15.");
+            const nvrhi::ResourceType expected = binding < 12 || binding >= 14 ? nvrhi::ResourceType::Texture_SRV
                                                  : binding == 12               ? nvrhi::ResourceType::Sampler
                                                                                : nvrhi::ResourceType::ConstantBuffer;
-            require(layout->bindings[binding].type == expected, "Fullscreen binding types must preserve 0-14.");
+            require(layout->bindings[binding].type == expected, "Fullscreen binding types must preserve 0-15.");
         }
         const auto* bloomLayout = postFx.bloomBindingLayout()->getDesc();
         require(bloomLayout != nullptr && bloomLayout->bindings.size() == 4,
                 "Bloom layout must expose push constants, two sampled images, and one sampler.");
+        const auto* autoExposureLayout = postFx.autoExposureBindingLayout()->getDesc();
+        require(autoExposureLayout != nullptr && autoExposureLayout->bindings.size() == 4,
+                "Auto-exposure layout must expose push constants, two sampled images, and one sampler.");
 
         for (std::uint32_t frameIndex = 0; frameIndex < 2; ++frameIndex) {
             const RasterFeatureFrameResources& frame = raster.frame(frameIndex);
@@ -538,6 +542,10 @@ namespace {
             require(desc(effects.bloomOutput).isRenderTarget && desc(effects.bloomOutput).isShaderResource &&
                         !desc(effects.bloomOutput).isUAV,
                     "Bloom output must remain a sampled HDR render target without storage usage.");
+            require(effects.autoExposure.width == 1 && effects.autoExposure.height == 1 &&
+                        desc(effects.autoExposure).isRenderTarget && desc(effects.autoExposure).isShaderResource &&
+                        effects.autoExposureBinding && effects.autoExposureFramebuffer,
+                    "Auto exposure must own a sampled 1x1 render target and complete pass state per frame slot.");
             std::uint32_t expectedWidth = 64;
             std::uint32_t expectedHeight = 32;
             for (std::uint32_t level = 0; level < lumin::render::bloomLevelCount; ++level) {
@@ -569,19 +577,23 @@ namespace {
                     "History textures must begin in NvRHI's concrete first-use state.");
             require(postFx.historyInitialState(frameIndex) == nvrhi::ResourceStates::Common,
                     "Uninitialized history imports must use NvRHI's supported Common/Undefined source state.");
+            require(postFx.autoExposureInitialState(frameIndex) == nvrhi::ResourceStates::Common,
+                    "Uninitialized exposure histories must use Common as their first import state.");
 
             const nvrhi::BindingSetDesc* setDesc = postFx.bindingSet(frameIndex)->getDesc();
-            require(setDesc != nullptr && setDesc->bindings.size() == 15,
-                    "Every frame binding set must contain bindings 0-14.");
-            for (std::uint32_t binding = 0; binding < 15; ++binding) {
+            require(setDesc != nullptr && setDesc->bindings.size() == 16,
+                    "Every frame binding set must contain bindings 0-15.");
+            for (std::uint32_t binding = 0; binding < 16; ++binding) {
                 require(setDesc->bindings[binding].slot == binding,
-                        "Every frame binding set must preserve shader binding numbers 0-14.");
+                        "Every frame binding set must preserve shader binding numbers 0-15.");
             }
             const std::uint32_t previousIndex = (frameIndex + 1) % 2;
             require(setDesc->bindings[6].resourceHandle == postFx.frame(previousIndex).history.texture.Get(),
                     "Binding 6 must sample the previous frame slot's history texture.");
             require(setDesc->bindings[14].resourceHandle == effects.bloomOutput.texture.Get(),
                     "Binding 14 must sample the current frame slot's Bloom HDR output.");
+            require(setDesc->bindings[15].resourceHandle == effects.autoExposure.texture.Get(),
+                    "Binding 15 must sample the current frame slot's auto-exposure state.");
         }
 
         postFx.markHistoryValid(0);
@@ -592,11 +604,19 @@ namespace {
         postFx.invalidateHistory();
         require(!postFx.historyValid(0) && postFx.historyInitialized(0),
                 "invalidateHistory must preserve initialized history storage.");
+        postFx.markAutoExposureValid(0);
+        require(postFx.autoExposureValid(0) && postFx.autoExposureInitialized(0) &&
+                    postFx.autoExposureInitialState(0) == nvrhi::ResourceStates::ShaderResource,
+                "Successful auto exposure must publish a ShaderResource history state.");
+        postFx.invalidateAutoExposure();
+        require(!postFx.autoExposureValid(0) && postFx.autoExposureInitialized(0),
+                "Exposure invalidation must retain the initialized texture state.");
 
         postFx.destroy();
         raster.destroy();
-        require(!postFx.historyValid(0) && !postFx.historyInitialized(0),
-                "destroy must clear valid and initialized history state.");
+        require(!postFx.historyValid(0) && !postFx.historyInitialized(0) && !postFx.autoExposureValid(0) &&
+                    !postFx.autoExposureInitialized(0),
+                "destroy must clear TAA and exposure history state.");
         requireNoLiveHandles(device);
         const auto firstTexture = std::find(device.live.releases.begin(), device.live.releases.end(), "texture");
         const auto lastBindingSet = std::find(device.live.releases.rbegin(), device.live.releases.rend(), "bindingSet");
@@ -606,8 +626,9 @@ namespace {
 
         raster.create(16, 16);
         postFx.create(16, 16, bindingInputs(raster));
-        require(!postFx.historyValid(0) && !postFx.historyInitialized(0),
-                "create must clear valid and initialized history state.");
+        require(!postFx.historyValid(0) && !postFx.historyInitialized(0) && !postFx.autoExposureValid(0) &&
+                    !postFx.autoExposureInitialized(0),
+                "create must clear valid and initialized TAA/exposure history state.");
         postFx.destroy();
         raster.destroy();
         requireNoLiveHandles(device);

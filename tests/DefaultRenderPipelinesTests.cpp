@@ -126,6 +126,7 @@ namespace {
 
         ToneMappingSettings toneMapping = defaults.get<ToneMappingSettings>(pipelines::feature_ids::toneMapping());
         toneMapping.exposure = 1.5f;
+        toneMapping.exposureCompensationEv = 1.0f;
         store.set(pipelines::feature_ids::toneMapping(), toneMapping);
         const core::FeatureSettingsChange hotUpdate = schemas.diff(defaults, store.snapshot());
         require(core::hasAnyImpact(hotUpdate.impact, core::SettingsChangeImpact::HotUpdate) &&
@@ -181,6 +182,13 @@ namespace {
                 topologyStore.set(pipelines::feature_ids::toneMapping(), invalid);
             },
             "Default settings validators must reject invalid public values.");
+        requireThrows<std::invalid_argument>(
+            [&] {
+                ToneMappingSettings invalid;
+                invalid.minimumExposureEv = invalid.maximumExposureEv;
+                topologyStore.set(pipelines::feature_ids::toneMapping(), invalid);
+            },
+            "Auto exposure must reject an empty EV range.");
         requireThrows<std::invalid_argument>(
             [&] {
                 TemporalAaSettings invalid;

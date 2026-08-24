@@ -170,6 +170,11 @@ namespace lumin::render {
         const std::uint32_t imageIndex = identity.swapImage.value();
         const std::uint32_t width = identity.extent.width;
         const std::uint32_t height = identity.extent.height;
+        const auto sampledAt = std::chrono::steady_clock::now();
+        const float autoExposureDeltaSeconds =
+            lastSubmittedAt_.has_value()
+                ? std::clamp(std::chrono::duration<float>(sampledAt - *lastSubmittedAt_).count(), 1.0f / 240.0f, 0.25f)
+                : 1.0f / 60.0f;
         const float aspectRatio = static_cast<float>(width) / static_cast<float>(height);
         const core::CameraFrameData& camera = packet.camera;
         const glm::mat4 view = camera.view;
@@ -223,6 +228,7 @@ namespace lumin::render {
         };
         PostProcessPassData postProcess;
         postProcess.historyReadSlot = historyReadIndex;
+        postProcess.autoExposureDeltaSeconds = autoExposureDeltaSeconds;
         postProcess.uniforms.inverseViewProjection = glm::inverse(viewProjection);
         postProcess.uniforms.viewProjection = viewProjection;
         postProcess.uniforms.cascadeViewProjections = shadows.viewProjections;
@@ -246,6 +252,8 @@ namespace lumin::render {
         postProcess.uniforms.tonemapOptions.y = context_.swapchainIsSrgb() ? 1.0f : 0.0f;
         postProcess.uniforms.tonemapOptions.z = std::clamp(settings.temporalAa.sharpness, 0.0f, 1.0f);
         postProcess.uniforms.tonemapOptions.w = settings.toneMapping.agxEnabled ? 1.0f : 0.0f;
+        postProcess.uniforms.autoExposureOptions = glm::vec4{settings.toneMapping.autoExposureEnabled ? 1.0f : 0.0f,
+                                                             settings.toneMapping.exposureCompensationEv, 0.0f, 0.0f};
         postProcess.uniforms.ambientOcclusionOptions =
             glm::vec4{static_cast<float>(settings.globalIllumination.ambientOcclusionMode),
                       std::max(settings.globalIllumination.ambientOcclusionRadius, 0.05f),
@@ -403,6 +411,20 @@ namespace lumin::render {
         bloomOutput.color = textureFrameData(
             postFxFrame.bloomOutput,
             importer.importTexture("bloom.output", textureDesc(postFxFrame.bloomOutput, frameInitialState)));
+        if (settings.toneMapping.autoExposureEnabled) {
+            if (postFxResources_.autoExposureValid(historyReadIndex)) {
+                postProcess.autoExposureRead = textureFrameData(
+                    historyReadFrame.autoExposure,
+                    importer.importTexture("auto-exposure.read",
+                                           textureDesc(historyReadFrame.autoExposure,
+                                                       postFxResources_.autoExposureInitialState(historyReadIndex))));
+            }
+            postProcess.autoExposureWrite = textureFrameData(
+                postFxFrame.autoExposure,
+                importer.importTexture(
+                    "auto-exposure.write",
+                    textureDesc(postFxFrame.autoExposure, postFxResources_.autoExposureInitialState(frameIndex))));
+        }
 
         FrameGraphTextureDesc viewportDesc =
             textureDesc(viewportOutput_, viewportOutputInitialized_ ? nvrhi::ResourceStates::ShaderResource
@@ -493,6 +515,8 @@ namespace lumin::render {
             .usedDirectNrd = usedDirectNrd,
             .usedIndirectLighting = usedHybridPath && completedHybrid.globalIlluminationActive,
             .usedBloom = settings.bloom.enabled,
+            .usedAutoExposure = settings.toneMapping.autoExposureEnabled,
+            .sampledAt = sampledAt,
         };
     }
 

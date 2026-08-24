@@ -2,6 +2,7 @@ import PostProcessUniforms;
 import Fsr1Rcas;
 
 [[vk::binding(14, 0)]] Texture2D<float4> bloomTexture;
+[[vk::binding(15, 0)]] Texture2D<float4> autoExposureTexture;
 [[vk::binding(12, 0)]] SamplerState renderSampler;
 [[vk::binding(13, 0)]] ConstantBuffer<PostProcessUniforms> frame;
 
@@ -51,17 +52,21 @@ float3 agxDefaultContrastApprox(float3 value) {
 
 float3 agxDisplayLinear(float3 color) {
     color = max(agxInset(max(color, 0.0)), 1.0e-10);
-    const float dynamicRange = 16.5;
-    const float halfRange = dynamicRange * 0.5;
-    color = clamp(log2(color), -halfRange, halfRange);
-    color = (color + halfRange) / dynamicRange;
+    const float minimumEv = -12.47393;
+    const float maximumEv = 4.026069;
+    color = clamp(log2(color), minimumEv, maximumEv);
+    color = (color - minimumEv) / (maximumEv - minimumEv);
     color = agxDefaultContrastApprox(color);
     // AgX curve output is display encoded; return to linear before RCAS and the render-target transfer function.
     return pow(max(agxOutset(color), 0.0), 2.2);
 }
 
 float3 toDisplayLinear(float3 hdrColor) {
-    const float3 exposed = hdrColor * max(frame.tonemapOptions.x, 0.0);
+    const float autoExposureEv =
+        frame.autoExposureOptions.x >= 0.5 ? autoExposureTexture.Load(int3(0, 0, 0)).z : 0.0;
+    const float exposureMultiplier =
+        max(frame.tonemapOptions.x, 0.0) * exp2(autoExposureEv + frame.autoExposureOptions.y);
+    const float3 exposed = hdrColor * exposureMultiplier;
     return frame.tonemapOptions.w >= 0.5 ? agxDisplayLinear(exposed) : acesFilm(exposed);
 }
 

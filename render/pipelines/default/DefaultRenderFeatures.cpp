@@ -1278,15 +1278,47 @@ namespace lumin::render {
 
     void
     pipelines::DefaultRenderPipelineSession::addToneMappingFeaturePasses(core::RenderFeatureFrameContext& context) {
+        const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
+        const ToneMappingSettings& settings =
+            sceneData.settings.get<ToneMappingSettings>(pipelines::feature_ids::toneMapping());
         const core::BloomOutputData& bloom = context.blackboard().get<core::BloomOutputData>();
         core::ViewportOutputData& viewport = context.blackboard().get<core::ViewportOutputData>();
         const PostProcessPassData& postProcess = context.blackboard().get<PostProcessPassData>();
         const std::uint32_t frameIndex = context.identity().frameSlot.value();
         FrameGraph& graph = context.frameGraph();
+        if (settings.autoExposureEnabled) {
+            const PostFxFrameResources& resources = postFxResources_.frame(frameIndex);
+            const bool historyValid = postProcess.autoExposureRead.graphResource.isValid();
+            AutoExposurePushConstants constants;
+            constants.exposureRange = glm::vec4{settings.minimumExposureEv, settings.maximumExposureEv,
+                                                postProcess.autoExposureDeltaSeconds, historyValid ? 1.0f : 0.0f};
+            constants.adaptation = glm::vec4{settings.adaptationSpeedUp, settings.adaptationSpeedDown,
+                                             settings.agxEnabled ? 1.0f : 0.0f, 0.0f};
+            graph.addPass(
+                "Auto exposure", FrameGraphPassType::Graphics,
+                [&bloom, &postProcess, historyValid](FrameGraphBuilder& builder) {
+                    builder.readTexture(bloom.color.graphResource, nvrhi::ResourceStates::ShaderResource);
+                    if (historyValid) {
+                        builder.readTexture(postProcess.autoExposureRead.graphResource,
+                                            nvrhi::ResourceStates::ShaderResource);
+                    }
+                    builder.writeTexture(postProcess.autoExposureWrite.graphResource,
+                                         nvrhi::ResourceStates::RenderTarget);
+                },
+                [this, framebuffer = resources.autoExposureFramebuffer, binding = resources.autoExposureBinding,
+                 constants](const FrameGraphContext& frameContext) {
+                    recordAutoExposurePass(*frameContext.commandList, *framebuffer, binding, constants);
+                });
+        }
         graph.addPass(
             "Tonemap", FrameGraphPassType::Graphics,
-            [&bloom, &viewport](FrameGraphBuilder& builder) {
+            [&bloom, &viewport, &postProcess,
+             autoExposureEnabled = settings.autoExposureEnabled](FrameGraphBuilder& builder) {
                 builder.readTexture(bloom.color.graphResource, nvrhi::ResourceStates::ShaderResource);
+                if (autoExposureEnabled) {
+                    builder.readTexture(postProcess.autoExposureWrite.graphResource,
+                                        nvrhi::ResourceStates::ShaderResource);
+                }
                 builder.writeTexture(viewport.color.graphResource, nvrhi::ResourceStates::RenderTarget);
             },
             [this, frameIndex,
@@ -1396,6 +1428,20 @@ namespace lumin::render {
             .setFramebuffer(&framebuffer)
             .setViewport(nvrhi::ViewportState().addViewportAndScissorRect(
                 nvrhi::Viewport(static_cast<float>(width), static_cast<float>(height))))
+            .addBindingSet(bindingSet);
+        commandList.setGraphicsState(state);
+        commandList.setPushConstants(&constants, sizeof(constants));
+        commandList.draw(nvrhi::DrawArguments().setVertexCount(3));
+    }
+
+    void pipelines::DefaultRenderPipelineSession::recordAutoExposurePass(nvrhi::ICommandList& commandList,
+                                                                         nvrhi::IFramebuffer& framebuffer,
+                                                                         const nvrhi::BindingSetHandle& bindingSet,
+                                                                         const AutoExposurePushConstants& constants) {
+        nvrhi::GraphicsState state;
+        state.setPipeline(autoExposurePipeline_)
+            .setFramebuffer(&framebuffer)
+            .setViewport(nvrhi::ViewportState().addViewportAndScissorRect(nvrhi::Viewport(1.0f, 1.0f)))
             .addBindingSet(bindingSet);
         commandList.setGraphicsState(state);
         commandList.setPushConstants(&constants, sizeof(constants));

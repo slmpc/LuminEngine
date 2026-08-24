@@ -24,11 +24,14 @@ capability 在 manifest 中逐项列出；不要使用 `-ignore-capabilities` �
 `#include`。不要把需要调用方预处理状态的文本包装器强行改成模块。
 
 `include/PostProcessUniforms.slang` 是全屏通道共享的 GPU ABI 定义。其布局必须与 CPU
-`lumin::render::PostProcessUniforms` 保持一致：总大小为 528 字节，字段 offset 由 C++ Catalog、Slang
+`lumin::render::PostProcessUniforms` 保持一致：总大小为 544 字节，字段 offset 由 C++ Catalog、Slang
 reflection 校验和 `ShaderCpuAbi` 测试共同锁定。
 
 `Bloom.slang` 使用 32 字节的 `BloomPushConstants`：`filter` 保存 source texel size、threshold 与 soft-knee，
 `controls` 保存 intensity、radius 和 pass mode。CPU/Slang 布局同样由 Catalog reflection 与 `ShaderCpuAbi` 锁定。
+
+`AutoExposure.slang` 使用 32 字节的 `AutoExposurePushConstants`，在一个 1x1 graphics pass 中完成 16x16 网格测光、
+高光/阴影保护与时间适应；输出 RGBA 曝光状态供下一成功帧和 `PostProcess` 读取。
 
 可单独构建并重复运行 ABI 校验：
 
@@ -38,13 +41,13 @@ ctest --test-dir out/build/debug -R "Shader(Cpu|Reflection)Abi" --output-on-fail
 ```
 
 当前延迟渲染 shader 包含 `Shadow`、`GBuffer`、`ao/AmbientOcclusion`、`Sky`、`Deferred`、`Taa`、
-`Bloom`、`PostProcess` 和 `ImGui`。
+`Bloom`、`AutoExposure`、`PostProcess` 和 `ImGui`。
 
 `Bloom` 在 TAA 后以六次 13-tap downsample、五次 tent upsample 和一次 HDR composite 构建多级泛光；仅第一级
 应用 threshold/soft-knee。关闭时不记录这些图形 pass，而由 FrameGraph transfer pass 输出 TAA 直通副本。
 
-`PostProcess` 默认使用参考 Alpha-Piscium 的 AgX inset/outset、16.5 EV log2 范围与默认对比度近似，并允许通过 uniform
-回退到 ACES Filmic。`include/Fsr1Rcas.slang` 是 AMD FidelityFX FSR1 RCAS 的 Slang 移植；它在 TAA/Bloom 之后、sRGB
+`PostProcess` 默认使用 AgX inset/outset、标准 `[-12.47393, 4.026069] EV` log2 窗口与默认对比度近似，并允许通过
+uniform 回退到 ACES Filmic。`include/Fsr1Rcas.slang` 是 AMD FidelityFX FSR1 RCAS 的 Slang 移植；它在 TAA/Bloom 之后、sRGB
 编码之前，对当前 tone-mapping 曲线产生的线性显示颜色执行五点对比度自适应锐化，TAA 历史始终保持未锐化。
 
 屏幕空间 AO 位于 `shaders/ao`：`AoCommon.slang` 提供共享资源与投影辅助函数，`Ssao.slang`、`Hbao.slang`、

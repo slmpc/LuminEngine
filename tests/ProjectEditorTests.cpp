@@ -99,6 +99,12 @@ namespace {
                                   .ambientOcclusionBias = 0.12f,
                                   .taaSharpness = 0.8f,
                                   .agx = false,
+                                  .autoExposure = false,
+                                  .exposureCompensationEv = 1.5f,
+                                  .minimumExposureEv = -2.0f,
+                                  .maximumExposureEv = 8.0f,
+                                  .adaptationSpeedUp = 4.0f,
+                                  .adaptationSpeedDown = 2.0f,
                                   .bloom = false,
                                   .bloomIntensity = 0.2f,
                                   .bloomThreshold = 2.0f,
@@ -118,6 +124,8 @@ namespace {
         require(sceneDocument["projectSettings"].value("logicTickHz", 0U) == 144U &&
                     sceneDocument["projectSettings"].contains("render") &&
                     !sceneDocument["projectSettings"]["render"].value("agx", true) &&
+                    !sceneDocument["projectSettings"]["render"].value("autoExposure", true) &&
+                    sceneDocument["projectSettings"]["render"].value("exposureCompensationEv", 0.0f) == 1.5f &&
                     !sceneDocument["projectSettings"]["render"].value("bloom", true) &&
                     !sceneDocument.contains("renderSettings"),
                 "Project runtime and render settings must persist under the Project Settings object.");
@@ -145,9 +153,13 @@ namespace {
                     restoredRenderSettings.ambientOcclusionStrength == 1.4f &&
                     restoredRenderSettings.ambientOcclusionBias == 0.12f &&
                     restoredRenderSettings.taaSharpness == 0.8f && !restoredRenderSettings.agx &&
-                    !restoredRenderSettings.bloom && restoredRenderSettings.bloomIntensity == 0.2f &&
-                    restoredRenderSettings.bloomThreshold == 2.0f && restoredRenderSettings.bloomSoftKnee == 0.3f &&
-                    restoredRenderSettings.bloomRadius == 2.5f,
+                    !restoredRenderSettings.autoExposure && restoredRenderSettings.exposureCompensationEv == 1.5f &&
+                    restoredRenderSettings.minimumExposureEv == -2.0f &&
+                    restoredRenderSettings.maximumExposureEv == 8.0f &&
+                    restoredRenderSettings.adaptationSpeedUp == 4.0f &&
+                    restoredRenderSettings.adaptationSpeedDown == 2.0f && !restoredRenderSettings.bloom &&
+                    restoredRenderSettings.bloomIntensity == 0.2f && restoredRenderSettings.bloomThreshold == 2.0f &&
+                    restoredRenderSettings.bloomSoftKnee == 0.3f && restoredRenderSettings.bloomRadius == 2.5f,
                 "Project tick rate and render tuning must round-trip through the scene file.");
 
         require(!project.removeAsset(meshId, error) && !error.empty(),
@@ -384,6 +396,8 @@ f 1/1/1 3/3/1 4/4/1
                                    .shadowDistance = 5.0f,
                                    .exposure = 3.0f,
                                    .agx = false,
+                                   .autoExposure = false,
+                                   .exposureCompensationEv = 2.0f,
                                    .bloom = false,
                                    .bloomIntensity = 0.3f,
                                    .bloomThreshold = 3.0f,
@@ -402,7 +416,10 @@ f 1/1/1 3/3/1 4/4/1
                     level.environment().sun.illuminanceLux == defaultEnvironment.sun.illuminanceLux &&
                     defaults.directLighting && defaults.shadows && defaults.rayTracing && defaults.ssao &&
                     defaults.sharc && defaults.nrd && defaults.taa && defaults.taaSharpness == 0.5f &&
-                    defaults.exposure == 1.0f && defaults.agx && defaults.bloom && defaults.bloomIntensity == 0.08f &&
+                    defaults.exposure == 1.0f && defaults.agx && defaults.autoExposure &&
+                    defaults.exposureCompensationEv == 0.0f && defaults.minimumExposureEv == -3.0f &&
+                    defaults.maximumExposureEv == 10.0f && defaults.adaptationSpeedUp == 3.0f &&
+                    defaults.adaptationSpeedDown == 1.0f && defaults.bloom && defaults.bloomIntensity == 0.08f &&
                     defaults.bloomThreshold == 1.0f && defaults.bloomSoftKnee == 0.5f && defaults.bloomRadius == 1.0f &&
                     project.settings().logicTickHz == lumin::project::DefaultLogicTickHz,
                 "A new empty project must reset scene, camera, environment, and all Project Settings.");
@@ -505,7 +522,9 @@ f 1/1/1 3/3/1 4/4/1
         require(!settings.ssao && settings.ambientOcclusionMode == lumin::project::ProjectAmbientOcclusionMode::Ssao &&
                     settings.ambientOcclusionRadius == 1.0f && settings.ambientOcclusionStrength == 1.0f &&
                     settings.ambientOcclusionBias == 0.08f && settings.taaSharpness == 0.5f && settings.agx &&
-                    settings.bloom && settings.bloomIntensity == 0.08f && settings.bloomThreshold == 1.0f,
+                    settings.autoExposure && settings.exposureCompensationEv == 0.0f &&
+                    settings.minimumExposureEv == -3.0f && settings.maximumExposureEv == 10.0f && settings.bloom &&
+                    settings.bloomIntensity == 0.08f && settings.bloomThreshold == 1.0f,
                 "Projects with only the legacy ssao flag must load with SSAO defaults.");
         require(project.settings().logicTickHz == lumin::project::DefaultLogicTickHz,
                 "Legacy projects without Project Settings must use the default logic tick rate.");
@@ -519,14 +538,22 @@ f 1/1/1 3/3/1 4/4/1
                 "Project logic tick rates below the supported range must clamp to the minimum.");
         settings.logicTickHz = 1'000;
         settings.render.taaSharpness = 2.0f;
+        settings.render.exposureCompensationEv = 20.0f;
+        settings.render.minimumExposureEv = 20.0f;
+        settings.render.maximumExposureEv = -20.0f;
+        settings.render.adaptationSpeedUp = 0.0f;
+        settings.render.adaptationSpeedDown = 40.0f;
         settings.render.bloomIntensity = -1.0f;
         settings.render.bloomThreshold = -1.0f;
         settings.render.bloomSoftKnee = 2.0f;
         settings.render.bloomRadius = 8.0f;
         lumin::project::normalizeProjectSettings(settings);
         require(settings.logicTickHz == lumin::project::MaximumLogicTickHz && settings.render.taaSharpness == 1.0f &&
-                    settings.render.bloomIntensity == 0.0f && settings.render.bloomThreshold == 0.0f &&
-                    settings.render.bloomSoftKnee == 1.0f && settings.render.bloomRadius == 4.0f,
+                    settings.render.exposureCompensationEv == 8.0f && settings.render.minimumExposureEv == 15.9f &&
+                    settings.render.maximumExposureEv == 16.0f && settings.render.adaptationSpeedUp == 0.01f &&
+                    settings.render.adaptationSpeedDown == 20.0f && settings.render.bloomIntensity == 0.0f &&
+                    settings.render.bloomThreshold == 0.0f && settings.render.bloomSoftKnee == 1.0f &&
+                    settings.render.bloomRadius == 4.0f,
                 "Project logic, TAA, and Bloom values must clamp to their supported ranges.");
     }
 

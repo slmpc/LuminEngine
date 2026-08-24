@@ -43,6 +43,8 @@ namespace lumin::render {
         TaaFragment,
         AmbientOcclusionVertex,
         AmbientOcclusionFragment,
+        AutoExposureVertex,
+        AutoExposureFragment,
         BloomVertex,
         BloomFragment,
         AtmosphereAerialPerspective,

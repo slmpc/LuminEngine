@@ -42,13 +42,14 @@ namespace lumin::render {
         ShaderCatalog makeCatalog() {
             ShaderCatalogBuilder builder;
             builder
-                .abiStruct("PostProcessUniforms", 528,
+                .abiStruct("PostProcessUniforms", 544,
                            {field("inverseViewProjection", 0, 64), field("viewProjection", 64, 64),
                             field("cascadeViewProjections", 128, 256), field("cascadeSplits", 384, 16),
                             field("cameraPosition", 400, 16), field("cameraForward", 416, 16),
                             field("lightDirection", 432, 16), field("renderSize", 448, 16),
                             field("renderOptions", 464, 16), field("tonemapOptions", 480, 16),
-                            field("ambientOcclusionOptions", 496, 16), field("temporalOptions", 512, 16)})
+                            field("ambientOcclusionOptions", 496, 16), field("temporalOptions", 512, 16),
+                            field("autoExposureOptions", 528, 16)})
                 .abiStruct("FrameUniforms", 128,
                            {field("viewProjection", 0, 64), field("previousViewProjection", 64, 64)})
                 .abiStruct("ObjectData", 240,
@@ -59,6 +60,8 @@ namespace lumin::render {
                 .abiStruct("PushConstants", 32,
                            {field("scale", 0, 8), field("translate", 8, 8), field("outputConfig", 16, 16)})
                 .abiStruct("BloomPushConstants", 32, {field("filter", 0, 16), field("controls", 16, 16)})
+                .abiStruct("AutoExposurePushConstants", 32,
+                           {field("exposureRange", 0, 16), field("adaptation", 16, 16)})
                 .abiStruct("GpuPackedVertex", 32,
                            {field("position", 0, 12), field("positionPadding", 12, 4), field("normal", 16, 12),
                             field("normalPadding", 28, 4)})
@@ -179,8 +182,19 @@ namespace lumin::render {
                 .entry(ShaderId::BloomVertex, "bloom.vertex", "vertexMain", ShaderStage::Vertex, "Bloom.vert")
                 .entry(ShaderId::BloomFragment, "bloom.fragment", "fragmentMain", ShaderStage::Fragment, "Bloom.frag");
 
+            builder.module("AutoExposure.slang")
+                .bindings({pushConstant("constants", 0), binding("sceneTexture", ShaderBindingKind::SampledImage, 0, 0),
+                           binding("previousExposureTexture", ShaderBindingKind::SampledImage, 0, 1),
+                           binding("exposureSampler", ShaderBindingKind::Sampler, 0, 2)})
+                .abiStructs({"AutoExposurePushConstants"})
+                .entry(ShaderId::AutoExposureVertex, "auto-exposure.vertex", "vertexMain", ShaderStage::Vertex,
+                       "AutoExposure.vert")
+                .entry(ShaderId::AutoExposureFragment, "auto-exposure.fragment", "fragmentMain", ShaderStage::Fragment,
+                       "AutoExposure.frag");
+
             builder.module("PostProcess.slang")
                 .bindings({binding("bloomTexture", ShaderBindingKind::SampledImage, 0, 14),
+                           binding("autoExposureTexture", ShaderBindingKind::SampledImage, 0, 15),
                            binding("renderSampler", ShaderBindingKind::Sampler, 0, 12),
                            binding("frame", ShaderBindingKind::ConstantBuffer, 0, 13)})
                 .abiStructs({"PostProcessUniforms"})

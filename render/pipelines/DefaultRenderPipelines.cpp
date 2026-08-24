@@ -283,9 +283,23 @@ namespace lumin::render::pipelines {
                 if (!std::isfinite(value.exposure) || value.exposure < 0.0f) {
                     throw std::invalid_argument("Tone mapping exposure must be finite and non-negative.");
                 }
+                if (!std::isfinite(value.exposureCompensationEv) || value.exposureCompensationEv < -8.0f ||
+                    value.exposureCompensationEv > 8.0f || !std::isfinite(value.minimumExposureEv) ||
+                    !std::isfinite(value.maximumExposureEv) || value.minimumExposureEv < -16.0f ||
+                    value.maximumExposureEv > 16.0f || value.minimumExposureEv >= value.maximumExposureEv ||
+                    !std::isfinite(value.adaptationSpeedUp) || value.adaptationSpeedUp <= 0.0f ||
+                    !std::isfinite(value.adaptationSpeedDown) || value.adaptationSpeedDown <= 0.0f) {
+                    throw std::invalid_argument("Auto-exposure settings contain an invalid EV range or speed.");
+                }
             },
             [](const ToneMappingSettings& before, const ToneMappingSettings& after) {
-                return before.exposure == after.exposure && before.agxEnabled == after.agxEnabled
+                return before.exposure == after.exposure && before.agxEnabled == after.agxEnabled &&
+                               before.autoExposureEnabled == after.autoExposureEnabled &&
+                               before.exposureCompensationEv == after.exposureCompensationEv &&
+                               before.minimumExposureEv == after.minimumExposureEv &&
+                               before.maximumExposureEv == after.maximumExposureEv &&
+                               before.adaptationSpeedUp == after.adaptationSpeedUp &&
+                               before.adaptationSpeedDown == after.adaptationSpeedDown
                            ? FeatureSettingsChange{}
                            : FeatureSettingsChange{.impact = SettingsChangeImpact::HotUpdate, .historyReasons = {}};
             });

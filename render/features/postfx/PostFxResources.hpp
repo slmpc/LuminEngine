@@ -25,6 +25,8 @@ namespace lumin::render {
     inline constexpr std::uint32_t fullscreenUniformBinding = fullscreenSampledImageCount + 1;
     /// Tone Mapping 读取 Bloom HDR 输出的额外 sampled image binding。
     inline constexpr std::uint32_t fullscreenBloomBinding = fullscreenUniformBinding + 1;
+    /// Tone Mapping 读取当前自动曝光状态的 sampled image binding。
+    inline constexpr std::uint32_t fullscreenAutoExposureBinding = fullscreenBloomBinding + 1;
     /// 固定 Bloom downsample 层级数；每级尺寸向上取整减半。
     inline constexpr std::uint32_t bloomLevelCount = 6;
     /// Bloom upsample 输出数量；最小层直接作为第一次上采样输入。
@@ -40,6 +42,17 @@ namespace lumin::render {
 
     static_assert(sizeof(BloomPushConstants) == 32);
     static_assert(alignof(BloomPushConstants) == 16);
+
+    /** 自动曝光 shader 的 push-constant ABI。 */
+    struct alignas(16) AutoExposurePushConstants {
+        /// x/y 为最小/最大 EV，z 为真实帧间隔秒数，w 表示上一成功曝光是否有效。
+        glm::vec4 exposureRange{-3.0f, 10.0f, 1.0f / 60.0f, 0.0f};
+        /// x/y 为增亮/压暗适应速度，z 表示使用 AgX 测光曲线，w 保留。
+        glm::vec4 adaptation{3.0f, 1.0f, 1.0f, 0.0f};
+    };
+
+    static_assert(sizeof(AutoExposurePushConstants) == 32);
+    static_assert(alignof(AutoExposurePushConstants) == 16);
 
     /** 与内置 Raster/PostFX shader 共享的逐帧常量 ABI。 */
     struct alignas(16) PostProcessUniforms {
@@ -67,6 +80,8 @@ namespace lumin::render {
         glm::vec4 ambientOcclusionOptions{0.0f, 1.0f, 1.0f, 0.08f};
         /// xy 为当前帧 screen-UV jitter，zw 为上一成功提交帧的 screen-UV jitter。
         glm::vec4 temporalOptions{0.0f};
+        /// x 表示启用自动曝光，y 为曝光补偿 EV，zw 保留。
+        glm::vec4 autoExposureOptions{0.0f};
     };
 
     static_assert(sizeof(PostProcessUniforms) % 16 == 0);
@@ -100,6 +115,8 @@ namespace lumin::render {
         std::array<GpuTexture, bloomUpsampleLevelCount> bloomUpsample;
         /// Bloom 合成后的全分辨率 HDR 输出；关闭 Bloom 时保存 TAA 直通副本。
         GpuTexture bloomOutput;
+        /// 当前帧槽成功提交后可成为下一帧测光历史的曝光状态；xyz 分别保存平均、保护和最终 EV。
+        GpuTexture autoExposure;
         /// Bloom downsample 颜色附件，生命周期与对应纹理一致。
         std::array<nvrhi::FramebufferHandle, bloomLevelCount> bloomDownsampleFramebuffers{};
         /// Bloom upsample 颜色附件，生命周期与对应纹理一致。
@@ -112,6 +129,10 @@ namespace lumin::render {
         std::array<nvrhi::BindingSetHandle, bloomUpsampleLevelCount> bloomUpsampleBindings{};
         /// 最终 TAA 与 Bloom 合成绑定。
         nvrhi::BindingSetHandle bloomCompositeBinding;
+        /// 自动曝光 pass 读取当前 Bloom 输出与上一帧槽曝光状态的绑定。
+        nvrhi::BindingSetHandle autoExposureBinding;
+        /// 自动曝光 1x1 状态输出 framebuffer。
+        nvrhi::FramebufferHandle autoExposureFramebuffer;
         /// 当前帧槽可写的 shader constant buffer。
         GpuBuffer uniforms;
     };
@@ -158,11 +179,15 @@ namespace lumin::render {
         void updateUniforms(std::uint32_t frameIndex, const PostProcessUniforms& uniforms);
         /// 使全部 TAA 样本无效，但保留历史纹理已经初始化的资源状态。
         void invalidateHistory() noexcept;
+        /// 使自动曝光历史不可参与适应，但保留已初始化纹理的真实资源状态。
+        void invalidateAutoExposure() noexcept;
         /**
          * @brief 在 queue submit 成功后发布指定帧槽的新历史。
          * @throws std::out_of_range 帧槽索引越界时抛出。
          */
         void markHistoryValid(std::uint32_t frameIndex);
+        /** 在 queue submit 成功后发布指定帧槽的新自动曝光状态。 */
+        void markAutoExposureValid(std::uint32_t frameIndex);
 
         /**
          * @brief 返回指定帧槽资源。
@@ -177,6 +202,12 @@ namespace lumin::render {
         [[nodiscard]] bool historyInitialized(std::uint32_t frameIndex) const;
         /** 返回历史纹理导入 FrameGraph 时必须使用的真实初始状态。 */
         [[nodiscard]] nvrhi::ResourceStates historyInitialState(std::uint32_t frameIndex) const;
+        /** 返回指定帧槽自动曝光状态是否可作为下一帧历史。 */
+        [[nodiscard]] bool autoExposureValid(std::uint32_t frameIndex) const;
+        /** 返回指定帧槽自动曝光纹理是否至少成功写入过一次。 */
+        [[nodiscard]] bool autoExposureInitialized(std::uint32_t frameIndex) const;
+        /** 返回自动曝光纹理导入 FrameGraph 时必须使用的真实初始状态。 */
+        [[nodiscard]] nvrhi::ResourceStates autoExposureInitialState(std::uint32_t frameIndex) const;
         /// 返回 HDR/GI/PostFX 使用的线性高精度格式。
         [[nodiscard]] nvrhi::Format lightingFormat() const noexcept;
         /// 返回标准间接光照输出格式。
@@ -187,6 +218,8 @@ namespace lumin::render {
         [[nodiscard]] nvrhi::BindingLayoutHandle bindingLayout() const noexcept;
         /// 返回 Bloom set 0 layout；handle 由本对象拥有。
         [[nodiscard]] nvrhi::BindingLayoutHandle bloomBindingLayout() const noexcept;
+        /// 返回自动曝光 set 0 layout；handle 由本对象拥有。
+        [[nodiscard]] nvrhi::BindingLayoutHandle autoExposureBindingLayout() const noexcept;
         /**
          * @brief 返回指定帧槽的 fullscreen set 0。
          * @throws std::out_of_range 帧槽索引越界时抛出。
@@ -200,6 +233,7 @@ namespace lumin::render {
         void createImages(std::uint32_t width, std::uint32_t height);
         void createSamplerAndBindings(std::span<const PostFxBindingInputs> inputs);
         void createBloomBindings();
+        void createAutoExposureBindings();
 
         nvrhi::IDevice& device_;
         GpuResourceManager resources_;
@@ -209,9 +243,12 @@ namespace lumin::render {
         nvrhi::SamplerHandle sampler_;
         nvrhi::BindingLayoutHandle bindingLayout_;
         nvrhi::BindingLayoutHandle bloomBindingLayout_;
+        nvrhi::BindingLayoutHandle autoExposureBindingLayout_;
         std::vector<nvrhi::BindingSetHandle> bindingSets_;
         std::vector<bool> historyValid_;
         std::vector<bool> historyInitialized_;
+        std::vector<bool> autoExposureValid_;
+        std::vector<bool> autoExposureInitialized_;
     };
 
 } // namespace lumin::render

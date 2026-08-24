@@ -19,6 +19,7 @@
 #include "render/world/RenderWorld.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -79,6 +80,9 @@ namespace lumin::render::pipelines {
             bool usedDirectNrd = false;
             bool usedIndirectLighting = false;
             bool usedBloom = false;
+            bool usedAutoExposure = false;
+            /// 录制本帧自动曝光时间步时使用的单调时钟采样点。
+            std::chrono::steady_clock::time_point sampledAt{};
         };
 
         struct HybridGiState {
@@ -192,6 +196,9 @@ namespace lumin::render::pipelines {
         void recordBloomPass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
                              const nvrhi::BindingSetHandle& bindingSet, std::uint32_t width, std::uint32_t height,
                              const BloomPushConstants& constants);
+        void recordAutoExposurePass(nvrhi::ICommandList& commandList, nvrhi::IFramebuffer& framebuffer,
+                                    const nvrhi::BindingSetHandle& bindingSet,
+                                    const AutoExposurePushConstants& constants);
 
         VulkanContext& context_;
         std::filesystem::path shaderDirectory_;
@@ -208,6 +215,7 @@ namespace lumin::render::pipelines {
         nvrhi::GraphicsPipelineHandle directLightingPipeline_;
         nvrhi::GraphicsPipelineHandle temporalAaPipeline_;
         nvrhi::GraphicsPipelineHandle bloomPipeline_;
+        nvrhi::GraphicsPipelineHandle autoExposurePipeline_;
         nvrhi::GraphicsPipelineHandle toneMappingPipeline_;
         std::unique_ptr<gi::GlobalIlluminationBackend> globalIllumination_;
         PresentationRenderer presentation_;
@@ -237,6 +245,8 @@ namespace lumin::render::pipelines {
         FeatureConfigurationState committedFeatureConfiguration_{};
         core::RenderSettingsSchemaRegistry settingsSchemas_;
         std::optional<core::RenderSettingsSnapshot> committedSettings_;
+        /// 最近一次成功提交的单调时钟采样点；录制或提交失败时不得推进。
+        std::optional<std::chrono::steady_clock::time_point> lastSubmittedAt_;
         bool hasSubmittedFrame_ = false;
         bool lastSubmittedFrameUsedHybridPath_ = false;
         std::uint64_t nextRenderSequence_ = 0;

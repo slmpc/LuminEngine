@@ -438,6 +438,12 @@ namespace lumin::project {
     void normalizeProjectSettings(ProjectSettings& settings) noexcept {
         settings.logicTickHz = std::clamp(settings.logicTickHz, MinimumLogicTickHz, MaximumLogicTickHz);
         settings.render.taaSharpness = std::clamp(settings.render.taaSharpness, 0.0f, 1.0f);
+        settings.render.exposureCompensationEv = std::clamp(settings.render.exposureCompensationEv, -8.0f, 8.0f);
+        settings.render.minimumExposureEv = std::clamp(settings.render.minimumExposureEv, -16.0f, 15.9f);
+        settings.render.maximumExposureEv =
+            std::clamp(settings.render.maximumExposureEv, settings.render.minimumExposureEv + 0.1f, 16.0f);
+        settings.render.adaptationSpeedUp = std::clamp(settings.render.adaptationSpeedUp, 0.01f, 20.0f);
+        settings.render.adaptationSpeedDown = std::clamp(settings.render.adaptationSpeedDown, 0.01f, 20.0f);
         settings.render.bloomIntensity = std::max(settings.render.bloomIntensity, 0.0f);
         settings.render.bloomThreshold = std::max(settings.render.bloomThreshold, 0.0f);
         settings.render.bloomSoftKnee = std::clamp(settings.render.bloomSoftKnee, 0.0f, 1.0f);
@@ -663,6 +669,12 @@ namespace lumin::project {
                 settings_.render.shadowDistance = render->value("shadowDistance", 200.0f);
                 settings_.render.exposure = render->value("exposure", 1.0f);
                 settings_.render.agx = render->value("agx", true);
+                settings_.render.autoExposure = render->value("autoExposure", true);
+                settings_.render.exposureCompensationEv = render->value("exposureCompensationEv", 0.0f);
+                settings_.render.minimumExposureEv = render->value("minimumExposureEv", -3.0f);
+                settings_.render.maximumExposureEv = render->value("maximumExposureEv", 10.0f);
+                settings_.render.adaptationSpeedUp = render->value("adaptationSpeedUp", 3.0f);
+                settings_.render.adaptationSpeedDown = render->value("adaptationSpeedDown", 1.0f);
                 settings_.render.bloom = render->value("bloom", true);
                 settings_.render.bloomIntensity = render->value("bloomIntensity", 0.08f);
                 settings_.render.bloomThreshold = render->value("bloomThreshold", 1.0f);
@@ -808,6 +820,12 @@ namespace lumin::project {
                            {"shadowDistance", settings_.render.shadowDistance},
                            {"exposure", settings_.render.exposure},
                            {"agx", settings_.render.agx},
+                           {"autoExposure", settings_.render.autoExposure},
+                           {"exposureCompensationEv", settings_.render.exposureCompensationEv},
+                           {"minimumExposureEv", settings_.render.minimumExposureEv},
+                           {"maximumExposureEv", settings_.render.maximumExposureEv},
+                           {"adaptationSpeedUp", settings_.render.adaptationSpeedUp},
+                           {"adaptationSpeedDown", settings_.render.adaptationSpeedDown},
                            {"bloom", settings_.render.bloom},
                            {"bloomIntensity", settings_.render.bloomIntensity},
                            {"bloomThreshold", settings_.render.bloomThreshold},
@@ -1301,6 +1319,11 @@ namespace lumin::project {
 
     void ProjectSession::setRenderSettings(ProjectRenderSettings settings) noexcept {
         settings.taaSharpness = std::clamp(settings.taaSharpness, 0.0f, 1.0f);
+        settings.exposureCompensationEv = std::clamp(settings.exposureCompensationEv, -8.0f, 8.0f);
+        settings.minimumExposureEv = std::clamp(settings.minimumExposureEv, -16.0f, 15.9f);
+        settings.maximumExposureEv = std::clamp(settings.maximumExposureEv, settings.minimumExposureEv + 0.1f, 16.0f);
+        settings.adaptationSpeedUp = std::clamp(settings.adaptationSpeedUp, 0.01f, 20.0f);
+        settings.adaptationSpeedDown = std::clamp(settings.adaptationSpeedDown, 0.01f, 20.0f);
         settings.bloomIntensity = std::max(settings.bloomIntensity, 0.0f);
         settings.bloomThreshold = std::max(settings.bloomThreshold, 0.0f);
         settings.bloomSoftKnee = std::clamp(settings.bloomSoftKnee, 0.0f, 1.0f);

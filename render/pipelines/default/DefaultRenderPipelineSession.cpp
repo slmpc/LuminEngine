@@ -66,6 +66,12 @@ namespace lumin::render {
         currentUiDrawData_ = &ui;
         const RenderSettings settings = pipelines::readDefaultRenderSettings(packet.settings);
         if (committedSettings_.has_value()) {
+            const ToneMappingSettings& previousToneMapping =
+                committedSettings_->get<ToneMappingSettings>(pipelines::feature_ids::toneMapping());
+            if (previousToneMapping.autoExposureEnabled != settings.toneMapping.autoExposureEnabled) {
+                // 关闭期间没有写入连续状态，重新开启时必须从当前画面重新测光。
+                postFxResources_.invalidateAutoExposure();
+            }
             const core::FeatureSettingsChange settingsChange =
                 settingsSchemas_.diff(*committedSettings_, packet.settings);
             if (!settingsChange.historyReasons.empty()) {
@@ -156,6 +162,9 @@ namespace lumin::render {
             globalIlluminationInitialized_[frame->frameIndex] = true;
         }
         bloomChainInitialized_[frame->frameIndex] = bloomChainInitialized_[frame->frameIndex] || recorded.usedBloom;
+        if (recorded.usedAutoExposure) {
+            postFxResources_.markAutoExposureValid(frame->frameIndex);
+        }
         previousViewProjection_ = recorded.viewProjection;
         previousView_ = recorded.view;
         previousProjection_ = recorded.projection;
@@ -164,6 +173,7 @@ namespace lumin::render {
         committedSettings_ = packet.settings;
         committedWorld_ = packet.world;
         hasSubmittedFrame_ = true;
+        lastSubmittedAt_ = recorded.sampledAt;
         lastSubmittedFrameUsedHybridPath_ = recorded.usedHybridPath;
         pendingFrameChanges_.clear();
         ++nextRenderSequence_;

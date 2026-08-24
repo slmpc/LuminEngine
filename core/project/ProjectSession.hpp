@@ -129,6 +129,18 @@ namespace lumin::project {
         float exposure = 1.0f;
         /** 是否使用 AgX 显示变换；关闭时回退到 ACES Filmic。 */
         bool agx = true;
+        /** 是否启用基于 GPU 画面测光的自动曝光。 */
+        bool autoExposure = true;
+        /** 自动曝光结果之外的摄影 EV 补偿。 */
+        float exposureCompensationEv = 0.0f;
+        /** 自动曝光允许的最小 EV。 */
+        float minimumExposureEv = -3.0f;
+        /** 自动曝光允许的最大 EV。 */
+        float maximumExposureEv = 10.0f;
+        /** 自动曝光提高画面曝光时的每秒适应速度。 */
+        float adaptationSpeedUp = 3.0f;
+        /** 自动曝光降低画面曝光时的每秒适应速度。 */
+        float adaptationSpeedDown = 1.0f;
         /** 是否启用 HDR 多 Pass Bloom。 */
         bool bloom = true;
         /** Bloom 合成强度，必须为有限非负数。 */

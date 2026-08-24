@@ -62,6 +62,12 @@ namespace lumin::render {
         PostProcessUniforms uniforms;
         /// 最近一次成功历史所在的帧槽。
         std::uint32_t historyReadSlot = 0;
+        /// 自动曝光读取的上一成功帧槽状态；历史无效时保持空值。
+        core::TextureFrameData autoExposureRead;
+        /// 当前帧槽自动曝光 pass 的候选状态输出。
+        core::TextureFrameData autoExposureWrite;
+        /// 从最近一次成功提交到本次录制采样时刻的秒数。
+        float autoExposureDeltaSeconds = 1.0f / 60.0f;
         /// HDR lighting 输出 framebuffer。
         nvrhi::FramebufferHandle lightingFramebuffer;
         /// TAA resolve 输出 framebuffer。

@@ -70,6 +70,18 @@ namespace lumin::render {
         float exposure = 1.0f;
         /// 为 `true` 时使用 AgX 显示变换；关闭时回退到原有 ACES Filmic 曲线。
         bool agxEnabled = true;
+        /// 为 `true` 时根据画面亮度在 GPU 上计算逐帧曝光 EV。
+        bool autoExposureEnabled = true;
+        /// 自动曝光结果之外的摄影 EV 补偿，范围为 `[-8, 8]`。
+        float exposureCompensationEv = 0.0f;
+        /// 自动曝光允许的最小 EV，必须小于 `maximumExposureEv`。
+        float minimumExposureEv = -3.0f;
+        /// 自动曝光允许的最大 EV，必须大于 `minimumExposureEv`。
+        float maximumExposureEv = 10.0f;
+        /// 画面需要提高曝光时的指数适应速度，单位为每秒，必须为有限正数。
+        float adaptationSpeedUp = 3.0f;
+        /// 画面需要降低曝光时的指数适应速度，单位为每秒，必须为有限正数。
+        float adaptationSpeedDown = 1.0f;
     };
 
     /** Bloom Feature 的逐帧配置。 */

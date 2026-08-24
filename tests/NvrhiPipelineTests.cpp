@@ -120,6 +120,8 @@ int main() {
         requireEntryPoint("ImGui.frag.spv", "fragmentMain");
         requireEntryPoint("Bloom.vert.spv", "vertexMain");
         requireEntryPoint("Bloom.frag.spv", "fragmentMain");
+        requireEntryPoint("AutoExposure.vert.spv", "vertexMain");
+        requireEntryPoint("AutoExposure.frag.spv", "fragmentMain");
         testFullscreenPipelineDescriptorIsWindingIndependent();
         return 0;
     } catch (const std::exception& error) {

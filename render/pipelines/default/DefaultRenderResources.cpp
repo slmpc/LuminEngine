@@ -57,6 +57,11 @@ namespace lumin::render {
         const std::array<nvrhi::BindingLayoutHandle, 1> bloomLayouts = {postFxResources_.bloomBindingLayout()};
         bloomPipeline_ = fullscreenPipelineFactory_.create(ShaderId::BloomVertex, ShaderId::BloomFragment,
                                                            postFxResources_.lightingFormat(), bloomLayouts);
+        const std::array<nvrhi::BindingLayoutHandle, 1> autoExposureLayouts = {
+            postFxResources_.autoExposureBindingLayout()};
+        autoExposurePipeline_ =
+            fullscreenPipelineFactory_.create(ShaderId::AutoExposureVertex, ShaderId::AutoExposureFragment,
+                                              postFxResources_.lightingFormat(), autoExposureLayouts);
         toneMappingPipeline_ =
             fullscreenPipelineFactory_.create(ShaderId::PostProcessVertex, ShaderId::PostProcessFragment,
                                               context_.swapchainRhiFormat(), fullscreenLayouts);
@@ -380,6 +385,7 @@ namespace lumin::render {
         directLightingBindingSets_.fill(nullptr);
         modelRenderer_.reset();
         toneMappingPipeline_ = nullptr;
+        autoExposurePipeline_ = nullptr;
         bloomPipeline_ = nullptr;
         temporalAaPipeline_ = nullptr;
         directLightingPipeline_ = nullptr;

@@ -208,6 +208,8 @@ namespace {
         const lumin::render::core::RenderSettingsSnapshot before = adapter.snapshot();
         adapter.editable().toneMapping.exposure = 2.5f;
         adapter.editable().toneMapping.agxEnabled = false;
+        adapter.editable().toneMapping.autoExposureEnabled = false;
+        adapter.editable().toneMapping.exposureCompensationEv = 1.25f;
         adapter.editable().bloom.enabled = false;
         adapter.editable().bloom.intensity = 0.2f;
         adapter.editable().temporalAa.sharpness = 0.8f;
@@ -221,6 +223,10 @@ namespace {
                             .exposure == 2.5f &&
                     !after.get<lumin::render::ToneMappingSettings>(lumin::render::pipelines::feature_ids::toneMapping())
                          .agxEnabled &&
+                    !after.get<lumin::render::ToneMappingSettings>(lumin::render::pipelines::feature_ids::toneMapping())
+                         .autoExposureEnabled &&
+                    after.get<lumin::render::ToneMappingSettings>(lumin::render::pipelines::feature_ids::toneMapping())
+                            .exposureCompensationEv == 1.25f &&
                     !after.get<lumin::render::BloomSettings>(lumin::render::pipelines::feature_ids::bloom()).enabled &&
                     after.get<lumin::render::BloomSettings>(lumin::render::pipelines::feature_ids::bloom()).intensity ==
                         0.2f &&

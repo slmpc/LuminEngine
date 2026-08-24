@@ -400,6 +400,12 @@ namespace lumin::editor {
             settings.shadows.maxDistance = value.shadowDistance;
             settings.toneMapping.exposure = value.exposure;
             settings.toneMapping.agxEnabled = value.agx;
+            settings.toneMapping.autoExposureEnabled = value.autoExposure;
+            settings.toneMapping.exposureCompensationEv = value.exposureCompensationEv;
+            settings.toneMapping.minimumExposureEv = value.minimumExposureEv;
+            settings.toneMapping.maximumExposureEv = value.maximumExposureEv;
+            settings.toneMapping.adaptationSpeedUp = value.adaptationSpeedUp;
+            settings.toneMapping.adaptationSpeedDown = value.adaptationSpeedDown;
             settings.bloom.enabled = value.bloom;
             settings.bloom.intensity = std::max(value.bloomIntensity, 0.0f);
             settings.bloom.threshold = std::max(value.bloomThreshold, 0.0f);
@@ -555,6 +561,12 @@ namespace lumin::editor {
                     .shadowDistance = settings.shadows.maxDistance,
                     .exposure = settings.toneMapping.exposure,
                     .agx = settings.toneMapping.agxEnabled,
+                    .autoExposure = settings.toneMapping.autoExposureEnabled,
+                    .exposureCompensationEv = settings.toneMapping.exposureCompensationEv,
+                    .minimumExposureEv = settings.toneMapping.minimumExposureEv,
+                    .maximumExposureEv = settings.toneMapping.maximumExposureEv,
+                    .adaptationSpeedUp = settings.toneMapping.adaptationSpeedUp,
+                    .adaptationSpeedDown = settings.toneMapping.adaptationSpeedDown,
                     .bloom = settings.bloom.enabled,
                     .bloomIntensity = settings.bloom.intensity,
                     .bloomThreshold = settings.bloom.threshold,
@@ -2056,6 +2068,25 @@ namespace lumin::editor {
             ImGui::Checkbox("AgX", &settings.toneMapping.agxEnabled);
             propertyLabel("Exposure");
             ImGui::SliderFloat("##exposure", &settings.toneMapping.exposure, 0.1f, 4.0f);
+            ImGui::Checkbox("Auto exposure", &settings.toneMapping.autoExposureEnabled);
+            if (settings.toneMapping.autoExposureEnabled) {
+                propertyLabel("Compensation EV");
+                ImGui::SliderFloat("##exposureCompensation", &settings.toneMapping.exposureCompensationEv, -8.0f, 8.0f,
+                                   "%+.2f EV");
+                propertyLabel("EV range");
+                ImGui::SliderFloat2("##autoExposureRange", &settings.toneMapping.minimumExposureEv, -16.0f, 16.0f,
+                                    "%.1f EV");
+                settings.toneMapping.minimumExposureEv =
+                    std::clamp(settings.toneMapping.minimumExposureEv, -16.0f, 15.9f);
+                settings.toneMapping.maximumExposureEv = std::clamp(
+                    settings.toneMapping.maximumExposureEv, settings.toneMapping.minimumExposureEv + 0.1f, 16.0f);
+                propertyLabel("Brighten speed");
+                ImGui::SliderFloat("##adaptationSpeedUp", &settings.toneMapping.adaptationSpeedUp, 0.1f, 10.0f,
+                                   "%.2f/s");
+                propertyLabel("Darken speed");
+                ImGui::SliderFloat("##adaptationSpeedDown", &settings.toneMapping.adaptationSpeedDown, 0.1f, 10.0f,
+                                   "%.2f/s");
+            }
             section("Bloom");
             ImGui::Checkbox("Bloom", &settings.bloom.enabled);
             if (settings.bloom.enabled) {

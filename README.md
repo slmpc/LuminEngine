@@ -10,7 +10,7 @@ Lumin Engine 是一个使用 C++23、SDL3、Slang 和动态渲染构建的紧凑
 - 支持 sRGB base color、切线空间 normal 和 roughness 贴图，以及 GGX/Cook-Torrance PBR 光照。
 - 可切换的 Legacy（四级联方向光阴影与 SSAO/HBAO/GTAO）和 Ray Tracing（RTDI + SHARC 间接光 + 可选 NRD）渲染路径，以及程序化天空盒。
 - 使用 Halton 抖动，并结合上一帧相机与模型运动矢量的 TAA；最终输出使用可调 FSR1 RCAS 恢复细节。
-- 六级下采样/五级上采样 Bloom，以及默认 AgX、可回退 ACES Filmic 的色调映射。
+- 六级下采样/五级上采样 Bloom，以及带 GPU 自动曝光的标准 AgX、可回退 ACES Filmic 的色调映射。
 - 用于编辑场景、渲染设置和 Lua 脚本的原生停靠式编辑器。
 
 ## 目录结构
@@ -110,7 +110,8 @@ cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 Legacy 提供 SSAO/HBAO/GTAO、AO 半径/强度/偏置、CSM、级联分割权重与最大阴影距离设置；Ray Tracing 提供 SHARC 与
 NRD 独立开关。NRD 始终可对 RTDI 的随机直接光执行 REBLUR；SHARC 开启时，同一开关还会对其 diffuse/specular
 间接光信号使用独立实例降噪。TAA、FSR1 RCAS 锐度、Bloom 与 AgX/ACES 选择是两条路径共用的选项；Bloom 可调整
-强度、阈值、soft-knee 和扩散半径。面板还可调整相机、曝光和太阳方向，并在
+强度、阈值、soft-knee 和扩散半径。Tone Mapping 支持自动曝光开关、EV 补偿、EV 上下限和明暗适应速度；面板还可调整
+相机、手动曝光倍率和太阳方向，并在
 Lua 控制台执行表达式
 （例如 `return 6 * 7`）。当编辑器正在接收键盘、
 鼠标或文本输入时，应用会抑制 `Escape` 和相机控制，但不会暂停 `Game::tick`、`Level::tick` 或 Lua 生命周期。
