@@ -11,6 +11,7 @@ struct RayTracedDiConstants {
     float4 sunIrradiance;
     float4 renderSize;
     float4 traceParameters;
+    uint4 samplingParameters;
 };
 
 struct PrimaryPayload {
@@ -45,6 +46,9 @@ static const uint kInvalidMaterial = 0xffffffffu;
 [[vk::binding(14, 0)]] Texture2D<float4> baseColorTextures[];
 [[vk::binding(15, 0)]] Texture2D<float4> normalRoughnessTextures[];
 [[vk::binding(16, 0)]] SamplerState materialSampler;
+[[vk::binding(17, 0)]] StructuredBuffer<GpuLightData> lights;
+[[vk::binding(18, 0)]] RWTexture2D<float4> directDiffuseRadianceHitT;
+[[vk::binding(19, 0)]] RWTexture2D<float4> directSpecularRadianceHitT;
 
 float2 clipToUv(float4 clipPosition) {
     float2 ndc = clipPosition.xy / max(abs(clipPosition.w), 1e-6);
@@ -64,16 +68,6 @@ float3 reconstructDirection(uint2 pixel, uint2 extent) {
     return safeNormalize(farPoint.xyz - frame.cameraPosition.xyz, float3(0.0, 0.0, -1.0));
 }
 
-float3 evaluateDirect(GpuMaterialData material, float3 normal, float3 toView, float3 toLight, float visibility) {
-    float normalDotLight = saturate(dot(normal, toLight));
-    if (normalDotLight <= 0.0 || visibility <= 0.0 || frame.traceParameters.z < 0.5) {
-        return float3(0.0);
-    }
-    LuminCookTorranceLobes lobes = luminEvaluateCookTorrance(
-        luminMakeCookTorranceMaterial(material), normal, toView, toLight);
-    return (lobes.diffuse + lobes.specular) * frame.sunIrradiance.rgb * normalDotLight * visibility;
-}
-
 void writeMiss(uint2 pixel, float3 environmentRadiance) {
     worldPositionHitT[pixel] = float4(0.0, 0.0, 0.0, -1.0);
     normalRoughness[pixel] = float4(0.0, 0.0, 0.0, 1.0);
@@ -82,6 +76,8 @@ void writeMiss(uint2 pixel, float3 environmentRadiance) {
     viewZ[pixel] = 0.0;
     motion[pixel] = float2(0.0);
     directRadiance[pixel] = float4(luminClampFp16Radiance(environmentRadiance), 1.0);
+    directDiffuseRadianceHitT[pixel] = float4(0.0);
+    directSpecularRadianceHitT[pixel] = float4(0.0);
     visibilityMask[pixel] = 0u;
 }
 
@@ -130,6 +126,7 @@ void shadowMissMain(inout PrimaryPayload payload) {
 void primaryClosestHitMain(inout PrimaryPayload payload, BuiltInTriangleIntersectionAttributes attributes) {
     if (payload.rayKind == kShadowRay) {
         payload.visibility = 0u;
+        payload.hitDistance = RayTCurrent();
         return;
     }
 
@@ -165,26 +162,44 @@ void primaryClosestHitMain(inout PrimaryPayload payload, BuiltInTriangleIntersec
             0.04, 1.0);
     }
     float3 hitPosition = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
-    float3 toLight = safeNormalize(frame.toSunWorld.xyz, float3(0.0, 1.0, 0.0));
     float3 toView = safeNormalize(frame.cameraPosition.xyz - hitPosition, normal);
+    uint lightCount = max(frame.samplingParameters.x, 1u);
+    uint lightSeed = luminLightRandomSeed(pixel, frame.samplingParameters.y, InstanceID(), PrimitiveIndex());
+    uint lightIndex = luminSampleLightIndex(luminRandom01(lightSeed), lightCount);
+    LuminLightSample lightSample = luminEvaluatePhysicalLight(
+        lights[lightIndex], hitPosition, frame.traceParameters.x, frame.traceParameters.y);
+    float visibility = lightSample.castsShadows == 0u ? 1.0 : 0.0;
+    float shadowHitDistance = lightSample.valid != 0u ? lightSample.shadowTMax : frame.traceParameters.y;
+    if (lightSample.valid != 0u && lightSample.castsShadows != 0u && frame.traceParameters.z >= 0.5 &&
+        dot(normal, lightSample.direction) > 0.0) {
+        RayDesc shadowRay;
+        shadowRay.Origin = hitPosition + normal * frame.traceParameters.x;
+        shadowRay.Direction = lightSample.direction;
+        shadowRay.TMin = frame.traceParameters.x;
+        shadowRay.TMax = lightSample.shadowTMax;
+        PrimaryPayload shadowPayload;
+        shadowPayload.radiance = float3(0.0);
+        shadowPayload.hitDistance = shadowRay.TMax;
+        shadowPayload.normal = float3(0.0);
+        shadowPayload.materialId = kInvalidMaterial;
+        shadowPayload.rayKind = kShadowRay;
+        shadowPayload.hit = 0u;
+        shadowPayload.visibility = 0u;
+        shadowPayload.padding = 0u;
+        TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff, 0, 1, 1, shadowRay, shadowPayload);
+        visibility = float(shadowPayload.visibility);
+        shadowHitDistance = shadowPayload.hitDistance;
+    }
 
-    RayDesc shadowRay;
-    shadowRay.Origin = hitPosition + normal * frame.traceParameters.x;
-    shadowRay.Direction = toLight;
-    shadowRay.TMin = frame.traceParameters.x;
-    shadowRay.TMax = frame.traceParameters.y;
-    PrimaryPayload shadowPayload;
-    shadowPayload.radiance = float3(0.0);
-    shadowPayload.hitDistance = shadowRay.TMax;
-    shadowPayload.normal = float3(0.0);
-    shadowPayload.materialId = kInvalidMaterial;
-    shadowPayload.rayKind = kShadowRay;
-    shadowPayload.hit = 0u;
-    shadowPayload.visibility = 0u;
-    shadowPayload.padding = 0u;
-    TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff, 0, 1, 1, shadowRay, shadowPayload);
-
-    float3 direct = evaluateDirect(material, normal, toView, toLight, float(shadowPayload.visibility));
+    LuminCookTorranceLobes directLobes;
+    directLobes.diffuse = float3(0.0);
+    directLobes.specular = float3(0.0);
+    if (lightSample.valid != 0u && frame.traceParameters.z >= 0.5) {
+        directLobes = luminEvaluateDirectLightingLobes(material, normal, toView, lightSample, visibility);
+        directLobes.diffuse *= float(lightCount);
+        directLobes.specular *= float(lightCount);
+    }
+    float3 direct = directLobes.diffuse + directLobes.specular;
     // 光线由当前抖动投影生成，dispatch 像素中心已经是当前采样位置，不能再次叠加 jitter。
     // previousViewProjection 保留上一帧抖动，因此两者相减会自然得到 TAA 所需的 previous-current motion。
     float2 currentUv = (float2(pixel) + 0.5) / float2(extent);
@@ -200,5 +215,10 @@ void primaryClosestHitMain(inout PrimaryPayload payload, BuiltInTriangleIntersec
     motion[pixel] = previousUv - currentUv;
     // Cook-Torrance 的低粗糙度掠射峰值可超过 half 上限；仅在 FP16 scene-radiance 存储边界截断，避免 Inf 污染 TAA。
     directRadiance[pixel] = float4(luminClampFp16Radiance(direct), 1.0);
+    float storedShadowHitDistance = clamp(shadowHitDistance, 0.0, kLuminFp16Max);
+    directDiffuseRadianceHitT[pixel] =
+        float4(luminClampFp16Radiance(directLobes.diffuse), storedShadowHitDistance);
+    directSpecularRadianceHitT[pixel] =
+        float4(luminClampFp16Radiance(directLobes.specular), storedShadowHitDistance);
     visibilityMask[pixel] = 1u;
 }

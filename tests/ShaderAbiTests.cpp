@@ -1,7 +1,8 @@
 #include "render/ModelRenderer.hpp"
 #include "render/features/postfx/PostFxResources.hpp"
 #include "render/gi/raytracing/GiComposite.hpp"
-#include "render/gi/raytracing/RayTracedGi.hpp"
+#include "render/gi/raytracing/RtDiNrdInputs.hpp"
+#include "render/gi/raytracing/SharcIndirectLighting.hpp"
 #include "render/gi/raytracing/SharcRadianceCache.hpp"
 #include "render/gpu/GpuMaterial.hpp"
 #include "render/gpu/GpuSceneResources.hpp"
@@ -38,9 +39,11 @@ namespace {
                   offsetof(ObjectData, materialParameters) == 208 && offsetof(ObjectData, metadata) == 224);
 
     using lumin::render::gi::GiCompositeConstants;
-    using lumin::render::gi::RayTracedGiConstants;
+    using lumin::render::gi::RtDiNrdInputsConstants;
     using lumin::render::gi::SharcGpuConstants;
+    using lumin::render::gi::SharcIndirectLightingConstants;
     using lumin::render::gpu::GpuInstanceData;
+    using lumin::render::gpu::GpuLightData;
     using lumin::render::gpu::GpuMaterialData;
     using lumin::render::gpu::GpuPackedVertex;
 
@@ -51,15 +54,22 @@ namespace {
     static_assert(sizeof(GpuMaterialData) == 64 && offsetof(GpuMaterialData, baseColorMetallic) == 0 &&
                   offsetof(GpuMaterialData, specularColorShininess) == 16 &&
                   offsetof(GpuMaterialData, surfaceParameters) == 32 && offsetof(GpuMaterialData, metadata) == 48);
-    static_assert(sizeof(RayTracedGiConstants) == 96 && offsetof(RayTracedGiConstants, cameraPosition) == 0 &&
-                  offsetof(RayTracedGiConstants, cameraForward) == 16 &&
-                  offsetof(RayTracedGiConstants, toSunWorld) == 32 &&
-                  offsetof(RayTracedGiConstants, sunIrradiance) == 48 &&
-                  offsetof(RayTracedGiConstants, renderSize) == 64 &&
-                  offsetof(RayTracedGiConstants, traceParameters) == 80);
-    static_assert(sizeof(GiCompositeConstants) == 32 && alignof(GiCompositeConstants) == 16 &&
+    static_assert(sizeof(GpuLightData) == 64 && offsetof(GpuLightData, positionRange) == 0 &&
+                  offsetof(GpuLightData, directionCosOuter) == 16 && offsetof(GpuLightData, colorIntensity) == 32 &&
+                  offsetof(GpuLightData, parameters) == 48);
+    static_assert(sizeof(SharcIndirectLightingConstants) == 80 &&
+                  offsetof(SharcIndirectLightingConstants, cameraPosition) == 0 &&
+                  offsetof(SharcIndirectLightingConstants, cameraForward) == 16 &&
+                  offsetof(SharcIndirectLightingConstants, renderParameters) == 32 &&
+                  offsetof(SharcIndirectLightingConstants, traceParameters) == 48 &&
+                  offsetof(SharcIndirectLightingConstants, samplingParameters) == 64);
+    static_assert(sizeof(GiCompositeConstants) == 48 && alignof(GiCompositeConstants) == 16 &&
                   offsetof(GiCompositeConstants, cameraPosition) == 0 &&
-                  offsetof(GiCompositeConstants, renderInfo) == 16);
+                  offsetof(GiCompositeConstants, renderInfo) == 16 && offsetof(GiCompositeConstants, options) == 32);
+    static_assert(sizeof(RtDiNrdInputsConstants) == 48 && alignof(RtDiNrdInputsConstants) == 16 &&
+                  offsetof(RtDiNrdInputsConstants, cameraPosition) == 0 &&
+                  offsetof(RtDiNrdInputsConstants, renderParameters) == 16 &&
+                  offsetof(RtDiNrdInputsConstants, renderInfo) == 32);
     static_assert(sizeof(SharcGpuConstants) == 128 && alignof(SharcGpuConstants) == 16 &&
                   offsetof(SharcGpuConstants, cameraPositionSceneScale) == 0 &&
                   offsetof(SharcGpuConstants, previousCameraPositionLogarithmBase) == 16 &&
@@ -67,13 +77,14 @@ namespace {
                   offsetof(SharcGpuConstants, sunIrradiance) == 48 &&
                   offsetof(SharcGpuConstants, traceParameters) == 64 &&
                   offsetof(SharcGpuConstants, cacheParameters) == 80 &&
-                  offsetof(SharcGpuConstants, renderParameters) == 96 && offsetof(SharcGpuConstants, reserved) == 112);
+                  offsetof(SharcGpuConstants, renderParameters) == 96 &&
+                  offsetof(SharcGpuConstants, samplingParameters) == 112);
     static_assert(lumin::render::gi::SharcBufferStrides::accumulation == 16 &&
                   lumin::render::gi::SharcBufferStrides::resolved == 16);
 
 } // namespace
 
 int main() {
-    std::puts("Shader CPU ABI tests passed: raster, RT GI, SHARC, and composite layouts match Slang reflection.");
+    std::puts("Shader CPU ABI tests passed: raster, RTDI, SHARC indirect, NRD, and composite layouts match Slang.");
     return 0;
 }

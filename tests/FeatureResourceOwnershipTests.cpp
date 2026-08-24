@@ -427,7 +427,7 @@ namespace {
         raster.create(64, 32);
         postFx.create(64, 32, bindingInputs(raster));
 
-        require(device.live.textures == 28, "Two frame slots must own fourteen textures each.");
+        require(device.live.textures == 32, "Two frame slots must own sixteen textures each.");
         require(device.live.buffers == 2, "Two frame slots must own independent uniform buffers.");
         require(device.live.bindingSets == 2, "Two frame slots must own independent binding sets.");
         require(postFx.bindingSet(0) != postFx.bindingSet(1), "Frame-slot binding sets must be distinct.");
@@ -459,6 +459,13 @@ namespace {
             const PostFxFrameResources& effects = postFx.frame(frameIndex);
             require(frame.position.texture && effects.history.texture && effects.uniforms.buffer,
                     "Every frame slot must expose live NvRHI resources.");
+            require(effects.directRadiance.texture != effects.globalIllumination.texture &&
+                        effects.directRadiance.texture != effects.denoisedDirectRadiance.texture &&
+                        effects.directRadiance.texture != effects.lighting.texture &&
+                        effects.denoisedDirectRadiance.texture != effects.globalIllumination.texture &&
+                        effects.denoisedDirectRadiance.texture != effects.lighting.texture &&
+                        effects.globalIllumination.texture != effects.lighting.texture,
+                    "Raw RTDI, denoised direct, indirect, and final HDR outputs must never alias.");
             require(frame.position.width == 64 && frame.position.height == 32,
                     "Render textures must preserve the requested extent.");
             require(frame.shadowCascades.size() == 4, "Every frame slot must own four shadow cascades.");
@@ -478,6 +485,13 @@ namespace {
             require(desc(effects.globalIllumination).isRenderTarget &&
                         desc(effects.globalIllumination).isShaderResource && desc(effects.globalIllumination).isUAV,
                     "GI must remain render-target, sampled, and storage usage.");
+            require(!desc(effects.directRadiance).isRenderTarget && desc(effects.directRadiance).isShaderResource &&
+                        desc(effects.directRadiance).isUAV,
+                    "RTDI scratch must remain sampled and storage usage without render-target allocation.");
+            require(!desc(effects.denoisedDirectRadiance).isRenderTarget &&
+                        desc(effects.denoisedDirectRadiance).isShaderResource &&
+                        desc(effects.denoisedDirectRadiance).isUAV,
+                    "Denoised RTDI must remain sampled and storage usage without render-target allocation.");
             require(desc(effects.lighting).isRenderTarget && desc(effects.lighting).isShaderResource &&
                         desc(effects.lighting).isUAV && desc(effects.taaResolved).isRenderTarget &&
                         desc(effects.taaResolved).isShaderResource && desc(effects.taaResolved).isUAV,

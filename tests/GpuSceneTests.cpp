@@ -1,6 +1,7 @@
 #include "render/gpu/GpuScene.hpp"
 #include "render/gpu/GpuSceneResources.hpp"
 
+#include <glm/trigonometric.hpp>
 #include <glm/vec3.hpp>
 
 #include <algorithm>
@@ -24,6 +25,7 @@ namespace {
     using lumin::render::core::FrameSlotIndex;
     using lumin::render::gpu::BlasUpdateMode;
     using lumin::render::gpu::GpuInstancePatchMask;
+    using lumin::render::gpu::GpuLightData;
     using lumin::render::gpu::GpuMaterialData;
     using lumin::render::gpu::GpuSceneCommitInfo;
     using lumin::render::gpu::GpuSceneUpdatePlan;
@@ -42,6 +44,7 @@ namespace {
     static_assert(sizeof(GpuMaterialData) == 64 && alignof(GpuMaterialData) == 16);
     static_assert(sizeof(lumin::render::gpu::GpuPackedVertex) == 32);
     static_assert(sizeof(lumin::render::gpu::GpuInstanceData) == 144);
+    static_assert(sizeof(GpuLightData) == 64 && alignof(GpuLightData) == 16);
     static_assert(lumin::render::gpu::materialIndexFor(RenderInstanceId{lumin::scene::ModelHandle{7, 3}}).value() == 7);
     static_assert(offsetof(GpuMaterialData, baseColorMetallic) == 0);
     static_assert(offsetof(GpuMaterialData, specularColorShininess) == 16);
@@ -490,16 +493,156 @@ namespace {
         lumin::scene::DirectionalLight sun = fixture.level.environment().sun;
         sun.color = {0.5f, 0.7f, 1.0f};
         fixture.level.setSun(sun);
+        const auto localActor = fixture.level.spawnActor();
+        fixture.level.actor(localActor)->setLocalLight(lumin::scene::PointLight{});
         const auto delta = fixture.world.sync(fixture.level);
         const GpuSceneUpdatePlan plan = fixture.planner.plan(delta);
 
-        require(delta.changes == SceneChangeMask::Lighting && plan.lightPatches().size() == 1 &&
-                    plan.lightPatches()[0].lightIndex == lumin::render::gpu::sunLightGpuIndex,
-                "A sun edit must patch the stable directional-light slot.");
+        require(delta.changes == SceneChangeMask::Lighting && plan.lightPatches().size() == 2 &&
+                    plan.lightPatches()[0].lightIndex == lumin::render::gpu::sunLightGpuIndex &&
+                    plan.lightPatches()[1].lightIndex.value() == 1,
+                "A lighting edit must rebuild the compact table with sun fixed at slot zero.");
         require(plan.geometryUploads().empty() && plan.instancePatches().empty() && !plan.rebuildsInstanceTopology() &&
                     !plan.rebuildsMaterialBindings() && plan.blasDecisions()[0].mode == BlasUpdateMode::Reuse &&
                     plan.tlasDecision() == TlasUpdateMode::Reuse,
                 "Lighting-only changes must reuse all geometry and acceleration structures.");
+    }
+
+    void testPhysicalResourcesPackCompactLocalLightTable() {
+        Fixture fixture;
+        const auto pointHandle = fixture.level.spawnActor();
+        lumin::scene::PointLight point;
+        point.color = {0.25f, 0.5f, 1.0f};
+        point.luminousIntensityCandela = 1600.0f;
+        point.range = 12.0f;
+        point.castsShadows = false;
+        lumin::scene::Transform pointTransform;
+        pointTransform.position = {2.0f, 3.0f, 4.0f};
+        fixture.level.actor(pointHandle)->setTransform(pointTransform);
+        fixture.level.actor(pointHandle)->setLocalLight(point);
+
+        const auto disabledHandle = fixture.level.spawnActor();
+        point.enabled = false;
+        fixture.level.actor(disabledHandle)->setLocalLight(point);
+
+        const auto spotHandle = fixture.level.spawnActor();
+        lumin::scene::SpotLight spot;
+        spot.luminousIntensityCandela = 2400.0f;
+        spot.range = 20.0f;
+        spot.innerConeAngleDegrees = 10.0f;
+        spot.outerConeAngleDegrees = 25.0f;
+        lumin::scene::Transform spotTransform;
+        spotTransform.rotationDegrees.y = 90.0f;
+        fixture.level.actor(spotHandle)->setTransform(spotTransform);
+        fixture.level.actor(spotHandle)->setLocalLight(spot);
+
+        const GpuSceneUpdatePlan plan = fixture.planner.plan(fixture.world.sync(fixture.level));
+        FakeGpuSceneBackend backend;
+        lumin::render::gpu::GpuSceneResources resources(backend, {.frameSlotCount = 1, .rayTracingEnabled = false});
+        lumin::render::FrameGraph graph;
+        const auto update = resources.recordUpdate(graph, plan, FrameSlotIndex{0}, true);
+        graph.execute({});
+        resources.finishUpdate(update, true);
+
+        const auto descriptors = resources.descriptors(FrameSlotIndex{0});
+        const auto lights = backend.records<GpuLightData>("GpuScene.LightRecords");
+        require(descriptors.lightCount == 3 && lights.size() == 3,
+                "GPU Scene must publish sun plus enabled local lights and omit disabled records.");
+        require(static_cast<std::uint32_t>(lights[0].parameters.z + 0.5f) ==
+                        static_cast<std::uint32_t>(lumin::render::gpu::GpuLightType::Directional) &&
+                    static_cast<std::uint32_t>(lights[1].parameters.z + 0.5f) ==
+                        static_cast<std::uint32_t>(lumin::render::gpu::GpuLightType::Point) &&
+                    lights[1].positionRange == glm::vec4{2.0f, 3.0f, 4.0f, 12.0f} &&
+                    lights[1].colorIntensity == glm::vec4{0.25f, 0.5f, 1.0f, 1600.0f} &&
+                    lights[1].parameters.y == 1.0f && lights[1].parameters.w == 0.0f,
+                "Point records must preserve stable order, photometric values, metric scale and shadow policy.");
+        require(static_cast<std::uint32_t>(lights[2].parameters.z + 0.5f) ==
+                        static_cast<std::uint32_t>(lumin::render::gpu::GpuLightType::Spot) &&
+                    glm::length(glm::vec3{lights[2].directionCosOuter} - glm::vec3{-1.0f, 0.0f, 0.0f}) < 0.0001f &&
+                    std::abs(lights[2].parameters.x - std::cos(glm::radians(10.0f))) < 0.0001f &&
+                    std::abs(lights[2].directionCosOuter.w - std::cos(glm::radians(25.0f))) < 0.0001f,
+                "Spot records must preserve scale-independent direction and smooth cone cosines.");
+    }
+
+    void testLightChangesUsePerSlotCowWithoutRebuildingAccelerationStructures() {
+        Fixture fixture;
+        const auto lightActor = fixture.level.spawnActor();
+        fixture.level.actor(lightActor)->setLocalLight(lumin::scene::PointLight{});
+        FakeGpuSceneBackend backend;
+        lumin::render::gpu::GpuSceneResources resources(backend, {.frameSlotCount = 2, .rayTracingEnabled = true});
+
+        const auto submit = [&](std::uint32_t slot) {
+            const GpuSceneUpdatePlan plan = fixture.planner.plan(fixture.world.sync(fixture.level));
+            lumin::render::FrameGraph graph;
+            const auto update = resources.recordUpdate(graph, plan, FrameSlotIndex{slot}, true);
+            graph.execute({});
+            fixture.planner.commit(plan, successfulCommit(slot));
+            resources.finishUpdate(update, true);
+        };
+        submit(0);
+        submit(1);
+
+        const std::size_t warmBufferCount = backend.bufferDescs.size();
+        const std::size_t warmAccelerationStructureCount = backend.accelerationStructureDescs.size();
+        const std::uint32_t warmBlasBuilds = backend.blasBuilds;
+        const std::uint32_t warmTlasBuilds = backend.tlasBuilds;
+        const auto slot0Before = resources.descriptors(FrameSlotIndex{0});
+        const auto slot1Before = resources.descriptors(FrameSlotIndex{1});
+        const nvrhi::rt::AccelStructHandle slot0BlasBefore = resources.geometry(FrameSlotIndex{0})[0].blas;
+        const nvrhi::rt::AccelStructHandle slot1BlasBefore = resources.geometry(FrameSlotIndex{1})[0].blas;
+
+        lumin::scene::PointLight edited;
+        edited.luminousIntensityCandela = 4200.0f;
+        edited.range = 30.0f;
+        fixture.level.actor(lightActor)->setLocalLight(edited);
+
+        const GpuSceneUpdatePlan changedPlan = fixture.planner.plan(fixture.world.sync(fixture.level));
+        require(changedPlan.hasGpuWork() && !changedPlan.lightPatches().empty() &&
+                    changedPlan.tlasDecision() == TlasUpdateMode::Reuse &&
+                    std::ranges::all_of(changedPlan.blasDecisions(),
+                                        [](const auto& decision) {
+                                            return decision.mode == BlasUpdateMode::Reuse;
+                                        }),
+                "A local-light edit must request only light-table GPU work.");
+        lumin::render::FrameGraph slot0Graph;
+        const auto slot0Update = resources.recordUpdate(slot0Graph, changedPlan, FrameSlotIndex{0}, true);
+        const auto slot0Candidate = resources.candidateDescriptors(slot0Update);
+        require(slot0Update.uploadPass().isValid() && !slot0Update.accelerationStructurePass().isValid() &&
+                    slot0Candidate.tlas.Get() == slot0Before.tlas.Get() &&
+                    resources.descriptors(FrameSlotIndex{0}).lights.Get() == slot0Before.lights.Get(),
+                "The active slot must retain published resources until the light-only COW upload is submitted.");
+        slot0Graph.execute({});
+        fixture.planner.commit(changedPlan, successfulCommit(0));
+        resources.finishUpdate(slot0Update, true);
+        require(resources.descriptors(FrameSlotIndex{0}).lights.Get() != slot0Before.lights.Get(),
+                "Submitting a light edit must publish the COW light table.");
+        require(resources.descriptors(FrameSlotIndex{0}).tlas.Get() == slot0Before.tlas.Get() &&
+                    resources.geometry(FrameSlotIndex{0})[0].blas.Get() == slot0BlasBefore.Get(),
+                "Submitting a light edit must retain the current slot BLAS and TLAS objects.");
+        require(backend.bufferDescs.size() == warmBufferCount + 1U,
+                "A light-only COW update must allocate exactly one buffer.");
+        require(backend.accelerationStructureDescs.size() == warmAccelerationStructureCount &&
+                    backend.blasBuilds == warmBlasBuilds && backend.tlasBuilds == warmTlasBuilds,
+                "A light-only COW update must not create or build acceleration structures.");
+
+        const GpuSceneUpdatePlan catchUpPlan = fixture.planner.plan(fixture.world.sync(fixture.level));
+        require(!catchUpPlan.hasGpuWork(), "The second slot must catch up without advancing the logical generation.");
+        lumin::render::FrameGraph slot1Graph;
+        const auto slot1Update = resources.recordUpdate(slot1Graph, catchUpPlan, FrameSlotIndex{1}, true);
+        const auto slot1Candidate = resources.candidateDescriptors(slot1Update);
+        require(slot1Update.uploadPass().isValid() && !slot1Update.accelerationStructurePass().isValid() &&
+                    slot1Candidate.tlas.Get() == slot1Before.tlas.Get(),
+                "A lagging slot must materialize the same light-only COW update without an AS pass.");
+        slot1Graph.execute({});
+        fixture.planner.commit(catchUpPlan, successfulCommit(1));
+        resources.finishUpdate(slot1Update, true);
+        require(resources.descriptors(FrameSlotIndex{1}).lights.Get() != slot1Before.lights.Get() &&
+                    resources.descriptors(FrameSlotIndex{1}).tlas.Get() == slot1Before.tlas.Get() &&
+                    resources.geometry(FrameSlotIndex{1})[0].blas.Get() == slot1BlasBefore.Get() &&
+                    backend.bufferDescs.size() == warmBufferCount + 2U &&
+                    backend.accelerationStructureDescs.size() == warmAccelerationStructureCount &&
+                    backend.blasBuilds == warmBlasBuilds && backend.tlasBuilds == warmTlasBuilds,
+                "Every frame slot must update only its light buffer and preserve BLAS/TLAS objects and builds.");
     }
 
     void testNoChangeReusesEverythingWithoutFenceRequirement() {
@@ -871,6 +1014,8 @@ int main() {
         testGenerationReuseKeepsSlotBasedMaterialIndexLive();
         testMaterialBindingChangeRebuildsOnlyMaterialMapping();
         testLightingChangePatchesStableSunIndex();
+        testPhysicalResourcesPackCompactLocalLightTable();
+        testLightChangesUsePerSlotCowWithoutRebuildingAccelerationStructures();
         testNoChangeReusesEverythingWithoutFenceRequirement();
         testStableFrameSlotsStopAllocatingPhysicalVersions();
         testPlansPinOldSnapshotsAndRejectStaleCommit();

@@ -387,6 +387,73 @@ f 1/1/1 3/3/1 4/4/1
                 "A new empty project must reset scene, camera, environment, and all Project Settings.");
     }
 
+    void testLocalLightSceneRoundTripAndNrdSetting() {
+        TemporaryDirectory temporary;
+        lumin::scene::Level level;
+        lumin::scene::Camera camera;
+        lumin::scripting::ScriptRuntime scripts({.scriptRoot = temporary.path});
+        lumin::project::ProjectSession project(level, camera, scripts);
+        std::string error;
+        require(project.create(temporary.path, "LocalLights", error), error.c_str());
+
+        lumin::scene::SpotLight invalid;
+        invalid.range = 0.0f;
+        bool invalidRejected = false;
+        try {
+            static_cast<void>(project.createLightActor(invalid));
+        } catch (const std::invalid_argument&) {
+            invalidRejected = true;
+        }
+        require(invalidRejected && level.actorCount() == 0 && !project.dirty(),
+                "Invalid project light creation must fail before spawning or dirtying an Actor.");
+
+        lumin::scene::PointLight point;
+        point.color = {1.0f, 0.25f, 0.1f};
+        point.luminousIntensityCandela = 1800.0f;
+        point.range = 14.0f;
+        point.castsShadows = false;
+        const auto pointActor = project.createLightActor(point, {.position = {1.0f, 2.0f, 3.0f}});
+
+        lumin::scene::SpotLight spot;
+        spot.enabled = false;
+        spot.color = {0.1f, 0.4f, 1.0f};
+        spot.luminousIntensityCandela = 3200.0f;
+        spot.range = 22.0f;
+        spot.innerConeAngleDegrees = 15.0f;
+        spot.outerConeAngleDegrees = 35.0f;
+        const auto spotActor = project.createLightActor(spot, {.rotationDegrees = {5.0f, 45.0f, 0.0f}});
+        require(project.dirty() && level.actor(pointActor)->persistentId().size() > 0 &&
+                    level.actor(spotActor)->name() == "Spot Light",
+                "Project light creation must assign persistent identity, default names and dirty state.");
+        require(project.save(error), error.c_str());
+
+        const auto projectFile = project.projectFile();
+        const auto scenePath = project.rootDirectory() / "Scenes/Main.lumin.scene";
+        nlohmann::json scene;
+        {
+            std::ifstream stream(scenePath, std::ios::binary);
+            stream >> scene;
+        }
+        require(scene.value("formatVersion", 0U) == 1U && scene["actors"].size() == 2 &&
+                    scene["actors"][0]["light"].value("type", "") == "point" &&
+                    scene["actors"][1]["light"].value("type", "") == "spot",
+                "Point and Spot lights must serialize as optional Actor fields without changing format v1.");
+        scene["projectSettings"]["render"]["nrd"] = false;
+        writeText(scenePath, scene.dump(2));
+
+        require(project.open(projectFile, error), error.c_str());
+        require(level.actorCount() == 2 && !project.settings().render.nrd,
+                "Opening a light scene must restore both light Actors and its NRD setting.");
+        const auto handles = level.actorHandles();
+        const auto& restoredPoint = std::get<lumin::scene::PointLight>(*level.actor(handles[0])->localLight());
+        const auto& restoredSpot = std::get<lumin::scene::SpotLight>(*level.actor(handles[1])->localLight());
+        require(restoredPoint.color == point.color && restoredPoint.luminousIntensityCandela == 1800.0f &&
+                    restoredPoint.range == 14.0f && !restoredPoint.castsShadows && !restoredSpot.enabled &&
+                    restoredSpot.color == spot.color && restoredSpot.innerConeAngleDegrees == 15.0f &&
+                    restoredSpot.outerConeAngleDegrees == 35.0f,
+                "All Point and Spot parameters must round-trip while the NRD setting remains persistent.");
+    }
+
     void testLegacySsaoSettingsRemainCompatible() {
         TemporaryDirectory temporary;
         lumin::scene::Level level;
@@ -472,6 +539,7 @@ int main(int argc, char** argv) {
         testFilesystemAssetIdentityAndMigration();
         testViewportPickingUsesNearestHit();
         testNewProjectResetsSceneState();
+        testLocalLightSceneRoundTripAndNrdSetting();
         testLegacySsaoSettingsRemainCompatible();
         testProjectLogicTickRateNormalization();
         std::cout << "ProjectEditor PASS\n";

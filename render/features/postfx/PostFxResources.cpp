@@ -76,6 +76,8 @@ namespace lumin::render {
             resources_.destroyTexture(frameResources.history);
             resources_.destroyTexture(frameResources.taaResolved);
             resources_.destroyTexture(frameResources.lighting);
+            resources_.destroyTexture(frameResources.directRadiance);
+            resources_.destroyTexture(frameResources.denoisedDirectRadiance);
             resources_.destroyTexture(frameResources.globalIllumination);
         }
         globalIlluminationFormat_ = nvrhi::Format::UNKNOWN;
@@ -196,6 +198,16 @@ namespace lumin::render {
             desc.isShaderResource = true;
             desc.isUAV = true;
             frameResources.globalIllumination = createTexture(desc);
+
+            desc = textureDesc(width, height, globalIlluminationFormat_, "RT direct radiance");
+            desc.isShaderResource = true;
+            desc.isUAV = true;
+            frameResources.directRadiance = createTexture(desc);
+
+            desc = textureDesc(width, height, globalIlluminationFormat_, "NRD direct radiance");
+            desc.isShaderResource = true;
+            desc.isUAV = true;
+            frameResources.denoisedDirectRadiance = createTexture(desc);
 
             desc = textureDesc(width, height, lightingFormat_, "Scene HDR lighting");
             desc.isRenderTarget = true;

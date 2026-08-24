@@ -252,6 +252,11 @@ target_compile_definitions(lumin_gi_tests
 lumin_register_test(lumin_gi_tests GlobalIllumination LABELS gi fallback unit contract)
 
 if(LUMIN_NRD_AVAILABLE)
+    add_executable(lumin_rt_di_nrd_inputs_tests RtDiNrdInputsTests.cpp)
+    lumin_configure_test(lumin_rt_di_nrd_inputs_tests)
+    target_link_libraries(lumin_rt_di_nrd_inputs_tests PRIVATE Lumin::RenderFeatures)
+    lumin_register_test(lumin_rt_di_nrd_inputs_tests RtDiNrdInputs LABELS gi nrd raytracing unit contract)
+
     add_executable(lumin_gi_composite_tests GiCompositeTests.cpp)
     lumin_configure_test(lumin_gi_composite_tests)
     target_link_libraries(lumin_gi_composite_tests PRIVATE Lumin::RenderFeatures)
@@ -270,11 +275,12 @@ if(LUMIN_SHARC_AVAILABLE)
     lumin_register_test(lumin_sharc_radiance_cache_tests SharcRadianceCache LABELS sharc raytracing unit contract)
 endif()
 
-if(LUMIN_NRD_AVAILABLE)
-    add_executable(lumin_ray_traced_gi_tests RayTracedGiTests.cpp)
-    lumin_configure_test(lumin_ray_traced_gi_tests)
-    target_link_libraries(lumin_ray_traced_gi_tests PRIVATE Lumin::RenderFeatures)
-    lumin_register_test(lumin_ray_traced_gi_tests RayTracedGi LABELS gi raytracing unit contract)
+if(LUMIN_NRD_AVAILABLE AND LUMIN_SHARC_AVAILABLE)
+    add_executable(lumin_sharc_indirect_lighting_tests SharcIndirectLightingTests.cpp)
+    lumin_configure_test(lumin_sharc_indirect_lighting_tests)
+    target_link_libraries(lumin_sharc_indirect_lighting_tests PRIVATE Lumin::RenderFeatures)
+    lumin_register_test(lumin_sharc_indirect_lighting_tests SharcIndirectLighting
+                        LABELS gi nrd sharc raytracing unit contract)
 endif()
 
 add_executable(lumin_model_renderer_nvrhi_tests

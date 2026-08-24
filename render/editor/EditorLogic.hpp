@@ -29,6 +29,8 @@ namespace lumin::editor {
         scene::Material material;
         /** Actor 绑定的模型句柄；无模型时无效。 */
         scene::ModelHandle modelHandle;
+        /** Actor 挂载的局部光源值副本；无光源时为空。 */
+        std::optional<scene::LocalLight> localLight;
     };
 
     /** Editor 快照中的模型值记录。 */

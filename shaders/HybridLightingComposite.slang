@@ -18,13 +18,11 @@ void compositeMain(uint3 dispatchThreadId : SV_DispatchThreadID) {
     }
 
     float3 direct = max(directRadiance.Load(int3(pixel, 0)).rgb, 0.0);
-    float4 packedIndirect = indirectRadiance.Load(int3(pixel, 0));
-    float3 indirect = 0.0;
     if (frame.renderInfo.z == 0u) {
-        indirect = max(packedIndirect.rgb, 0.0);
+        direct += max(indirectRadiance.Load(int3(pixel, 0)).rgb, 0.0);
     } else if (frame.renderInfo.z == 2u) {
-        direct *= saturate(packedIndirect.a);
+        direct *= saturate(indirectRadiance.Load(int3(pixel, 0)).a);
     }
     // direct/indirect 各自有效仍可能在相加时超过 FP16，最终 scene-radiance 写入必须保持有限值。
-    lightingOutput[pixel] = float4(min(direct + indirect, float3(kFp16Max)), 1.0);
+    lightingOutput[pixel] = float4(min(direct, float3(kFp16Max)), 1.0);
 }

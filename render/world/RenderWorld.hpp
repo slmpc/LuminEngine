@@ -75,6 +75,18 @@ namespace lumin::render::world {
         scene::ModelInstance model;
     };
 
+    /** 渲染世界拥有的一份 Actor 局部光源数据。 */
+    struct RenderWorldLocalLight {
+        /** 光源在源场景中的稳定 Actor 身份。 */
+        scene::ActorHandle actorHandle;
+        /** 光源世界空间位置；Actor scale 不参与计算。 */
+        glm::vec3 position{0.0f};
+        /** Spot 的世界空间传播方向；Point 仍保存确定的本地 `-Z` 方向。 */
+        glm::vec3 direction{0.0f, 0.0f, -1.0f};
+        /** Point 或 Spot 的完整参数副本。 */
+        scene::LocalLight light;
+    };
+
     /**
      * 渲染器拥有的不可变场景快照。
      *
@@ -109,12 +121,18 @@ namespace lumin::render::world {
         /** 返回快照拥有的模型实例；数组按稳定 `ModelHandle` 排序。 */
         [[nodiscard]] const std::vector<RenderWorldInstance>& instances() const noexcept;
 
+        /** 返回按稳定 `ActorHandle` 排序的局部光源。 */
+        [[nodiscard]] const std::vector<RenderWorldLocalLight>& localLights() const noexcept;
+
         /**
          * 按稳定句柄查找模型实例。
          *
          * @return 找到时返回只读实例指针，否则返回 `nullptr`。该指针只指向本快照拥有的数据。
          */
         [[nodiscard]] const RenderWorldInstance* findInstance(scene::ModelHandle handle) const noexcept;
+
+        /** 按稳定 Actor 句柄查找局部光源；无光源时返回 `nullptr`。 */
+        [[nodiscard]] const RenderWorldLocalLight* findLocalLight(scene::ActorHandle handle) const noexcept;
 
     private:
         friend class RenderWorldCache;
@@ -123,12 +141,14 @@ namespace lumin::render::world {
         RenderWorldSnapshot(std::uint64_t sourceRevision, std::uint64_t sourceTopologyRevision,
                             std::uint64_t sourceModelRevision, std::uint64_t sourceLightingRevision,
                             std::uint64_t sourceAtmosphereRevision, scene::SceneEnvironment environment,
-                            std::vector<RenderWorldMesh> meshes, std::vector<RenderWorldInstance> instances);
+                            std::vector<RenderWorldMesh> meshes, std::vector<RenderWorldInstance> instances,
+                            std::vector<RenderWorldLocalLight> localLights);
         RenderWorldSnapshot(std::uint64_t sourceRevision, std::uint64_t sourceTopologyRevision,
                             std::uint64_t sourceModelRevision, std::uint64_t sourceLightingRevision,
                             std::uint64_t sourceAtmosphereRevision, scene::SceneEnvironment environment,
                             std::shared_ptr<const std::vector<RenderWorldMesh>> meshes,
-                            std::shared_ptr<const std::vector<RenderWorldInstance>> instances);
+                            std::shared_ptr<const std::vector<RenderWorldInstance>> instances,
+                            std::shared_ptr<const std::vector<RenderWorldLocalLight>> localLights);
 
         std::uint64_t sourceRevision_ = 0;
         std::uint64_t sourceTopologyRevision_ = 0;
@@ -138,6 +158,7 @@ namespace lumin::render::world {
         scene::SceneEnvironment environment_{};
         std::shared_ptr<const std::vector<RenderWorldMesh>> meshes_;
         std::shared_ptr<const std::vector<RenderWorldInstance>> instances_;
+        std::shared_ptr<const std::vector<RenderWorldLocalLight>> localLights_;
     };
 
     /** 不可变渲染世界快照的共享所有权类型。 */

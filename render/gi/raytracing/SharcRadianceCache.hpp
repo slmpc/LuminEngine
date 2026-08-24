@@ -166,7 +166,8 @@ namespace lumin::render::gi {
         glm::uvec4 cacheParameters{0U};
         /// x=render width，y=render height，z=sparse tile size，w=保留。
         glm::uvec4 renderParameters{0U};
-        glm::uvec4 reserved{0U};
+        /// x=有效光源数量；yzw 保留。
+        glm::uvec4 samplingParameters{0U};
     };
 
     static_assert(std::is_standard_layout_v<SharcGpuConstants>);
@@ -179,7 +180,7 @@ namespace lumin::render::gi {
     static_assert(offsetof(SharcGpuConstants, traceParameters) == 64);
     static_assert(offsetof(SharcGpuConstants, cacheParameters) == 80);
     static_assert(offsetof(SharcGpuConstants, renderParameters) == 96);
-    static_assert(offsetof(SharcGpuConstants, reserved) == 112);
+    static_assert(offsetof(SharcGpuConstants, samplingParameters) == 112);
 
     /** 构建常量时由宿主提供的当前帧参数。 */
     struct SharcFrameParameters {
@@ -191,6 +192,8 @@ namespace lumin::render::gi {
         std::uint32_t renderHeight = 0;
         float minTraceDistance = 0.001F;
         float maxTraceDistance = 10000.0F;
+        /// GPU Scene 统一光源表中的有效记录数，至少包含索引 0 的太阳。
+        std::uint32_t lightCount = 1;
     };
 
     /** 从已验证配置、候选历史和当前帧输入生成 shader ABI。 */
@@ -228,7 +231,7 @@ namespace lumin::render::gi {
         }
     };
 
-    /** RT GI 与 SHARC update 共用的 descriptor set 2 大气绑定。 */
+    /** RTDI、SHARC update 与 SHARC 间接光共用的 descriptor set 2 大气绑定。 */
     struct RayTracingEnvironmentBindings {
         nvrhi::BindingSetHandle atmosphere;
 
@@ -278,6 +281,8 @@ namespace lumin::render::gi {
         FrameGraphResourceHandle tlas;
         FrameGraphResourceHandle instances;
         FrameGraphResourceHandle materials;
+        /// GPU Scene 统一光源 structured buffer。
+        FrameGraphResourceHandle lights;
         std::span<const FrameGraphResourceHandle> vertices;
         std::span<const FrameGraphResourceHandle> indices;
         std::span<const FrameGraphResourceHandle> baseColorTextures;

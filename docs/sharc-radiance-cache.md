@@ -13,9 +13,16 @@ Lumin Engine 的 SHARC 集成使用固定版本 `1.6.5`，shader 直接包含
    并通过 `SharcInit`、`SharcUpdateHit`、`SharcSetThroughput` 和 `SharcUpdateMiss` 写入 cache。
 3. `sharc-resolve-evict` 对所有 entry 调用 vendor `SharcResolveEntry`。该调用合并新旧样本、清空本帧
    accumulation，并在 stale window 到期后驱逐 hash entry。
-4. `gi-ray-trace` 在二次表面调用 `SharcGetCachedRadiance`。命中时提前使用 cache radiance；未命中时保留
+4. `sharc-indirect-lighting` 每像素发射一条按材质能量选择 diffuse/specular 波瓣的二次射线，并在二次表面调用
+   `SharcGetCachedRadiance`。命中时使用 cache radiance；未命中时保留
    直接光照 fallback，ray miss 则采样大气系统生成的同一张 sky-view LUT。
-5. `sharc-statistics-readback` 在 query 完成后复制统计 buffer。只有对应 frame-slot fence 完成后才能映射。
+5. SHARC indirect 输出 NRD REBLUR 所需的 diffuse/specular radiance-hit-distance、viewZ、normal-roughness 与 motion，
+   NRD 去噪后由 GI composite 恢复主表面材质因子。
+6. `sharc-statistics-readback` 在 query 完成后复制统计 buffer。只有对应 frame-slot fence 完成后才能映射。
+
+SHARC indirect 可把 raw 信号直接交给 GI composite，也可由其专用 NRD 实例先执行 REBLUR。全局 NRD 开关不依赖
+SHARC：关闭 SHARC 只清零间接光，RTDI、天空和 Direct NRD 仍继续运行。运行时开关只切换常驻资源的帧图分支和失效
+相关历史，不重建 Hybrid 资源。
 
 所有 buffer 和 sky-view LUT 的访问状态都通过同一个 `FrameGraphResourceHandle` 声明。shader dispatch 内没有
 手写 barrier；`UnorderedAccess` 的 write/read 和 write/write hazard 由 `FrameGraph` 生成内存依赖。
@@ -90,8 +97,11 @@ manifest 的 include path 需要加入：
 | `SharcUpdate.slang` | `sharcUpdateShadowMissMain` | miss | `SharcUpdate.shadow.rmiss.spv` |
 | `SharcUpdate.slang` | `sharcUpdateClosestHitMain` | closesthit | `SharcUpdate.rchit.spv` |
 | `SharcResolve.slang` | `sharcResolveMain` | compute | `SharcResolve.comp.spv` |
-| `RtGiSharc.slang` | `closestHitMain` | closesthit | `RtGiSharc.rchit.spv` |
+| `SharcIndirectLighting.slang` | `sharcIndirectLightingRayGenerationMain` | raygeneration | `SharcIndirectLighting.rgen.spv` |
+| `SharcIndirectLighting.slang` | `sharcIndirectLightingRadianceMissMain` | miss | `SharcIndirectLighting.radiance.rmiss.spv` |
+| `SharcIndirectLighting.slang` | `sharcIndirectLightingShadowMissMain` | miss | `SharcIndirectLighting.shadow.rmiss.spv` |
+| `SharcIndirectLighting.slang` | `sharcIndirectLightingClosestHitMain` | closesthit | `SharcIndirectLighting.rchit.spv` |
 
-`RtGiSharc.slang` 是只定义 `LUMIN_ENABLE_SHARC=1` 后包含主 RT GI 源码的薄 wrapper，因此无需给 manifest
-增加 per-entry define 功能。全部 RT entry 使用项目现有 `spvRayTracingKHR` capability 集；resolve 使用普通
+`SharcIndirectLighting.slang` 同时消费 SHARC cache 和 NRD 前端 packing API，因此 Catalog 要求 Ray Tracing、SHARC 与
+NRD 三项构建 Feature。全部 RT entry 使用项目现有 `spvRayTracingKHR` capability 集；resolve 使用普通
 `spirv_1_5` compute 配置。`slangc` 的 depfile 会跟踪 vendor headers、NRD header 和公共 Slang include。

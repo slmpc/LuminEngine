@@ -7,11 +7,12 @@
 1. 使用 camera primary ray 直接求交场景并生成表面信息。
 2. 使用 RT shadow ray 计算太阳和场景灯光的 Direct Lighting，不读取 CSM。
 3. 使用独立的稀疏 RT pass 更新 SHARC 世界空间辐射缓存，再由 RT indirect pass 查询已 resolve 的缓存。
-4. 使用 NRD 对 diffuse/specular indirect radiance-hit-distance 信号进行时空去噪。
+4. 使用两套独立 NRD REBLUR 实例分别对 RTDI direct 与 SHARC indirect 的 diffuse/specular
+   radiance-hit-distance 信号进行时空去噪。
 5. 使用 compute shader 生成大气 LUT，并以全屏 compute ray marching 计算体积云。
 6. 在统一 Composite 中按深度正确组合 RT direct、SHARC indirect、NRD 输出、大气与体积云。
 7. 支持 RT 的 Hybrid 路径不创建、不录制、不绑定 raster G-buffer、CSM 或 deferred-lighting pass。
-8. 不支持完整 RT/SHARC/NRD 能力的设备保留现有 raster deferred fallback。
+8. 不支持 raw RT pipeline 的设备保留现有 raster deferred fallback；运行时缺少 SHARC 时仍支持 RTDI 与 Direct NRD。
 
 本文是后续实现的唯一执行计划。现有 `docs/rendering-overhaul-plan.md` 继续作为已完成架构迁移的历史记录，
 不再承担本轮 pass、资源 ABI 和验收状态的定义。
@@ -22,13 +23,15 @@
   Feature。
 - [x] RTDI primary surface、RT shadow、miss atmosphere、surface signal ABI 和 UAV 资源契约已接入。
 - [x] GPU Scene 的 candidate upload/BLAS/TLAS 更新已移动到 `hybrid-surface` Feature，并遵守 submit commit/discard 事务。
-- [x] SHARC update/query、RT GI 和 NRD 已改为消费 primary RT surface signals。
-- [x] 新增 Hybrid compute composite，将 RT direct 与 NRD indirect 合成为 TAA 输入；GI 关闭时支持 direct-only，SSAO
+- [x] SHARC update/query、专用 SHARC indirect 和两套 NRD 路径已改为消费 primary RT surface signals。
+- [x] 新增 Hybrid compute composite，将 raw/denoised RT direct 与 raw/denoised indirect 合成为 TAA 输入；GI 关闭时支持 direct-only，SSAO
   fallback 时支持 direct × packed ambient visibility。
+- [x] RTDI raw direct、Direct NRD 输出、SHARC indirect 与最终 HDR 使用互不别名的持久纹理；SHARC 开关不会覆盖
+  或改变直接光路由。
 - [x] RT surface 命中距离统一使用 `position.w > 0` 作为有效几何判定，修复近距离命中被误判为 miss 的问题。
 - [x] 帧图颜色、surface signal 和 TAA 资源显式声明末尾 `ShaderResource` 状态，避免 frame slot 复用时的 Vulkan
   layout 漂移；RTDI motion 补齐当前 jitter UV 偏移并与 raster motion 对齐。
-- [x] shader manifest ABI 校验通过，当前 debug 构建启用 35 个 shader entries；完整 CTest 35/35 通过。
+- [x] shader manifest ABI 校验通过，当前 debug 构建启用 35 个 shader entries；完整 CTest 46/46 通过。
 - [ ] 体积云 ray marching、weather/noise 资源和云阴影尚未实现。
 - [ ] Composite 的大气深度合成和云/天空 view-ray marching 尚未实现；当前 RT miss 使用共享 atmosphere LUT/procedural fallback。
 
@@ -37,8 +40,7 @@
 - 不使用 RT Core 加速大气或云。二者是参与介质积分，固定采用 compute shader ray marching。
 - 第一版不实现 path-traced reference renderer、ReSTIR DI/GI、双向路径追踪或多 GPU。
 - 第一版不实现透明物体、折射材质和带 alpha-test 的多层 primary visibility；先保证不透明几何闭环。
-- 第一版不对确定性太阳硬阴影做 NRD。若后续增加随机面积光源，单独接入 NRD SIGMA 或专用 direct-light
-  denoiser，不能把 direct 与 indirect history 混在一起。
+- RTDI 的随机灯光估计使用专用 REBLUR 实例降噪；direct 与 indirect 不共享 `NrdDenoiser`、输出纹理或内部历史。
 - 不移植 Alpha-Piscium 的 GPLv3 shader、绑定、常量布局、噪声资产或项目专用算法。
 - 不要求 Hybrid RT 与 raster fallback 逐像素一致；要求坐标、材质、曝光和太阳方向语义一致。
 
@@ -125,21 +127,21 @@ shaders/
     HybridComposite.slang
 ```
 
-迁移完成后删除或改名当前仍表达 G-buffer 输入的 `RayTracedGiFrameInputs`、`RayTracedGiFrameGraphInputs` 和
-`GiCompositeResources::position/normalRoughness/albedoMetallic`。当前未接入构建的
-`RayTracedDirectLightingPass` 原型不得直接成为公共 ABI，应在阶段 1 中由新资源契约替换。
+迁移后由 `SharcIndirectLightingFrameInputs`、`SharcIndirectLightingFrameGraphInputs` 和
+`GiCompositeResources::position/normalRoughness/albedoMetallic` 明确表达 primary RT surface 与 NRD 信号契约；
+`RayTracedDirectLightingPass` 只负责 primary visibility 和直接光，不承担间接光职责。
 
 ## 5. Capability tier 与运行时选择
 
 | Tier | 必要能力 | 运行路径 |
 | --- | --- | --- |
 | `RasterFallback` | Vulkan 1.3 dynamic rendering | G-buffer + CSM + deferred + SSAO/TAA |
-| `HybridRt` | acceleration structure、RT pipeline、BDA、descriptor indexing、SHARC 所需 int64/float16、NRD 所需 compute 能力 | RTDI + SHARC + RT indirect + NRD + atmosphere/cloud compute |
-| `HybridRtDebugRaw` | 与 `HybridRt` 相同 | 跳过 NRD 或 SHARC 的诊断路径，不作为自动选择结果 |
+| `HybridRtDirect` | acceleration structure、RT pipeline、BDA、descriptor indexing | RTDI + atmosphere + TAA |
+| `HybridRtSharc` | `HybridRtDirect` 加 SHARC 所需 int64/float16 与 NRD compute 能力 | RTDI + SHARC indirect + NRD + atmosphere + TAA |
 
-`Auto` 只有在完整 `HybridRt` 能力集合可用时才选择 Hybrid。生产路径不静默拼出“有 RTDI、无 SHARC”或
-“有 SHARC、无 NRD”的半配置；这些组合只用于构建测试和调试。显式请求 Hybrid 但能力不足时记录缺失能力并安全
-回退，不创建任何 RT/SHARC/NRD 资源。
+`Auto` 在 `HybridRtDirect` 能力可用时选择 Hybrid；SHARC 与 NRD 构建边界和 storage 能力同时满足时升级为
+`HybridRtSharc`。缺少 SHARC 时只创建 GPU Scene、RTDI 与 direct-only composite，间接光保持为零；连 raw RT
+能力也不足时才回退 Raster。
 
 ## 6. Hybrid 帧图
 
@@ -305,18 +307,18 @@ surface 发射一个 cosine-weighted diffuse ray 和一个按 roughness 采样�
 - 采样使用按成功提交序号推进的 blue-noise/Sobol 序列，失败帧重试必须得到同一序列。
 - diffuse 与 specular 分开保留 sample count、roughness cutoff 和最大追踪距离。
 
-禁止将 primary direct 复制到 indirect 输出，也禁止让 Composite 再次乘一次 albedo。信号采用“已应用当前 primary
-surface BRDF 的 radiance”还是“入射 irradiance”必须在 ABI 中二选一。第一版固定为已应用 BRDF 的 outgoing radiance，
-Composite 只做相加和介质组合。
+禁止将 primary direct 复制到 indirect 输出。RTDI 与 SHARC indirect 的 raw 波瓣先包含完整 primary
+`BRDF * cos / PDF`，随后在 NRD 前端除以 `NRD_MaterialFactors`；GI composite 在 raw 或 denoised 信号之后用同一因子
+恢复材质。最终 Hybrid composite 只相加 direct/indirect，不再次计算 BRDF 或乘 albedo。
 
 ## 11. NRD 接入
 
-第一版沿用现有 NRD `v4.17.3` adapter，使用 REBLUR diffuse/specular denoiser。输入映射为：
+沿用现有 NRD `v4.17.3` adapter，并为 direct 与 indirect 各创建一套 REBLUR diffuse/specular denoiser。输入映射为：
 
 | NRD 输入 | 来源 |
 | --- | --- |
-| diffuse radiance-hit-distance | `rt-indirect-lighting` |
-| specular radiance-hit-distance | `rt-indirect-lighting` |
+| direct diffuse/specular radiance-hit-distance | `RtDiNrdInputsPass` 对 RTDI raw 波瓣执行解调与 packing |
+| indirect diffuse/specular radiance-hit-distance | `SharcIndirectLightingPass` |
 | normal-roughness | `RtSurfaceSignals` |
 | viewZ | `RtSurfaceSignals` |
 | motion | `RtSurfaceSignals` |
@@ -324,17 +326,19 @@ Composite 只做相加和介质组合。
 
 规则：
 
-- NRD 输出保持 diffuse/specular 分离，直到 Composite。
+- direct 与 indirect 的 NRD 输出分别保持 diffuse/specular 分离，直到各自的 GI composite。
+- 两套 NRD 实例不共享 permanent/transient pool、pending frame 或物理输出；全局 NRD 开关可在 SHARC 关闭时独立运行
+  Direct NRD。
 - background 像素不进入 denoiser history；miss mask 按 NRD 契约设置。
 - camera cut、resize、拓扑、RT/NRD 开关、shader reload：diffuse/specular `FullReset`。
 - material、灯光、大气、cloud-shadow：`SoftReset` 或 responsive accumulation；最终策略以稳定性场景测试确定。
 - previous matrices、jitter 和 motion 都取最近一次成功提交帧，不取最近一次尝试录制帧。
 - NRD permanent pool 跨帧持有，transient pool 由 adapter 管理；所有 dispatch 仍导入 FrameGraph 并关闭 NvRHI
   automatic barriers。
-- 对 direct sun shadow 的降噪不复用这两条 history；未来软阴影使用独立 signal/domain。
+- RTDI 直接光使用自己的 REBLUR 历史，不能复用 SHARC indirect 的 denoiser 实例或输出。
 
-验收覆盖 first frame、静止收敛、camera cut、resize、快速旋转、运动实例、disocclusion、GI toggle、失败帧重试和
-至少 10 分钟运行。
+验收覆盖 `RTDI`、`RTDI + NRD`、`RTDI + SHARC`、`RTDI + SHARC + NRD` 四种组合，以及 first frame、静止收敛、
+camera cut、resize、快速旋转、运动实例、disocclusion、GI toggle、失败帧重试和至少 10 分钟运行。
 
 ## 12. 大气 LUT clean-room 实现边界
 
@@ -509,7 +513,7 @@ LUMIN_ENABLE_VOLUMETRIC_CLOUDS=ON|OFF
 - [ ] 记录当前 Debug/Release build、CTest、shader ABI、Vulkan probe 和 sandbox validation 基线。
 - [ ] 为 Hybrid FrameGraph 增加可机器检查的 pass dump。
 - [ ] 冻结本文中的 motion、radiance、hit-distance、normal encoding 和 scene unit 约定。
-- [ ] 标记现有 G-buffer 驱动的 RT GI/SHARC 接口为迁移目标，不在其上继续叠加功能。
+- [x] 删除 G-buffer 驱动的通用间接光接口，SHARC update/indirect 只消费 primary RT surface signals。
 
 门槛：当前测试继续通过；新增 contract 测试能明确指出现有 Hybrid 路径仍依赖 G-buffer。
 
@@ -544,9 +548,9 @@ LUMIN_ENABLE_VOLUMETRIC_CLOUDS=ON|OFF
 
 ### 阶段 4：RT indirect 与 NRD
 
-- [ ] 拆除旧 `RayTracedGiPass` 的 G-buffer 输入，建立独立 RT indirect pass。
-- [ ] 输出 REBLUR diffuse/specular radiance-hit-distance。
-- [ ] 复用 `RtSurfaceSignals` 的 normal/viewZ/motion 接入 NRD。
+- [x] 删除旧通用间接光 pass，建立独立 `SharcIndirectLightingPass`。
+- [x] 输出 REBLUR diffuse/specular radiance-hit-distance。
+- [x] 复用 `RtSurfaceSignals` 的 normal/viewZ/motion 接入 NRD。
 - [ ] 完成所有 history reset、disocclusion 和长时间运行验证。
 
 门槛：raw/denoised 可切换对照，NRD history 稳定，SHARC query 确实来自本帧 resolved cache。

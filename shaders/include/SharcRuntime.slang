@@ -21,7 +21,7 @@ struct SharcGpuConstants {
     float4 traceParameters;
     uint4 cacheParameters;
     uint4 renderParameters;
-    uint4 reserved;
+    uint4 samplingParameters;
 };
 
 SharcParameters luminMakeSharcParameters(

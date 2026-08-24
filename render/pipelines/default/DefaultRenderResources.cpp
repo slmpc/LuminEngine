@@ -9,6 +9,9 @@
 #include "render/gi/raytracing/RayTracedDirectLighting.hpp"
 #include "render/gpu/GpuSceneResources.hpp"
 #endif
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
+#include "render/gi/raytracing/SharcIndirectLighting.hpp"
+#endif
 
 #include <algorithm>
 #include <limits>
@@ -77,6 +80,9 @@ namespace lumin::render {
         createModelRenderer();
         createHybridGiResources();
         frameResourcesInitialized_.fill(false);
+        directRadianceInitialized_.fill(false);
+        directNrdOutputInitialized_.fill(false);
+        globalIlluminationInitialized_.fill(false);
     }
 
     void pipelines::DefaultRenderPipelineSession::createViewportOutput() {
@@ -176,7 +182,7 @@ namespace lumin::render {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         const auto buildCandidate = [this]() -> std::unique_ptr<HybridGiState> {
             if (!context_.rayTracingDecision().enabled() ||
-                !context_.rayTracingSupport().supportsSharcShaderStorage()) {
+                !context_.rayTracingSupport().supportsRayTracingPipeline()) {
                 return {};
             }
             const world::RenderWorldSnapshotPtr snapshot = currentWorld_;
@@ -194,7 +200,6 @@ namespace lumin::render {
             }
 
             auto runtime = std::make_unique<HybridGiState>();
-            runtime->sharcEnabled = requestedSharcEnabled_;
             runtime->geometryDescriptorCapacity = static_cast<std::uint32_t>(requestedCapacity);
             const std::uint32_t materialTextureDescriptorCapacity =
                 static_cast<std::uint32_t>(modelRenderer_->baseColorTextures().size());
@@ -213,8 +218,10 @@ namespace lumin::render {
                     .materialId = raster.materialId.texture,
                     .viewZ = {},
                     .motion = raster.motion.texture,
-                    // Hybrid RTDI 使用 globalIllumination 作为 direct-radiance UAV，最终合成再写 lighting。
-                    .directRadiance = postFx.globalIllumination.texture,
+                    // RTDI、间接光与最终 HDR 必须使用三个独立 UAV，避免 GI composite 覆盖直接光。
+                    .directRadiance = postFx.directRadiance.texture,
+                    .directDiffuseRadianceHitT = {},
+                    .directSpecularRadianceHitT = {},
                     .visibilityMask = {},
                 };
             }
@@ -230,60 +237,90 @@ namespace lumin::render {
                     .frames = runtime->directLightingFrames,
                 });
 
-            std::array<gi::RayTracedGiFrameInputs, frameSlotCount> rayTracedFrames{};
-            std::array<gi::SharcUpdateFrameInputs, frameSlotCount> sharcFrames{};
-            for (std::uint32_t frameIndex = 0; frameIndex < frameSlotCount; ++frameIndex) {
-                const RasterFeatureFrameResources& frame = rasterResources_.frame(frameIndex);
-                rayTracedFrames[frameIndex] = gi::RayTracedGiFrameInputs{
-                    .position = frame.position.texture,
-                    .normalRoughness = frame.normalRoughness.texture,
-                    .albedoMetallic = frame.albedo.texture,
-                    .motion = frame.motion.texture,
-                    .materialId = frame.materialId.texture,
-                };
-                sharcFrames[frameIndex] = gi::SharcUpdateFrameInputs{
-                    .position = frame.position.texture,
-                    .normalRoughness = frame.normalRoughness.texture,
-                    .albedoMetallic = frame.albedo.texture,
-                    .materialId = frame.materialId.texture,
-                };
+#if LUMIN_LEVEL_RENDERER_HAS_NRD
+            runtime->directNrdInputs = std::make_unique<gi::RtDiNrdInputsPass>(gi::RtDiNrdInputsCreateInfo{
+                .device = context_.rhiDevice(),
+                .shaders = &shaderLibrary_,
+                .extent = renderExtent_,
+                .frameSlotCount = frameSlotCount,
+            });
+            runtime->directNrd = std::make_unique<gi::NrdDenoiser>(gi::NrdDenoiserCreateInfo{
+                .device = context_.rhiDevice(),
+                .extent = renderExtent_,
+                .frameSlotCount = frameSlotCount,
+            });
+            if (runtime->directNrdInputs->formats().normalRoughness !=
+                runtime->directNrd->expectedNormalRoughnessFormat()) {
+                throw std::runtime_error("RTDI preparation and NRD normal/roughness formats do not match.");
             }
+            runtime->directComposite = std::make_unique<gi::GiCompositePass>(gi::GiCompositeCreateInfo{
+                .device = context_.rhiDevice(),
+                .shaders = &shaderLibrary_,
+                .extent = renderExtent_,
+                .frameSlotCount = frameSlotCount,
+            });
+#endif
 
-            runtime->sharc = std::make_unique<gi::SharcRadianceCache>(gi::SharcRadianceCacheCreateInfo{
-                .device = context_.rhiDevice(),
-                .shaders = &shaderLibrary_,
-                .frameSlotCount = frameSlotCount,
-                .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
-                .maxMaterialTextureDescriptors = materialTextureDescriptorCapacity,
-                .atmosphereBindingLayout = atmosphereConsumerBindingLayout_,
-                .config = {},
-                .frames = sharcFrames,
-            });
-            runtime->rayTracedGi = std::make_unique<gi::RayTracedGiPass>(gi::RayTracedGiCreateInfo{
-                .device = context_.rhiDevice(),
-                .shaders = &shaderLibrary_,
-                .width = renderExtent_.width,
-                .height = renderExtent_.height,
-                .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
-                .maxMaterialTextureDescriptors = materialTextureDescriptorCapacity,
-                .atmosphereBindingLayout = atmosphereConsumerBindingLayout_,
-                .enableSharc = runtime->sharcEnabled,
-                .frames = rayTracedFrames,
-            });
-            runtime->nrd = std::make_unique<gi::NrdDenoiser>(gi::NrdDenoiserCreateInfo{
-                .device = context_.rhiDevice(),
-                .extent = renderExtent_,
-                .frameSlotCount = frameSlotCount,
-            });
-            if (runtime->rayTracedGi->formats().normalRoughness != runtime->nrd->expectedNormalRoughnessFormat()) {
-                throw std::runtime_error("RT GI and NRD normal/roughness formats do not match.");
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
+            if (context_.rayTracingSupport().supportsSharcShaderStorage()) {
+                runtime->sharcEnabled = requestedSharcEnabled_;
+                std::array<gi::SharcIndirectLightingFrameInputs, frameSlotCount> indirectFrames{};
+                std::array<gi::SharcUpdateFrameInputs, frameSlotCount> sharcFrames{};
+                for (std::uint32_t frameIndex = 0; frameIndex < frameSlotCount; ++frameIndex) {
+                    const RasterFeatureFrameResources& frame = rasterResources_.frame(frameIndex);
+                    indirectFrames[frameIndex] = gi::SharcIndirectLightingFrameInputs{
+                        .position = frame.position.texture,
+                        .normalRoughness = frame.normalRoughness.texture,
+                        .albedoMetallic = frame.albedo.texture,
+                        .motion = frame.motion.texture,
+                        .materialId = frame.materialId.texture,
+                    };
+                    sharcFrames[frameIndex] = gi::SharcUpdateFrameInputs{
+                        .position = frame.position.texture,
+                        .normalRoughness = frame.normalRoughness.texture,
+                        .albedoMetallic = frame.albedo.texture,
+                        .materialId = frame.materialId.texture,
+                    };
+                }
+
+                runtime->sharc = std::make_unique<gi::SharcRadianceCache>(gi::SharcRadianceCacheCreateInfo{
+                    .device = context_.rhiDevice(),
+                    .shaders = &shaderLibrary_,
+                    .frameSlotCount = frameSlotCount,
+                    .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
+                    .maxMaterialTextureDescriptors = materialTextureDescriptorCapacity,
+                    .atmosphereBindingLayout = atmosphereConsumerBindingLayout_,
+                    .config = {},
+                    .frames = sharcFrames,
+                });
+                runtime->indirectLighting =
+                    std::make_unique<gi::SharcIndirectLightingPass>(gi::SharcIndirectLightingCreateInfo{
+                        .device = context_.rhiDevice(),
+                        .shaders = &shaderLibrary_,
+                        .width = renderExtent_.width,
+                        .height = renderExtent_.height,
+                        .maxGeometryDescriptors = runtime->geometryDescriptorCapacity,
+                        .maxMaterialTextureDescriptors = materialTextureDescriptorCapacity,
+                        .atmosphereBindingLayout = atmosphereConsumerBindingLayout_,
+                        .frames = indirectFrames,
+                    });
+                runtime->indirectNrd = std::make_unique<gi::NrdDenoiser>(gi::NrdDenoiserCreateInfo{
+                    .device = context_.rhiDevice(),
+                    .extent = renderExtent_,
+                    .frameSlotCount = frameSlotCount,
+                });
+                if (runtime->indirectLighting->formats().normalRoughness !=
+                    runtime->indirectNrd->expectedNormalRoughnessFormat()) {
+                    throw std::runtime_error("SHARC indirect and NRD normal/roughness formats do not match.");
+                }
+                runtime->indirectComposite = std::make_unique<gi::GiCompositePass>(gi::GiCompositeCreateInfo{
+                    .device = context_.rhiDevice(),
+                    .shaders = &shaderLibrary_,
+                    .extent = renderExtent_,
+                    .frameSlotCount = frameSlotCount,
+                });
             }
-            runtime->composite = std::make_unique<gi::GiCompositePass>(gi::GiCompositeCreateInfo{
-                .device = context_.rhiDevice(),
-                .shaders = &shaderLibrary_,
-                .extent = renderExtent_,
-                .frameSlotCount = frameSlotCount,
-            });
+#endif
             runtime->lightingComposite =
                 std::make_unique<gi::HybridLightingCompositePass>(gi::HybridLightingCompositeCreateInfo{
                     .device = context_.rhiDevice(),
@@ -297,7 +334,7 @@ namespace lumin::render {
         // 候选完整创建前保留旧资源；异常会自然销毁候选并让旧状态继续服务后续帧。
         std::unique_ptr<HybridGiState> candidate = buildCandidate();
         hybridGi_ = std::move(candidate);
-        lastSubmittedFrameUsedHybridGi_ = false;
+        lastSubmittedFrameUsedHybridPath_ = false;
 #else
         destroyHybridGiResources();
 #endif
@@ -305,7 +342,7 @@ namespace lumin::render {
 
     void pipelines::DefaultRenderPipelineSession::ensureHybridGiCapacity() {
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
-        if (!context_.rayTracingDecision().enabled() || !context_.rayTracingSupport().supportsSharcShaderStorage()) {
+        if (!context_.rayTracingDecision().enabled() || !context_.rayTracingSupport().supportsRayTracingPipeline()) {
             destroyHybridGiResources();
             return;
         }
@@ -330,7 +367,7 @@ namespace lumin::render {
 
     void pipelines::DefaultRenderPipelineSession::destroyHybridGiResources() noexcept {
         hybridGi_.reset();
-        lastSubmittedFrameUsedHybridGi_ = false;
+        lastSubmittedFrameUsedHybridPath_ = false;
     }
 
     void pipelines::DefaultRenderPipelineSession::destroyRenderResources() noexcept {

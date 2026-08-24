@@ -70,7 +70,7 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 - `render/presentation/` 保存 `UiRenderer` 与 `PresentationRenderer`，以稳定逻辑纹理 ID 解析字体和 Viewport 物理资源，
   不保存 ImGui command、callback 或 NvRHI binding 指针形式的纹理 ID。
 - `render/level/`、`render/features/`、`render/gi/`、`render/atmosphere/` 和 `render/gpu/` 保存场景渲染功能；
-  `render/gi/legacy/` 保存 raster fallback，`render/gi/raytracing/` 保存 RTDI、RTGI、SHARC、NRD 与 composite，
+  `render/gi/legacy/` 保存 raster fallback，`render/gi/raytracing/` 保存 RTDI、SHARC update/indirect、NRD 与 composite，
   通过 `resources` 声明和使用资源，不直接操作原生 Vulkan 状态。
 
 `Lumin::Rendering` 已删除。`Lumin::RenderCore`、`Lumin::RenderRhi`、`Lumin::VulkanBackend`、各 Feature target、
@@ -115,6 +115,7 @@ depfile 路径。
 `shader-targets.cmake`。CMake 不解析 JSON，也不维护入口列表；它只 include 生成文件并定义
 `lumin_shader_abi` / `lumin_shaders` 两个 target。`LUMIN_RAY_TRACING`、
 `LUMIN_ENABLE_NRD` 和 `LUMIN_ENABLE_SHARC` 会在生成阶段过滤对应 entry。
+RTDI 与 Hybrid direct-only composite 只受 `LUMIN_RAY_TRACING` 控制，不依赖 SHARC 或 NRD 的编译开关。
 
 `.slang` 源码和其 `import`/`include` 依赖由 `slangc` depfile 在构建阶段跟踪，保存源码不会触发 CMake 重新配置；
 Catalog 头、实现或生成器变化时才重新生成构建描述。生成内容未变化时会保留文件时间戳，

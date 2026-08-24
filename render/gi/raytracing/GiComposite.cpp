@@ -28,6 +28,7 @@ namespace lumin::render::gi {
         constexpr std::uint32_t materialsBinding = 6;
         constexpr std::uint32_t constantsBinding = 7;
         constexpr std::uint32_t outputBinding = 8;
+        constexpr std::uint32_t fallbackBinding = 9;
         constexpr std::uint32_t threadGroupWidth = 8;
         constexpr std::uint32_t threadGroupHeight = 8;
 
@@ -65,7 +66,8 @@ namespace lumin::render::gi {
             return resources.diffuseRadianceHitDistance.isValid() && resources.specularRadianceHitDistance.isValid() &&
                    resources.position.isValid() && resources.normalRoughness.isValid() &&
                    resources.albedoMetallic.isValid() && resources.materialId.isValid() &&
-                   resources.materials.isValid() && resources.globalIllumination.isValid();
+                   resources.materials.isValid() && resources.fallbackRadiance.isValid() &&
+                   resources.output.isValid() && resources.fallbackRadiance.id != resources.output.id;
         }
 
         void writeConstants(nvrhi::IDevice& device, nvrhi::IBuffer* buffer, const GiCompositeConstants& constants) {
@@ -121,7 +123,8 @@ namespace lumin::render::gi {
                 .addItem(nvrhi::BindingLayoutItem::Texture_SRV(materialIdBinding))
                 .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(materialsBinding))
                 .addItem(nvrhi::BindingLayoutItem::ConstantBuffer(constantsBinding))
-                .addItem(nvrhi::BindingLayoutItem::Texture_UAV(outputBinding));
+                .addItem(nvrhi::BindingLayoutItem::Texture_UAV(outputBinding))
+                .addItem(nvrhi::BindingLayoutItem::Texture_SRV(fallbackBinding));
             return desc;
         }
 
@@ -129,8 +132,8 @@ namespace lumin::render::gi {
                                                             nvrhi::IBuffer* constants) {
             if (!resources.diffuseRadianceHitDistance || !resources.specularRadianceHitDistance ||
                 !resources.position || !resources.normalRoughness || !resources.albedoMetallic ||
-                !resources.materialId || !resources.materials || !resources.globalIllumination ||
-                constants == nullptr) {
+                !resources.materialId || !resources.materials || !resources.fallbackRadiance || !resources.output ||
+                resources.fallbackRadiance == resources.output || constants == nullptr) {
                 throw std::invalid_argument("GI composite binding set requires complete native resources.");
             }
 
@@ -143,7 +146,8 @@ namespace lumin::render::gi {
                 .addItem(nvrhi::BindingSetItem::Texture_SRV(materialIdBinding, resources.materialId))
                 .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(materialsBinding, resources.materials))
                 .addItem(nvrhi::BindingSetItem::ConstantBuffer(constantsBinding, constants))
-                .addItem(nvrhi::BindingSetItem::Texture_UAV(outputBinding, resources.globalIllumination));
+                .addItem(nvrhi::BindingSetItem::Texture_UAV(outputBinding, resources.output))
+                .addItem(nvrhi::BindingSetItem::Texture_SRV(fallbackBinding, resources.fallbackRadiance));
             return desc;
         }
 
@@ -164,8 +168,11 @@ namespace lumin::render::gi {
                     return format == nvrhi::Format::R32_UINT;
                 },
                 "G-buffer material ID");
-            validateTexture(resources.globalIllumination, extent, true, isFloatFourChannel,
-                            "global-illumination output");
+            validateTexture(resources.fallbackRadiance, extent, false, isFloatFourChannel, "fallback radiance");
+            validateTexture(resources.output, extent, true, isFloatFourChannel, "lighting output");
+            if (resources.fallbackRadiance == resources.output) {
+                throw std::invalid_argument("GI composite fallback and output textures must not alias.");
+            }
 
             if (!resources.materials) {
                 throw std::invalid_argument("GI composite is missing the material buffer.");
@@ -191,8 +198,11 @@ namespace lumin::render::gi {
 
         GiCompositeConstants makeGiCompositeConstants(const GiCompositeFrameParameters& parameters,
                                                       std::uint32_t materialCount) {
+            const bool validMode = parameters.mode == GiCompositeMode::Indirect ||
+                                   parameters.mode == GiCompositeMode::Direct;
             if (parameters.extent.isEmpty() || materialCount == 0 || !std::isfinite(parameters.cameraPosition.x) ||
-                !std::isfinite(parameters.cameraPosition.y) || !std::isfinite(parameters.cameraPosition.z)) {
+                !std::isfinite(parameters.cameraPosition.y) || !std::isfinite(parameters.cameraPosition.z) ||
+                !validMode) {
                 throw std::invalid_argument(
                     "GI composite constants require extent, materials, and finite camera data.");
             }
@@ -200,6 +210,7 @@ namespace lumin::render::gi {
             result.cameraPosition = glm::vec4{parameters.cameraPosition, 1.0F};
             result.renderInfo = glm::uvec4{parameters.extent.width, parameters.extent.height, materialCount,
                                            std::numeric_limits<std::uint32_t>::max()};
+            result.options = glm::uvec4{static_cast<std::uint32_t>(parameters.mode), 0U, 0U, 0U};
             return result;
         }
 
@@ -229,8 +240,9 @@ namespace lumin::render::gi {
                     builder.readTexture(resources.albedoMetallic, nvrhi::ResourceStates::ShaderResource);
                     builder.readTexture(resources.materialId, nvrhi::ResourceStates::ShaderResource);
                     builder.read(resources.materials, nvrhi::ResourceStates::ShaderResource);
+                    builder.readTexture(resources.fallbackRadiance, nvrhi::ResourceStates::ShaderResource);
                     builder.read(constants, nvrhi::ResourceStates::ConstantBuffer);
-                    builder.writeTexture(resources.globalIllumination, nvrhi::ResourceStates::UnorderedAccess);
+                    builder.writeTexture(resources.output, nvrhi::ResourceStates::UnorderedAccess);
                 },
                 std::move(execute));
         }

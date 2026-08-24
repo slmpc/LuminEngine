@@ -12,8 +12,10 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 #include <imgui.h>
@@ -57,6 +59,14 @@ namespace {
         return mesh;
     }
 
+    void writeText(const std::filesystem::path& path, std::string_view text) {
+        std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+        stream << text;
+        if (!stream) {
+            throw std::runtime_error("Failed to prepare editor test input.");
+        }
+    }
+
     struct TestLogicState {
         TestLogicState(lumin::scene::Level& levelValue, lumin::scene::Camera& cameraValue,
                        lumin::scripting::ScriptRuntime& scriptsValue, lumin::project::ProjectSession* projectValue)
@@ -78,8 +88,8 @@ namespace {
             result->environment = level.environment();
             for (const lumin::scene::ActorHandle handle : level.actorHandles()) {
                 if (const lumin::scene::Actor* actor = level.actor(handle); actor != nullptr) {
-                    result->actors.push_back(
-                        {handle, actor->name(), actor->transform(), actor->material(), actor->modelHandle()});
+                    result->actors.push_back({handle, actor->name(), actor->transform(), actor->material(),
+                                              actor->modelHandle(), actor->localLight()});
                 }
             }
             for (const lumin::scene::ModelHandle handle : level.modelHandles()) {
@@ -206,13 +216,13 @@ namespace {
                 "An older settings snapshot must not observe later panel edits.");
         require(after.get<lumin::render::ToneMappingSettings>(lumin::render::pipelines::feature_ids::toneMapping())
                             .exposure == 2.5f &&
-                    after.get<lumin::render::TemporalAaSettings>(
-                             lumin::render::pipelines::feature_ids::temporalAa())
+                    after.get<lumin::render::TemporalAaSettings>(lumin::render::pipelines::feature_ids::temporalAa())
                             .sharpness == 0.8f &&
                     after.get<lumin::render::GlobalIlluminationSettings>(
                              lumin::render::pipelines::feature_ids::globalIllumination())
                             .mode == lumin::render::GlobalIlluminationMode::Legacy,
                 "The panel adapter must publish edits through the typed Feature store.");
+
     }
 
     void testConsoleReturnsValues() {
@@ -454,7 +464,7 @@ namespace {
                     nearlyEqual(settings.temporalAa.sharpness, 1.0f) &&
                     nearlyEqual(settings.toneMapping.exposure, 2.25f) &&
                     level.environment().sun.direction == glm::vec3(0.0f, -1.0f, 0.0f) && camera.cutEpoch() == 1,
-                "Legacy/RT GI controls must mutate mode-specific settings and shared TAA state.");
+                "Legacy/RT lighting controls must mutate mode-specific settings and shared TAA state.");
 
         const auto actor = level.spawnActor<TestActor>();
         require(editor.selectActor(actor), "A live actor must be selectable for Inspector edits.");
@@ -501,6 +511,80 @@ namespace {
                 "Camera controls must update the render-thread Camera service immediately.");
         require(!nearlyEqual(logicCamera.moveSpeed(), 9.0f) && logicCamera.position() != glm::vec3(3.0f, 4.0f, 5.0f),
                 "Camera controls must not mutate the stale logic snapshot when a render Camera service exists.");
+    }
+
+    void testLocalLightEditingAndActorLifecycle() {
+        TemporaryDirectory temporary;
+        lumin::scene::Level level;
+        lumin::scene::Camera camera;
+        lumin::render::RenderSettings settings;
+        lumin::scripting::ScriptRuntime runtime({.scriptRoot = temporary.path});
+        lumin::project::ProjectSession project(level, camera, runtime);
+        std::string error;
+        require(project.create(temporary.path, "EditorLocalLights", error), error.c_str());
+
+        const std::filesystem::path meshPath = project.rootDirectory() / "Models/light-fixture.obj";
+        std::filesystem::create_directories(meshPath.parent_path());
+        writeText(meshPath, "v -1 0 0\nv 1 0 0\nv 0 2 0\nf 1 2 3\n");
+        require(project.synchronizeProjectFiles(true).succeeded(), "The fixture mesh must be discoverable.");
+        const lumin::project::AssetRecord* meshAsset = project.assets().findByPath("Models/light-fixture.obj");
+        require(meshAsset != nullptr, "The local-light duplication test requires a project mesh asset.");
+
+        auto editor = makeEditor(level, camera, settings, runtime, {}, &project);
+        lumin::scene::PointLight point;
+        point.color = {0.8f, 0.4f, 0.2f};
+        point.luminousIntensityCandela = 2400.0f;
+        point.range = 18.0f;
+        point.castsShadows = false;
+        lumin::scene::Transform transform;
+        transform.position = {2.0f, 3.0f, 4.0f};
+        require(editor.createLightActor(point, transform), "The editor must create a Point Light actor.");
+        editor.synchronizeSelection();
+        require(editor.selectedActor().has_value() && level.actorCount() == 1 && project.dirty(),
+                "Creating a local light must select it and mark the project dirty.");
+
+        const lumin::scene::ActorHandle sourceHandle = *editor.selectedActor();
+        lumin::scene::Actor* source = level.actor(sourceHandle);
+        const auto mesh = project.meshForAsset(meshAsset->id);
+        require(source != nullptr && mesh.has_value(), "The created light actor and fixture mesh must remain alive.");
+        source->attachModel(*mesh);
+        project.markDirty();
+        require(project.save(error), error.c_str());
+
+        lumin::scene::SpotLight spot;
+        spot.enabled = false;
+        spot.color = {0.1f, 0.3f, 0.9f};
+        spot.luminousIntensityCandela = 3200.0f;
+        spot.range = 24.0f;
+        spot.castsShadows = true;
+        spot.innerConeAngleDegrees = 15.0f;
+        spot.outerConeAngleDegrees = 42.0f;
+        require(editor.setSelectedLocalLight(spot) && project.dirty() &&
+                    std::holds_alternative<lumin::scene::SpotLight>(*source->localLight()),
+                "Details edits must switch light type, preserve valid parameters, and mark the project dirty.");
+        lumin::scene::SpotLight invalid = spot;
+        invalid.innerConeAngleDegrees = 50.0f;
+        invalid.outerConeAngleDegrees = 40.0f;
+        require(!editor.setSelectedLocalLight(invalid) && *source->localLight() == lumin::scene::LocalLight{spot},
+                "The editor must reject invalid Spot cone parameters without mutating the Actor.");
+        require(project.save(error), error.c_str());
+
+        require(editor.duplicateSelectedActor(), "A model-plus-light Actor must be duplicable.");
+        editor.synchronizeSelection();
+        require(editor.selectedActor().has_value() && *editor.selectedActor() != sourceHandle &&
+                    level.actorCount() == 2 && project.dirty(),
+                "Duplicating a light Actor must select the copy and mark the project dirty.");
+        lumin::scene::Actor* copy = level.actor(*editor.selectedActor());
+        require(copy != nullptr && copy->modelHandle().isValid() && copy->localLight() == source->localLight() &&
+                    copy->transform().position == source->transform().position + glm::vec3(0.5f, 0.0f, 0.0f),
+                "Actor duplication must preserve both model and light while offsetting the copy.");
+
+        require(project.save(error), error.c_str());
+        require(editor.clearSelectedLocalLight() && !copy->localLight().has_value() && project.dirty(),
+                "Removing a local light in Details must leave the model attached and mark the project dirty.");
+        require(project.save(error), error.c_str());
+        require(editor.deleteSelectedActor() && level.actorCount() == 1 && project.dirty(),
+                "Deleting the selected light Actor must use normal Actor lifecycle and dirty handling.");
     }
 
     void testProjectNavigatorAndPersistedWindowVisibility() {
@@ -588,6 +672,7 @@ int main() {
         testUninitializedFrontendHasNoThreadState();
         testSettingsAndSelectionMutation();
         testCameraControlsUseRenderThreadService();
+        testLocalLightEditingAndActorLifecycle();
         testProjectNavigatorAndPersistedWindowVisibility();
         std::cout << "Editor PASS\n";
         return 0;

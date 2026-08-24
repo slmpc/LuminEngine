@@ -147,6 +147,18 @@ namespace {
                     topologyChange.historyReasons.containsAny(core::HistoryReason::FeatureConfigurationChanged),
                 "GI topology changes must request recipe recomposition and history invalidation.");
 
+        core::RenderSettingsStore sharcStore{schemas};
+        GlobalIlluminationSettings sharcSettings =
+            defaults.get<GlobalIlluminationSettings>(pipelines::feature_ids::globalIllumination());
+        sharcSettings.sharcEnabled = false;
+        sharcSettings.nrdEnabled = false;
+        sharcStore.set(pipelines::feature_ids::globalIllumination(), sharcSettings);
+        const core::FeatureSettingsChange sharcChange = schemas.diff(defaults, sharcStore.snapshot());
+        require(core::hasAnyImpact(sharcChange.impact, core::SettingsChangeImpact::HistoryReset) &&
+                    !core::hasAnyImpact(sharcChange.impact, core::SettingsChangeImpact::PipelineRecompose) &&
+                    sharcChange.historyReasons.containsAny(core::HistoryReason::FeatureConfigurationChanged),
+                "SHARC toggles must reset histories without recomposing the resident Hybrid recipe.");
+
         requireThrows<std::invalid_argument>(
             [&] {
                 ToneMappingSettings invalid;

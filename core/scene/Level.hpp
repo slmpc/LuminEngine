@@ -10,6 +10,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <glm/mat4x4.hpp>
@@ -87,6 +88,9 @@ namespace lumin::scene {
         [[nodiscard]] glm::mat4 matrix() const;
     };
 
+    /** 返回仅由旋转决定的 Actor 本地 `-Z` 世界方向；scale 不参与计算。 */
+    [[nodiscard]] glm::vec3 localLightDirection(const Transform& transform) noexcept;
+
     struct ModelInstance {
         MeshHandle mesh;
         Transform transform;
@@ -133,6 +137,12 @@ namespace lumin::scene {
         [[nodiscard]] ModelHandle modelHandle() const noexcept;
         ModelHandle attachModel(MeshHandle mesh, Material material = {});
         void detachModel();
+        /** 返回 Actor 当前挂载的局部光源；无光源时返回空值。 */
+        [[nodiscard]] const std::optional<LocalLight>& localLight() const noexcept;
+        /** 校验并替换 Actor 的局部光源；参数无效时抛出 `std::invalid_argument`。 */
+        void setLocalLight(LocalLight light);
+        /** 移除 Actor 当前挂载的局部光源。 */
+        void clearLocalLight();
         ActorComponent* addComponent(std::unique_ptr<ActorComponent> component);
         bool removeComponent(const ActorComponent* component);
         bool moveComponent(const ActorComponent* component, std::size_t newIndex);
@@ -157,6 +167,7 @@ namespace lumin::scene {
         Material material_{};
         ModelHandle modelHandle_ = InvalidModelHandle;
         std::optional<MeshHandle> requestedMesh_;
+        std::optional<LocalLight> localLight_;
         std::string name_ = "Actor";
         std::string persistentId_;
         std::vector<std::unique_ptr<ActorComponent>> components_;
@@ -267,8 +278,9 @@ namespace lumin::scene {
         void activateActor(ActorHandle handle);
         void flushActorChanges();
         void destroyActorSlot(ActorHandle handle);
-        void touchRevision(bool topology, bool model);
+        void touchRevision(bool topology, bool model, bool lighting = false);
         void touchActorRevision() noexcept;
+        void updateActorTransform(ModelHandle model, const Transform& transform, bool lighting);
 
         friend class Actor;
 

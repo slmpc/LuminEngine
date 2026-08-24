@@ -13,6 +13,7 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 #include <unordered_map>
 
 #include <nlohmann/json.hpp>
@@ -64,6 +65,52 @@ namespace lumin::project {
                 return fallback;
             }
             return {value[0].get<float>(), value[1].get<float>(), value[2].get<float>()};
+        }
+
+        Json localLightJson(const scene::LocalLight& light) {
+            return std::visit(
+                [](const auto& value) {
+                    using Light = std::remove_cvref_t<decltype(value)>;
+                    Json result{{"type", std::is_same_v<Light, scene::PointLight> ? "point" : "spot"},
+                                {"enabled", value.enabled},
+                                {"color", vectorJson(value.color)},
+                                {"luminousIntensityCandela", value.luminousIntensityCandela},
+                                {"range", value.range},
+                                {"castsShadows", value.castsShadows}};
+                    if constexpr (std::is_same_v<Light, scene::SpotLight>) {
+                        result["innerConeAngleDegrees"] = value.innerConeAngleDegrees;
+                        result["outerConeAngleDegrees"] = value.outerConeAngleDegrees;
+                    }
+                    return result;
+                },
+                light);
+        }
+
+        scene::LocalLight readLocalLight(const Json& value) {
+            const std::string type = value.value("type", std::string{});
+            if (type == "point") {
+                scene::PointLight light;
+                light.enabled = value.value("enabled", light.enabled);
+                light.color = readVector(value.value("color", Json{}), light.color);
+                light.luminousIntensityCandela =
+                    value.value("luminousIntensityCandela", light.luminousIntensityCandela);
+                light.range = value.value("range", light.range);
+                light.castsShadows = value.value("castsShadows", light.castsShadows);
+                return light;
+            }
+            if (type == "spot") {
+                scene::SpotLight light;
+                light.enabled = value.value("enabled", light.enabled);
+                light.color = readVector(value.value("color", Json{}), light.color);
+                light.luminousIntensityCandela =
+                    value.value("luminousIntensityCandela", light.luminousIntensityCandela);
+                light.range = value.value("range", light.range);
+                light.castsShadows = value.value("castsShadows", light.castsShadows);
+                light.innerConeAngleDegrees = value.value("innerConeAngleDegrees", light.innerConeAngleDegrees);
+                light.outerConeAngleDegrees = value.value("outerConeAngleDegrees", light.outerConeAngleDegrees);
+                return light;
+            }
+            throw std::invalid_argument("Actor light type must be 'point' or 'spot'.");
         }
 
         const char* typeName(AssetType type) {
@@ -627,6 +674,10 @@ namespace lumin::project {
                     transform.scale = readVector(transformJson->value("scale", Json{}), transform.scale);
                 }
                 actor->setTransform(transform);
+                if (const auto lightJson = actorJson.find("light");
+                    lightJson != actorJson.end() && lightJson->is_object()) {
+                    actor->setLocalLight(readLocalLight(*lightJson));
+                }
                 const auto materialJson = actorJson.find("material");
                 const bool hasSerializedMaterial = materialJson != actorJson.end() && materialJson->is_object();
                 if (hasSerializedMaterial) {
@@ -699,6 +750,9 @@ namespace lumin::project {
                     actorJson["mesh"] = meshReference->asset.value;
                     actorJson["meshPart"] = meshReference->part;
                 }
+            }
+            if (actor->localLight().has_value()) {
+                actorJson["light"] = localLightJson(*actor->localLight());
             }
             Json scriptArray = Json::array();
             for (const scripting::ScriptInfo& script : scripts_.scriptsForActor(handle)) {
@@ -1128,6 +1182,21 @@ namespace lumin::project {
                                                                           scene::Transform transform) {
         const std::vector<scene::ActorHandle> actors = createActorsFromMesh(asset, transform);
         return actors.empty() ? std::nullopt : std::optional{actors.front()};
+    }
+
+    scene::ActorHandle ProjectSession::createLightActor(scene::LocalLight light, scene::Transform transform) {
+        if (!scene::validateLocalLight(light)) {
+            throw std::invalid_argument("Cannot create a light actor with invalid parameters.");
+        }
+        const bool isPoint = std::holds_alternative<scene::PointLight>(light);
+        const scene::ActorHandle handle = level_.spawnActor();
+        scene::Actor* actor = level_.actor(handle);
+        actor->setName(isPoint ? "Point Light" : "Spot Light");
+        actor->setPersistentId(generateAssetId().value);
+        actor->setTransform(transform);
+        actor->setLocalLight(std::move(light));
+        dirty_ = true;
+        return handle;
     }
 
     const std::vector<ProjectSession::LoadedMeshPart>* ProjectSession::meshPartsForAsset(const AssetId& asset) {

@@ -74,7 +74,7 @@ namespace {
         constexpr std::uint32_t materialTextureCapacity = 7;
         const nvrhi::BindingLayoutDesc update =
             detail::makeSharcUpdateBindingLayoutDesc(geometryCapacity, materialTextureCapacity);
-        require(update.visibility == nvrhi::ShaderType::AllRayTracing && update.bindings.size() == 18,
+        require(update.visibility == nvrhi::ShaderType::AllRayTracing && update.bindings.size() == 19,
                 "SHARC update set 0 must expose scene, cache, constants, and material textures.");
         require(update.bindings[4].type == nvrhi::ResourceType::StructuredBuffer_SRV &&
                     update.bindings[4].getArraySize() == geometryCapacity &&
@@ -92,6 +92,8 @@ namespace {
                 "SHARC update bindings 14-16 must expose both material arrays and their sampler.");
         require(update.bindings[17].slot == 17 && update.bindings[17].type == nvrhi::ResourceType::Texture_SRV,
                 "SHARC update binding 17 must expose primary material IDs for Cook-Torrance throughput.");
+        require(update.bindings[18].slot == 18 && update.bindings[18].type == nvrhi::ResourceType::StructuredBuffer_SRV,
+                "SHARC update binding 18 must expose the unified light table.");
 
         const nvrhi::BindingLayoutDesc resolve = detail::makeSharcResolveBindingLayoutDesc();
         require(resolve.visibility == nvrhi::ShaderType::Compute && resolve.bindings.size() == 6,
@@ -170,6 +172,7 @@ namespace {
         frame.sunIrradiance = glm::vec4(8.0F, 7.0F, 6.0F, 2.0F);
         frame.renderWidth = 1600;
         frame.renderHeight = 900;
+        frame.lightCount = 7;
         const SharcHistoryPlan plan = history.beginFrame(frame.cameraPosition, {});
         const SharcGpuConstants constants = buildSharcGpuConstants(config, plan, frame);
         require(sizeof(constants) == 128 && constants.cameraPositionSceneScale.w == config.sceneScale &&
@@ -177,7 +180,8 @@ namespace {
                     constants.toSunWorldRadianceScale.w == config.radianceScale &&
                     constants.cacheParameters.x == config.capacity &&
                     constants.cacheParameters.y == config.accumulationFrameCount &&
-                    constants.renderParameters == glm::uvec4(1600U, 900U, config.sparseTileSize, 0U),
+                    constants.renderParameters == glm::uvec4(1600U, 900U, config.sparseTileSize, 0U) &&
+                    constants.samplingParameters.x == 7U,
                 "SHARC CPU constants must match the 128-byte shader ABI.");
         history.discardPendingFrame();
     }

@@ -494,10 +494,26 @@ namespace lumin::render::gpu {
         result.rebuildMaterialBindings_ = fullRebuild || materialBindingsChanged;
 
         const bool lightChanged =
-            fullRebuild || !snapshot_ || world::hasAnyChange(result.changes_, world::SceneChangeMask::Lighting) ||
+            fullRebuild || !snapshot_ ||
+            world::hasAnyChange(result.changes_,
+                                world::SceneChangeMask::Lighting | world::SceneChangeMask::Atmosphere) ||
             !sameDirectionalLight(snapshot_->environment().sun, result.targetSnapshot_->environment().sun);
         if (lightChanged) {
-            result.lightPatches_.push_back(GpuLightPatch{sunLightGpuIndex});
+            std::uint32_t lightIndex = 0;
+            result.lightPatches_.push_back(GpuLightPatch{GpuLightIndex{lightIndex++}});
+            for (const world::RenderWorldLocalLight& localLight : result.targetSnapshot_->localLights()) {
+                const bool enabled = std::visit(
+                    [](const auto& value) {
+                        return value.enabled;
+                    },
+                    localLight.light);
+                if (enabled) {
+                    if (lightIndex == GpuLightIndex::invalidValue) {
+                        throw std::overflow_error("GPU scene light count exceeds the shader index range.");
+                    }
+                    result.lightPatches_.push_back(GpuLightPatch{GpuLightIndex{lightIndex++}});
+                }
+            }
         }
 
         if (result.rebuildInstanceTopology_) {

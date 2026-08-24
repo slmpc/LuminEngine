@@ -98,17 +98,24 @@ lumin_configure_render_library(lumin_render_postfx)
 target_link_libraries(lumin_render_postfx PUBLIC Lumin::RenderCore Lumin::RenderRhi)
 
 set(_lumin_gi_sources gi/legacy/LegacyBackend.cpp)
+if(LUMIN_RAY_TRACING_IMPLEMENTATION_AVAILABLE)
+    list(APPEND _lumin_gi_sources
+        gi/raytracing/HybridLightingComposite.cpp
+        gi/raytracing/RayTracedDirectLighting.cpp
+    )
+endif()
 if(LUMIN_NRD_AVAILABLE)
     list(APPEND _lumin_gi_sources
         gi/raytracing/GiComposite.cpp
-        gi/raytracing/HybridLightingComposite.cpp
         gi/raytracing/NrdDenoiser.cpp
-        gi/raytracing/RayTracedDirectLighting.cpp
-        gi/raytracing/RayTracedGi.cpp
+        gi/raytracing/RtDiNrdInputs.cpp
     )
 endif()
 if(LUMIN_SHARC_AVAILABLE)
-    list(APPEND _lumin_gi_sources gi/raytracing/SharcRadianceCache.cpp)
+    list(APPEND _lumin_gi_sources
+        gi/raytracing/SharcIndirectLighting.cpp
+        gi/raytracing/SharcRadianceCache.cpp
+    )
 endif()
 add_library(lumin_render_gi STATIC ${_lumin_gi_sources})
 add_library(Lumin::GiFeatures ALIAS lumin_render_gi)

@@ -79,8 +79,8 @@ namespace lumin::core {
             for (const scene::ActorHandle handle : level.actorHandles()) {
                 const scene::Actor* actor = level.actor(handle);
                 if (actor != nullptr) {
-                    result->actors.push_back(
-                        {handle, actor->name(), actor->transform(), actor->material(), actor->modelHandle()});
+                    result->actors.push_back({handle, actor->name(), actor->transform(), actor->material(),
+                                              actor->modelHandle(), actor->localLight()});
                 }
             }
             for (const scene::ModelHandle handle : level.modelHandles()) {

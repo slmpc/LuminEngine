@@ -42,8 +42,7 @@ namespace lumin::scene {
                    left.mieDensityScaleKm == right.mieDensityScaleKm && left.miePhaseG == right.miePhaseG &&
                    left.ozoneAbsorptionPerKm == right.ozoneAbsorptionPerKm &&
                    left.ozoneLayerCenterKm == right.ozoneLayerCenterKm &&
-                   left.ozoneLayerHalfWidthKm == right.ozoneLayerHalfWidthKm &&
-                   left.groundAlbedo == right.groundAlbedo;
+                   left.ozoneLayerHalfWidthKm == right.ozoneLayerHalfWidthKm && left.groundAlbedo == right.groundAlbedo;
         }
 
         bool sameAtmosphereTransform(const AtmosphereTransform& left, const AtmosphereTransform& right) noexcept {
@@ -340,6 +339,14 @@ namespace lumin::scene {
         return glm::scale(result, scale);
     }
 
+    glm::vec3 localLightDirection(const Transform& transform) noexcept {
+        glm::mat4 rotation{1.0f};
+        rotation = glm::rotate(rotation, glm::radians(transform.rotationDegrees.x), glm::vec3{1.0f, 0.0f, 0.0f});
+        rotation = glm::rotate(rotation, glm::radians(transform.rotationDegrees.y), glm::vec3{0.0f, 1.0f, 0.0f});
+        rotation = glm::rotate(rotation, glm::radians(transform.rotationDegrees.z), glm::vec3{0.0f, 0.0f, 1.0f});
+        return glm::normalize(glm::vec3{rotation * glm::vec4{0.0f, 0.0f, -1.0f, 0.0f}});
+    }
+
     void ActorComponent::onAttach(Actor&, Level&) {
     }
 
@@ -438,8 +445,8 @@ namespace lumin::scene {
         }
         transform_ = transform;
         if (owner_ != nullptr) {
-            if (modelHandle_ != InvalidModelHandle) {
-                owner_->setModelTransform(modelHandle_, transform_);
+            if (modelHandle_ != InvalidModelHandle || localLight_.has_value()) {
+                owner_->updateActorTransform(modelHandle_, transform_, localLight_.has_value());
             } else {
                 owner_->touchActorRevision();
             }
@@ -502,6 +509,33 @@ namespace lumin::scene {
         modelHandle_ = InvalidModelHandle;
     }
 
+    const std::optional<LocalLight>& Actor::localLight() const noexcept {
+        return localLight_;
+    }
+
+    void Actor::setLocalLight(LocalLight light) {
+        if (!validateLocalLight(light)) {
+            throw std::invalid_argument("Actor cannot attach invalid local-light parameters.");
+        }
+        if (localLight_ == light) {
+            return;
+        }
+        localLight_ = std::move(light);
+        if (owner_ != nullptr) {
+            owner_->touchRevision(false, false, true);
+        }
+    }
+
+    void Actor::clearLocalLight() {
+        if (!localLight_.has_value()) {
+            return;
+        }
+        localLight_.reset();
+        if (owner_ != nullptr) {
+            owner_->touchRevision(false, false, true);
+        }
+    }
+
     ActorComponent* Actor::addComponent(std::unique_ptr<ActorComponent> componentValue) {
         if (componentValue == nullptr) {
             throw std::invalid_argument("Actor cannot add a null component.");
@@ -519,8 +553,8 @@ namespace lumin::scene {
             }
             --owningLevel->callbackDepth_;
             owningLevel->touchActorRevision();
-            if (!owningLevel->ticking_ && owningLevel->callbackDepth_ == 0 &&
-                !owningLevel->flushingActorChanges_ && !owningLevel->destroying_) {
+            if (!owningLevel->ticking_ && owningLevel->callbackDepth_ == 0 && !owningLevel->flushingActorChanges_ &&
+                !owningLevel->destroying_) {
                 owningLevel->flushActorChanges();
             }
         }
@@ -528,8 +562,9 @@ namespace lumin::scene {
     }
 
     bool Actor::removeComponent(const ActorComponent* componentValue) {
-        const auto iterator = std::find_if(components_.begin(), components_.end(),
-                                           [componentValue](const auto& value) { return value.get() == componentValue; });
+        const auto iterator = std::find_if(components_.begin(), components_.end(), [componentValue](const auto& value) {
+            return value.get() == componentValue;
+        });
         if (iterator == components_.end()) {
             return false;
         }
@@ -547,8 +582,8 @@ namespace lumin::scene {
         components_.erase(iterator);
         if (owningLevel != nullptr) {
             owningLevel->touchActorRevision();
-            if (!owningLevel->ticking_ && owningLevel->callbackDepth_ == 0 &&
-                !owningLevel->flushingActorChanges_ && !owningLevel->destroying_) {
+            if (!owningLevel->ticking_ && owningLevel->callbackDepth_ == 0 && !owningLevel->flushingActorChanges_ &&
+                !owningLevel->destroying_) {
                 owningLevel->flushActorChanges();
             }
         }
@@ -559,8 +594,9 @@ namespace lumin::scene {
         if (components_.empty()) {
             return false;
         }
-        const auto iterator = std::find_if(components_.begin(), components_.end(),
-                                           [componentValue](const auto& value) { return value.get() == componentValue; });
+        const auto iterator = std::find_if(components_.begin(), components_.end(), [componentValue](const auto& value) {
+            return value.get() == componentValue;
+        });
         if (iterator == components_.end()) {
             return false;
         }
@@ -1054,9 +1090,9 @@ namespace lumin::scene {
 
     void Level::setEnvironment(SceneEnvironment environment) noexcept {
         const bool lightingChanged = !sameDirectionalLight(environment_.sun, environment.sun);
-        const bool atmosphereChanged = !sameAtmosphere(environment_.atmosphere, environment.atmosphere) ||
-                                       !sameAtmosphereTransform(environment_.atmosphereTransform,
-                                                                environment.atmosphereTransform);
+        const bool atmosphereChanged =
+            !sameAtmosphere(environment_.atmosphere, environment.atmosphere) ||
+            !sameAtmosphereTransform(environment_.atmosphereTransform, environment.atmosphereTransform);
         if (!lightingChanged && !atmosphereChanged) {
             return;
         }
@@ -1152,7 +1188,7 @@ namespace lumin::scene {
         slot.state = destroying_ ? ActorSlotState::PendingSpawnDestroy : ActorSlotState::PendingSpawn;
         slot.actor->owner_ = this;
         slot.actor->handle_ = ActorHandle{index, slot.generation};
-        touchRevision(false, false);
+        touchRevision(false, false, slot.actor->localLight_.has_value());
 
         const ActorHandle handle{index, slot.generation};
         if (!ticking_ && callbackDepth_ == 0 && !flushingActorChanges_ && !destroying_) {
@@ -1269,6 +1305,7 @@ namespace lumin::scene {
 
         Actor* actorValue = slot->actor.get();
         const bool spawned = slot->state == ActorSlotState::PendingDestroy;
+        const bool hadLocalLight = actorValue->localLight_.has_value();
         std::exception_ptr callbackError;
         if (spawned) {
             ++callbackDepth_;
@@ -1296,13 +1333,13 @@ namespace lumin::scene {
         currentSlot->actor.reset();
         currentSlot->state = ActorSlotState::Empty;
         currentSlot->generation = nextGeneration(currentSlot->generation);
-        touchRevision(false, false);
+        touchRevision(false, false, hadLocalLight);
         if (callbackError != nullptr && !destroying_) {
             std::rethrow_exception(callbackError);
         }
     }
 
-    void Level::touchRevision(bool topology, bool model) {
+    void Level::touchRevision(bool topology, bool model, bool lighting) {
         ++revision_;
         if (topology) {
             ++topologyRevision_;
@@ -1310,11 +1347,23 @@ namespace lumin::scene {
         if (model) {
             ++modelRevision_;
         }
+        if (lighting) {
+            ++lightingRevision_;
+        }
     }
 
     void Level::touchActorRevision() noexcept {
         ++revision_;
         ++modelRevision_;
+    }
+
+    void Level::updateActorTransform(ModelHandle modelHandle, const Transform& transform, bool lighting) {
+        bool modelChanged = false;
+        if (ModelSlot* slot = findModelSlot(modelHandle); slot != nullptr) {
+            models_[slot->denseIndex].transform = transform;
+            modelChanged = true;
+        }
+        touchRevision(false, modelChanged, lighting);
     }
 
 } // namespace lumin::scene

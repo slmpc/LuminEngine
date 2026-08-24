@@ -11,8 +11,8 @@
 #include <glm/vec4.hpp>
 #include <nvrhi/nvrhi.h>
 
-#include "render/gi/raytracing/RayTracedGi.hpp"
 #include "render/gi/raytracing/RtSurfaceSignals.hpp"
+#include "render/gi/raytracing/SharcRadianceCache.hpp"
 #include "render/gpu/GpuSceneResources.hpp"
 #include "render/resources/FrameGraph.hpp"
 
@@ -25,6 +25,28 @@ namespace lumin::scene {
 }
 
 namespace lumin::render::gi {
+
+    /** RTDI 使用的当前 GPU Scene 物理 descriptor。 */
+    struct RayTracingSceneBindings {
+        gpu::GpuSceneDescriptors descriptors;
+        std::span<const gpu::GpuGeometryDescriptor> geometry;
+        std::span<const nvrhi::TextureHandle> baseColorTextures;
+        std::span<const nvrhi::TextureHandle> normalRoughnessTextures;
+        nvrhi::SamplerHandle materialSampler;
+    };
+
+    /** 必须复用 GPU Scene upload/build 阶段导入的 FrameGraph 资源身份。 */
+    struct RayTracingSceneGraphResources {
+        FrameGraphResourceHandle tlas;
+        FrameGraphResourceHandle instances;
+        FrameGraphResourceHandle materials;
+        FrameGraphResourceHandle lights;
+        std::span<const FrameGraphResourceHandle> vertices;
+        std::span<const FrameGraphResourceHandle> indices;
+        std::span<const FrameGraphResourceHandle> baseColorTextures;
+        std::span<const FrameGraphResourceHandle> normalRoughnessTextures;
+        FrameGraphPassHandle readyPass;
+    };
 
     /** 物理光照缓冲采用的固定相机基准曝光值，等价于晴天室外的 EV100 15。 */
     inline constexpr float physicalLightingEv100 = 15.0F;
@@ -42,7 +64,7 @@ namespace lumin::render::gi {
      *
      * @param sun 场景拥有的方向光快照，调用期间必须有效。
      * @param directLightingEnabled 是否输出太阳直射光。
-     * @return `rgb` 为 RTDI、RTGI 与 SHARC 共用的太阳入射照度。
+     * @return `rgb` 为 RTDI、SHARC update 与间接光 fallback 共用的太阳入射照度。
      */
     [[nodiscard]] glm::vec4 makeRayTracingSunIrradiance(const scene::DirectionalLight& sun,
                                                         bool directLightingEnabled) noexcept;
@@ -65,10 +87,12 @@ namespace lumin::render::gi {
         glm::vec4 renderSize{1.0F};
         /// x=minT，y=maxT，z=直接光照开关，w=逻辑帧序号。
         glm::vec4 traceParameters{0.001F, 10000.0F, 1.0F, 0.0F};
+        /// x=有效 lightCount，y=成功帧序号，zw 保留。
+        glm::uvec4 samplingParameters{1U, 0U, 0U, 0U};
     };
 
     static_assert(std::is_standard_layout_v<RayTracedDiConstants>);
-    static_assert(sizeof(RayTracedDiConstants) == 224);
+    static_assert(sizeof(RayTracedDiConstants) == 240);
     static_assert(alignof(RayTracedDiConstants) == 16);
     static_assert(offsetof(RayTracedDiConstants, inverseViewProjection) == 0);
     static_assert(offsetof(RayTracedDiConstants, previousViewProjection) == 64);
@@ -78,6 +102,7 @@ namespace lumin::render::gi {
     static_assert(offsetof(RayTracedDiConstants, sunIrradiance) == 176);
     static_assert(offsetof(RayTracedDiConstants, renderSize) == 192);
     static_assert(offsetof(RayTracedDiConstants, traceParameters) == 208);
+    static_assert(offsetof(RayTracedDiConstants, samplingParameters) == 224);
 
     /// RTDI 输出的物理表面信号；`viewZ`/`visibilityMask` 可由 pass 在创建时补齐。
     using RayTracedDiFrameResources = RtSurfaceSignalResources;
@@ -94,7 +119,7 @@ namespace lumin::render::gi {
 
         /// 构造当前 GPU Scene 版本的 RTDI binding set；只包含 TLAS/scene、surface UAV 和 constants。
         [[nodiscard]] nvrhi::BindingSetDesc makeRayTracedDiBindingSetDesc(const RayTracedDiFrameResources& outputs,
-                                                                          const RayTracedGiSceneBindings& scene,
+                                                                          const RayTracingSceneBindings& scene,
                                                                           std::uint32_t maxGeometryDescriptors,
                                                                           std::uint32_t maxMaterialTextureDescriptors,
                                                                           nvrhi::BufferHandle constants);
@@ -140,8 +165,8 @@ namespace lumin::render::gi {
         [[nodiscard]] FrameGraphPassHandle record(FrameGraph& frameGraph, std::uint32_t frameIndex,
                                                   bool frameSlotFenceWaited, const RayTracedDiConstants& constants,
                                                   const RayTracedDiGraphResources& outputs,
-                                                  const RayTracedGiSceneBindings& scene,
-                                                  const RayTracedGiSceneGraphResources& sceneResources,
+                                                  const RayTracingSceneBindings& scene,
+                                                  const RayTracingSceneGraphResources& sceneResources,
                                                   const RayTracingEnvironmentBindings& environment,
                                                   const RayTracingEnvironmentGraphResources& environmentResources);
 
@@ -153,6 +178,9 @@ namespace lumin::render::gi {
 
         /// 返回指定帧槽的 primary RT surface 物理资源。
         [[nodiscard]] const RayTracedDiFrameResources& signals(std::uint32_t frameIndex) const;
+
+        /// 返回指定帧槽是否至少成功提交过一次 primary RT surface 写入。
+        [[nodiscard]] bool frameSlotInitialized(std::uint32_t frameIndex) const;
 
     private:
         struct Impl;

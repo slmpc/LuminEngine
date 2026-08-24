@@ -1,6 +1,7 @@
 #include "scene/Environment.hpp"
 
 #include <cmath>
+#include <type_traits>
 
 #include <glm/geometric.hpp>
 
@@ -24,6 +25,32 @@ namespace lumin::scene {
         }
         const float directionLengthSquared = glm::dot(light.direction, light.direction);
         return std::isfinite(directionLengthSquared) && directionLengthSquared > 1.0e-12f;
+    }
+
+    bool validatePointLight(const PointLight& light) noexcept {
+        return nonNegativeVec3(light.color) && std::isfinite(light.luminousIntensityCandela) &&
+               light.luminousIntensityCandela >= 0.0f && std::isfinite(light.range) && light.range > 0.0f;
+    }
+
+    bool validateSpotLight(const SpotLight& light) noexcept {
+        return nonNegativeVec3(light.color) && std::isfinite(light.luminousIntensityCandela) &&
+               light.luminousIntensityCandela >= 0.0f && std::isfinite(light.range) && light.range > 0.0f &&
+               std::isfinite(light.innerConeAngleDegrees) && std::isfinite(light.outerConeAngleDegrees) &&
+               light.innerConeAngleDegrees >= 0.0f && light.innerConeAngleDegrees <= light.outerConeAngleDegrees &&
+               light.outerConeAngleDegrees <= 90.0f;
+    }
+
+    bool validateLocalLight(const LocalLight& light) noexcept {
+        return std::visit(
+            [](const auto& value) {
+                using Light = std::remove_cvref_t<decltype(value)>;
+                if constexpr (std::is_same_v<Light, PointLight>) {
+                    return validatePointLight(value);
+                } else {
+                    return validateSpotLight(value);
+                }
+            },
+            light);
     }
 
     bool validateAtmosphereTransform(const AtmosphereTransform& transform) noexcept {

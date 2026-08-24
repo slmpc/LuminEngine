@@ -17,8 +17,8 @@
 - [x] 建立持续 Goal，并将本文件作为唯一执行计划。
 - [x] 完成渲染目录拆分、Feature Pipeline 基础、GPU Scene、RT/NRD/SHARC adapter 与大气参数模型的首轮实现。
 - [x] 固定 NRD、SHARC submodule，并建立按 `requires` 过滤 shader 和源码的 feature gate。
-- [x] 收口 RT GI、SHARC query/update/resolve 与共享 atmosphere set 的 shader manifest/ABI。
-- [x] 通过 shader ABI、GI composite、RT GI、NRD、SHARC 测试及 RT/NRD/SHARC 开关矩阵。
+- [x] 收口 SHARC indirect/query/update/resolve 与共享 atmosphere set 的 shader manifest/ABI。
+- [x] 通过 shader ABI、GI composite、SHARC indirect、NRD、SHARC 测试及 RT/NRD/SHARC 开关矩阵。
 - [x] 审查实际 Vulkan 生命周期、descriptor、SBT、history 与降级路径，并修正集成缺口。
 - [x] 已落地现有大气 LUT 与共享绑定；按最新范围不再追加 raster/RT 画面对照工作。
 - [x] 完成 Debug/Release 全量构建、CTest、sandbox 与 Vulkan validation 验证。
@@ -158,8 +158,8 @@
 
 - [x] 为 CPU、Vulkan、RT、SHARC 和 NRD 测试设置 CTest label/skip/timeout。
 - [ ] 运行 Debug/Release 全量构建和测试，启动 sandbox 并检查 Vulkan validation。
-- [ ] 捕获 raster、raw RT GI、SHARC 和 NRD 结果用于回归对比。
-- [ ] 完成架构、能力、shader ABI、历史、RT GI、SHARC、NRD、大气和依赖升级文档。
+- [ ] 捕获 raster、raw SHARC indirect 和 NRD 结果用于回归对比。
+- [ ] 完成架构、能力、shader ABI、历史、SHARC indirect、NRD、大气和依赖升级文档。
 - [ ] 删除迁移期兼容层、过时源码扫描测试和陈旧 shader 产物依赖。
 
 ## 完成定义
