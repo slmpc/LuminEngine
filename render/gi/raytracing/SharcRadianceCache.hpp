@@ -158,8 +158,8 @@ namespace lumin::render::gi {
         glm::vec4 previousCameraPositionLogarithmBase{0.0F, 0.0F, 0.0F, 2.0F};
         /// xyz=从表面指向太阳的单位向量，w=radianceScale。
         glm::vec4 toSunWorldRadianceScale{0.0F, 1.0F, 0.0F, 1000.0F};
-        /// rgb=太阳辐亮度，w=天空亮度尺度。
-        glm::vec4 sunRadiance{1.0F};
+        /// rgb=预曝光太阳入射照度，w=天空亮度尺度。
+        glm::vec4 sunIrradiance{1.0F};
         /// x=minT，y=maxT，z=levelBias，w=anti-firefly 开关。
         glm::vec4 traceParameters{0.001F, 10000.0F, 0.0F, 1.0F};
         /// x=capacity，y=accumulation frames，z=stale frames，w=成功提交序号。
@@ -175,7 +175,7 @@ namespace lumin::render::gi {
     static_assert(offsetof(SharcGpuConstants, cameraPositionSceneScale) == 0);
     static_assert(offsetof(SharcGpuConstants, previousCameraPositionLogarithmBase) == 16);
     static_assert(offsetof(SharcGpuConstants, toSunWorldRadianceScale) == 32);
-    static_assert(offsetof(SharcGpuConstants, sunRadiance) == 48);
+    static_assert(offsetof(SharcGpuConstants, sunIrradiance) == 48);
     static_assert(offsetof(SharcGpuConstants, traceParameters) == 64);
     static_assert(offsetof(SharcGpuConstants, cacheParameters) == 80);
     static_assert(offsetof(SharcGpuConstants, renderParameters) == 96);
@@ -185,7 +185,8 @@ namespace lumin::render::gi {
     struct SharcFrameParameters {
         glm::vec4 cameraPosition{0.0F, 0.0F, 0.0F, 1.0F};
         glm::vec4 toSunWorld{0.0F, 1.0F, 0.0F, 0.0F};
-        glm::vec4 sunRadiance{1.0F};
+        /// 供 SHARC 路径计算 Cook-Torrance 直接光的预曝光太阳入射照度。
+        glm::vec4 sunIrradiance{1.0F};
         std::uint32_t renderWidth = 0;
         std::uint32_t renderHeight = 0;
         float minTraceDistance = 0.001F;
@@ -245,11 +246,13 @@ namespace lumin::render::gi {
         }
     };
 
-    /** sparse update raygen 读取的三张 G-buffer 物理纹理。 */
+    /** sparse update raygen 读取的 RT surface 物理纹理。 */
     struct SharcUpdateFrameInputs {
         nvrhi::TextureHandle position;
         nvrhi::TextureHandle normalRoughness;
         nvrhi::TextureHandle albedoMetallic;
+        /// 用于恢复主命中点材质并计算 Cook-Torrance 漫反射吞吐量。
+        nvrhi::TextureHandle materialId;
     };
 
     /** sparse update 对应的 FrameGraph 纹理身份。 */
@@ -257,6 +260,8 @@ namespace lumin::render::gi {
         FrameGraphResourceHandle position;
         FrameGraphResourceHandle normalRoughness;
         FrameGraphResourceHandle albedoMetallic;
+        /// 与 `SharcUpdateFrameInputs::materialId` 对应的图资源身份。
+        FrameGraphResourceHandle materialId;
     };
 
     /** sparse RT update 使用的当前 GPU Scene 物理 descriptor。 */

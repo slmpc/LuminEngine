@@ -37,6 +37,8 @@ namespace lumin::assets {
         glm::vec3 diffuseColor{1.0f};
         glm::vec3 specularColor{0.04f};
         float shininess = 48.0f;
+        /// MTL `Ni` 声明的介质折射率；缺失时使用常见电介质默认值 1.5。
+        float indexOfRefraction = 1.5f;
         std::filesystem::path diffuseTexture;
         std::filesystem::path normalTexture;
         std::filesystem::path roughnessTexture;

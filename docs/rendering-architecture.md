@@ -165,13 +165,14 @@ recipe 注册 RT surface/GPU Scene producer，不包含 Raster-only 模块。RT 
 `scene::Material` 位于 `core/scene/Material.hpp`，通过 `SurfaceModel` 逐材质选择
 `MetallicRoughness` 或 `BlinnPhong`。枚举使用固定的 `uint32_t` 数值 `0/1`，会直接进入 GPU material buffer；
 后续只能追加新值，不能重新排序。材质同时保留两套模型参数，因此编辑器切换模型不会丢失原有调参：
-Metallic-Roughness 使用 `roughness/metallic`，Blinn-Phong 使用 `specularColor/shininess`，两者共享 base color、
-normal map 和 UV scale。
+Metallic-Roughness 使用 `roughness/metallic`，Blinn-Phong 使用 `specularColor/shininess/indexOfRefraction`，两者共享
+base color、normal map 和 UV scale。OBJ 导入器保留 MTL 的 `Ni`；缺失 `Ni` 的旧资产与不含 `ior` 的旧场景使用
+常见电介质默认值 1.5。
 
 `gpu::GpuMaterialData` 是 raster、ray tracing、SHARC 与 NRD adapter 共用的 64-byte、16-byte aligned ABI：
 `baseColorMetallic` 保存基础颜色与金属度，`specularColorShininess` 保存 Blinn-Phong 高光颜色与指数，
-`surfaceParameters` 保存统一等效粗糙度、UV scale 与 normal Y 符号，`metadata` 以整数保存 `SurfaceModel`、
-texture descriptor index 和纹理存在标志。Blinn-Phong 指数通过
+`surfaceParameters` 保存统一等效粗糙度、UV scale、normal Y 符号，以及 Blinn-Phong IOR 推导出的介质 `F0`；
+`metadata` 以整数保存 `SurfaceModel`、texture descriptor index 和纹理存在标志。Blinn-Phong 指数通过
 `sqrt(2 / (shininess + 2))` 转换为 NRD/GI 使用的等效感知粗糙度，避免 direct lighting 与去噪器各自解释材质。
 
 `Material` 可以引用 base color、normal 和 roughness 三张贴图。`ModelRenderer` 对场景中的唯一贴图组合去重，
@@ -200,6 +201,20 @@ material ID 与 `GpuMaterialData` buffer。`MetallicRoughness` 路径保持 GGX�
 `GlobalIlluminationMode::Legacy` 使用 raster G-buffer、CSM、延迟光照与可选的 SSAO、HBAO 或 GTAO；
 `GlobalIlluminationMode::RayTracing` 使用 primary/direct RT 和 RT 间接光，不创建或读取 G-buffer/CSM。运行时能力不足、
 场景尚无可追踪几何，或构建时使用 `LUMIN_RAY_TRACING=OFF` 时，Ray Tracing 请求会安全回退到 Legacy 拓扑。
+RTDI、RTGI、SHARC 与 atmosphere LUT 共用 EV100 15、饱和归一化系数 `q=1.2` 的固定物理预曝光
+`1 / (q * 2^EV100)`。场景太阳的 `illuminanceLux` 因而始终作为入射照度线性参与计算，不再映射到 Raster 的任意
+`3.2` 常量；预曝光只负责让太阳、天空与反弹光安全落入 FP16 scene-linear 缓冲范围。天空太阳盘使用真实的
+`0.2679` 度角半径，并由入射照度除以太阳盘立体角得到辐亮度。
+
+Ray Tracing 的所有材质统一使用 Cook-Torrance BRDF：GGX 法线分布、Smith-GGX 几何遮蔽与 Schlick Fresnel。
+Metallic-Roughness 材质使用 `F0 = lerp(0.04, baseColor, metallic)`；旧 Blinn-Phong 材质在 RT 路径中使用
+`F0 = ((IOR - 1) / (IOR + 1))^2`，其 `specularColor` 只保留给 Raster Blinn-Phong，避免把 MTL 的任意 `Ks`
+误当作介质反射率。IOR 在上传时限制到 `[1, 3]`，默认 1.5 对应 `F0 = 0.04`。RTGI 漫反射采用 cosine-weighted sampling，镜面
+采用 GGX VNDF importance sampling，以避免普通 NDF 在掠射角产生高权重无效样本。两路路径估计都先应用完整
+`BRDF * cos(theta) / PDF`，随后用 `NRD_MaterialFactors` 解调主表面材质；Composite 在 REBLUR 后用同一因子恢复材质，
+因此空间去噪不会模糊 albedo、metallic 或 Fresnel 细节。
+Cook-Torrance 的低粗糙度掠射峰值在数学上可能超过 half 范围；BRDF 计算保持不截断，仅在 FP16 scene-radiance
+纹理写入边界限制到 `65504`，防止 `Inf/NaN` 污染后续 NRD、TAA 与 tone mapping。
 
 Ray Tracing 模式可分别关闭 SHARC 与 NRD。关闭 SHARC 后不录制 cache update/resolve/statistics pass，RT 间接光改用
 无辐射缓存的 fallback estimate；关闭 NRD 后，原始 diffuse/specular radiance-hit-distance 直接交给 GI composite。
@@ -236,6 +251,9 @@ texture 和 AS；该回收是逐帧资源生命周期的一部分，不能仅依
 禁用全局光照时的中性值为 `{0, 0, 0, 1}`。屏幕空间 AO 后端写入 `{0, 0, 0, ao}`，延迟光照按
 `legacyAmbient * globalIllumination.a + globalIllumination.rgb` 合成环境光。该图像同时支持颜色附件、采样和存储图像
 用途，以便后续后端使用光线追踪或计算通道写入相同契约。
+Ray Tracing composite 写入 `alpha=0`，RGB 为去噪后的 diffuse/specular 辐亮度乘各自主表面 NRD 材质因子之和。
+该调制与 RTGI 前端解调严格配对，不重复计算路径 BRDF，也不注入常量环境光或 Raster ambient floor；无能量路径保持
+为黑色，亮度只能来自太阳、atmosphere environment 或真实追踪到的反弹光。
 
 相机切换、场景拓扑变化、Legacy/Ray Tracing 模式、AO 算法或参数、Feature 开关变化以及交换链重建都会使后端历史失效。无时序历史的屏幕空间 AO 后端
 忽略失效通知；SHARC、NRD diffuse/specular 和 TAA 分域决定 keep、soft reset 或 full reset，并且都只在成功提交后

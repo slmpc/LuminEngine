@@ -68,19 +68,19 @@ namespace lumin::render {
                             field("surfaceParameters", 32, 16), field("metadata", 48, 16)})
                 .abiStruct("RayTracedGiConstants", 96,
                            {field("cameraPosition", 0, 16), field("cameraForward", 16, 16), field("toSunWorld", 32, 16),
-                            field("sunRadiance", 48, 16), field("renderSize", 64, 16),
+                            field("sunIrradiance", 48, 16), field("renderSize", 64, 16),
                             field("traceParameters", 80, 16)})
                 .abiStruct("RayTracedDiConstants", 224,
                            {field("inverseViewProjection", 0, 64), field("previousViewProjection", 64, 64),
                             field("cameraPosition", 128, 16), field("cameraForward", 144, 16),
-                            field("toSunWorld", 160, 16), field("sunRadiance", 176, 16), field("renderSize", 192, 16),
+                            field("toSunWorld", 160, 16), field("sunIrradiance", 176, 16), field("renderSize", 192, 16),
                             field("traceParameters", 208, 16)})
                 .abiStruct("GiCompositeConstants", 32, {field("cameraPosition", 0, 16), field("renderInfo", 16, 16)})
                 .abiStruct("HybridLightingCompositeConstants", 16, {field("renderInfo", 0, 16)})
                 .abiStruct("SharcGpuConstants", 128,
                            {field("cameraPositionSceneScale", 0, 16),
                             field("previousCameraPositionLogarithmBase", 16, 16),
-                            field("toSunWorldRadianceScale", 32, 16), field("sunRadiance", 48, 16),
+                            field("toSunWorldRadianceScale", 32, 16), field("sunIrradiance", 48, 16),
                             field("traceParameters", 64, 16), field("cacheParameters", 80, 16),
                             field("renderParameters", 96, 16), field("reserved", 112, 16)})
                 .abiStruct("SharcAccumulationData", 16, {field("data", 0, 16)})
@@ -227,7 +227,8 @@ namespace lumin::render {
             addAtmosphereConsumerBindings(rtGi);
             rtGi.bindings({binding("baseColorTextures", ShaderBindingKind::SampledImage, 0, 21),
                            binding("normalRoughnessTextures", ShaderBindingKind::SampledImage, 0, 22),
-                           binding("materialSampler", ShaderBindingKind::Sampler, 0, 23)})
+                           binding("materialSampler", ShaderBindingKind::Sampler, 0, 23),
+                           binding("materialIdTexture", ShaderBindingKind::SampledImage, 0, 24)})
                 .entry(ShaderId::RtGiRayGeneration, "rt-gi.ray-generation", "rayGenerationMain",
                        ShaderStage::RayGeneration, "RtGi.rgen")
                 .entry(ShaderId::RtGiRadianceMiss, "rt-gi.radiance-miss", "radianceMissMain", ShaderStage::Miss,
@@ -269,7 +270,8 @@ namespace lumin::render {
             rtGiSharc
                 .bindings({binding("baseColorTextures", ShaderBindingKind::SampledImage, 0, 21),
                            binding("normalRoughnessTextures", ShaderBindingKind::SampledImage, 0, 22),
-                           binding("materialSampler", ShaderBindingKind::Sampler, 0, 23)})
+                           binding("materialSampler", ShaderBindingKind::Sampler, 0, 23),
+                           binding("materialIdTexture", ShaderBindingKind::SampledImage, 0, 24)})
                 .entry(ShaderId::RtGiSharcClosestHit, "rt-gi.sharc-closest-hit", "closestHitMain",
                        ShaderStage::ClosestHit, "RtGiSharc.rchit");
 
@@ -316,7 +318,8 @@ namespace lumin::render {
             sharcUpdate
                 .bindings({binding("baseColorTextures", ShaderBindingKind::SampledImage, 0, 14),
                            binding("normalRoughnessTextures", ShaderBindingKind::SampledImage, 0, 15),
-                           binding("materialSampler", ShaderBindingKind::Sampler, 0, 16)})
+                           binding("materialSampler", ShaderBindingKind::Sampler, 0, 16),
+                           binding("materialIdTexture", ShaderBindingKind::SampledImage, 0, 17)})
                 .entry(ShaderId::SharcUpdateRayGeneration, "sharc-update.ray-generation",
                        "sharcUpdateRayGenerationMain", ShaderStage::RayGeneration, "SharcUpdate.rgen")
                 .entry(ShaderId::SharcUpdateRadianceMiss, "sharc-update.radiance-miss", "sharcUpdateRadianceMissMain",

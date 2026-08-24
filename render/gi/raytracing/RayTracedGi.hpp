@@ -29,8 +29,8 @@ namespace lumin::render::gi {
         glm::vec4 cameraForward{0.0F, 0.0F, -1.0F, 0.0F};
         /// xyz 为从表面指向太阳的 world-space 单位向量。
         glm::vec4 toSunWorld{0.0F, 1.0F, 0.0F, 0.0F};
-        /// rgb 为太阳辐亮度尺度，w 为天空亮度尺度。
-        glm::vec4 sunRadiance{1.0F};
+        /// rgb 为预曝光太阳入射照度，w 为天空亮度尺度。
+        glm::vec4 sunIrradiance{1.0F};
         /// xy 为分辨率；zw 为 current-previous 的有效 screen-UV jitter，用于从 G-buffer motion 去抖动。
         glm::vec4 renderSize{1.0F};
         /// x=minT，y=maxT，z=成功提交后的逻辑帧序号，w=NRD denoisingRange。
@@ -43,7 +43,7 @@ namespace lumin::render::gi {
     static_assert(offsetof(RayTracedGiConstants, cameraPosition) == 0);
     static_assert(offsetof(RayTracedGiConstants, cameraForward) == 16);
     static_assert(offsetof(RayTracedGiConstants, toSunWorld) == 32);
-    static_assert(offsetof(RayTracedGiConstants, sunRadiance) == 48);
+    static_assert(offsetof(RayTracedGiConstants, sunIrradiance) == 48);
     static_assert(offsetof(RayTracedGiConstants, renderSize) == 64);
     static_assert(offsetof(RayTracedGiConstants, traceParameters) == 80);
 
@@ -69,12 +69,14 @@ namespace lumin::render::gi {
         nvrhi::BufferHandle constants;
     };
 
-    /// ray generation 从 G-buffer 读取的物理纹理。
+    /// ray generation 从 RT surface 读取的物理纹理。
     struct RayTracedGiFrameInputs {
         nvrhi::TextureHandle position;
         nvrhi::TextureHandle normalRoughness;
         nvrhi::TextureHandle albedoMetallic;
         nvrhi::TextureHandle motion;
+        /// 用于恢复主命中点完整材质并计算 Cook-Torrance BRDF。
+        nvrhi::TextureHandle materialId;
     };
 
     /// 上述 G-buffer 在当前 FrameGraph 中已有的资源身份。
@@ -83,6 +85,8 @@ namespace lumin::render::gi {
         FrameGraphResourceHandle normalRoughness;
         FrameGraphResourceHandle albedoMetallic;
         FrameGraphResourceHandle motion;
+        /// 与 `RayTracedGiFrameInputs::materialId` 对应的图资源身份。
+        FrameGraphResourceHandle materialId;
     };
 
     /** RT pass 使用的当前 GPU Scene 物理 descriptor。 */

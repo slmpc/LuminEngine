@@ -54,7 +54,7 @@ namespace {
     static_assert(sizeof(RayTracedGiConstants) == 96 && offsetof(RayTracedGiConstants, cameraPosition) == 0 &&
                   offsetof(RayTracedGiConstants, cameraForward) == 16 &&
                   offsetof(RayTracedGiConstants, toSunWorld) == 32 &&
-                  offsetof(RayTracedGiConstants, sunRadiance) == 48 &&
+                  offsetof(RayTracedGiConstants, sunIrradiance) == 48 &&
                   offsetof(RayTracedGiConstants, renderSize) == 64 &&
                   offsetof(RayTracedGiConstants, traceParameters) == 80);
     static_assert(sizeof(GiCompositeConstants) == 32 && alignof(GiCompositeConstants) == 16 &&
@@ -64,7 +64,7 @@ namespace {
                   offsetof(SharcGpuConstants, cameraPositionSceneScale) == 0 &&
                   offsetof(SharcGpuConstants, previousCameraPositionLogarithmBase) == 16 &&
                   offsetof(SharcGpuConstants, toSunWorldRadianceScale) == 32 &&
-                  offsetof(SharcGpuConstants, sunRadiance) == 48 &&
+                  offsetof(SharcGpuConstants, sunIrradiance) == 48 &&
                   offsetof(SharcGpuConstants, traceParameters) == 64 &&
                   offsetof(SharcGpuConstants, cacheParameters) == 80 &&
                   offsetof(SharcGpuConstants, renderParameters) == 96 && offsetof(SharcGpuConstants, reserved) == 112);

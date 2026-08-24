@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -111,6 +112,7 @@ namespace {
         require(sceneDocument["projectSettings"].value("logicTickHz", 0U) == 144U &&
                     sceneDocument["projectSettings"].contains("render") && !sceneDocument.contains("renderSettings"),
                 "Project runtime and render settings must persist under the Project Settings object.");
+        sceneDocument["actors"][0]["material"].erase("ior");
         sceneDocument["actors"][0]["material"]["textures"] = {
             {"baseColor", ""}, {"normal", ""}, {"roughness", ""}, {"flipNormalY", true}};
         writeText(scenePath, sceneDocument.dump(2));
@@ -122,6 +124,8 @@ namespace {
                 "Persistent Actor identity, name, and transform must round-trip.");
         require(!restored->material().textures.has_value(),
                 "Legacy empty texture objects must load as an untextured material.");
+        require(std::abs(restored->material().blinnPhong.indexOfRefraction - 1.5f) < 1e-6f,
+                "Legacy scenes without IOR must migrate to the standard dielectric value.");
         const auto restoredScripts = scripts.scriptsForActor(restored->handle());
         require(restoredScripts.size() == 2 && !restoredScripts.front().enabled && restoredScripts.back().enabled,
                 "Script order and enabled state must round-trip.");
@@ -130,8 +134,7 @@ namespace {
                     restoredRenderSettings.ambientOcclusionMode == lumin::project::ProjectAmbientOcclusionMode::Gtao &&
                     restoredRenderSettings.ambientOcclusionRadius == 2.5f &&
                     restoredRenderSettings.ambientOcclusionStrength == 1.4f &&
-                    restoredRenderSettings.ambientOcclusionBias == 0.12f &&
-                    restoredRenderSettings.taaSharpness == 0.8f,
+                    restoredRenderSettings.ambientOcclusionBias == 0.12f && restoredRenderSettings.taaSharpness == 0.8f,
                 "Project tick rate and render tuning must round-trip through the scene file.");
 
         require(!project.removeAsset(meshId, error) && !error.empty(),
@@ -168,10 +171,12 @@ namespace {
 Kd 1 0 0
 Ks 0.2 0.2 0.2
 Ns 12
+Ni 1.5
 newmtl Green
 Kd 0 1 0
 Ks 0.1 0.1 0.1
 Ns 64
+Ni 2.0
 )");
         writeText(meshPath, R"(mtllib multi.mtl
 v 0 0 0
@@ -203,8 +208,10 @@ f 1/1/1 3/3/1 4/4/1
                 "OBJ material partitions must use independent runtime meshes.");
         require(red->material().surfaceModel == lumin::scene::SurfaceModel::BlinnPhong &&
                     red->material().albedo == glm::vec3(1.0f, 0.0f, 0.0f) &&
-                    green->material().albedo == glm::vec3(0.0f, 1.0f, 0.0f),
-                "MTL diffuse colors and surface model must be imported for every partition.");
+                    green->material().albedo == glm::vec3(0.0f, 1.0f, 0.0f) &&
+                    std::abs(red->material().blinnPhong.indexOfRefraction - 1.5f) < 1e-6f &&
+                    std::abs(green->material().blinnPhong.indexOfRefraction - 2.0f) < 1e-6f,
+                "MTL diffuse colors, optical density, and surface model must be imported for every partition.");
 
         require(project.save(error), error.c_str());
         nlohmann::json sceneDocument;
@@ -213,8 +220,10 @@ f 1/1/1 3/3/1 4/4/1
             stream >> sceneDocument;
         }
         require(sceneDocument["actors"].size() == 2 && sceneDocument["actors"][0].value("meshPart", "") == "Red" &&
-                    sceneDocument["actors"][1].value("meshPart", "") == "Green",
-                "Scene serialization must persist stable OBJ material partition names.");
+                    sceneDocument["actors"][1].value("meshPart", "") == "Green" &&
+                    std::abs(sceneDocument["actors"][0]["material"].value("ior", 0.0f) - 1.5f) < 1e-6f &&
+                    std::abs(sceneDocument["actors"][1]["material"].value("ior", 0.0f) - 2.0f) < 1e-6f,
+                "Scene serialization must persist OBJ material partition names and optical density.");
 
         const auto projectFile = project.projectFile();
         project.close();
@@ -374,8 +383,7 @@ f 1/1/1 3/3/1 4/4/1
                     level.environment().sun.illuminanceLux == defaultEnvironment.sun.illuminanceLux &&
                     defaults.directLighting && defaults.shadows && defaults.rayTracing && defaults.ssao &&
                     defaults.sharc && defaults.nrd && defaults.taa && defaults.taaSharpness == 0.5f &&
-                    defaults.exposure == 1.0f &&
-                    project.settings().logicTickHz == lumin::project::DefaultLogicTickHz,
+                    defaults.exposure == 1.0f && project.settings().logicTickHz == lumin::project::DefaultLogicTickHz,
                 "A new empty project must reset scene, camera, environment, and all Project Settings.");
     }
 

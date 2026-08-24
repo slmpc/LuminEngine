@@ -239,11 +239,13 @@ namespace lumin::render {
                     .normalRoughness = frame.normalRoughness.texture,
                     .albedoMetallic = frame.albedo.texture,
                     .motion = frame.motion.texture,
+                    .materialId = frame.materialId.texture,
                 };
                 sharcFrames[frameIndex] = gi::SharcUpdateFrameInputs{
                     .position = frame.position.texture,
                     .normalRoughness = frame.normalRoughness.texture,
                     .albedoMetallic = frame.albedo.texture,
+                    .materialId = frame.materialId.texture,
                 };
             }
 

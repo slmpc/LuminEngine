@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -188,29 +189,17 @@ namespace {
             "Packed GI output must remain both UAV-writable and shader-readable for deferred lighting.");
     }
 
-    void testBothMaterialModelsModulateUncoloredNrdSignals() {
-        lumin::render::gpu::GpuMaterialData blinn;
-        blinn.metadata.x = 1U;
-        blinn.specularColorShininess = {0.2F, 0.4F, 0.8F, 64.0F};
-        const glm::vec3 blinnResult =
-            lumin::render::gi::detail::modulateGiRadiance({2.0F, 2.0F, 2.0F}, {0.5F, 0.5F, 0.5F}, {0.5F, 0.25F, 0.1F},
-                                                          0.0F, {0.0F, 0.0F, 1.0F}, {0.0F, 0.0F, 1.0F}, blinn);
-        require(nearlyEqual(blinnResult, {1.1F, 0.7F, 0.6F}),
-                "Blinn-Phong GI must apply base color and explicit specular color after NRD.");
+    void testCompositeRemodulatesDenoisedRadiance() {
+        const glm::vec3 combined = lumin::render::gi::detail::combineGiRadiance(
+            {2.0F, -1.0F, std::numeric_limits<float>::infinity()},
+            {0.5F, 0.25F, std::numeric_limits<float>::quiet_NaN()}, {0.25F, 0.5F, 1.0F}, {0.4F, 0.8F, 1.0F});
+        require(nearlyEqual(combined, {0.7F, 0.2F, 0.0F}),
+                "GI composite must sanitize and remodulate both NRD radiance lobes.");
 
-        lumin::render::gpu::GpuMaterialData pbr;
-        pbr.metadata.x = 0U;
-        const glm::vec3 dielectricResult =
-            lumin::render::gi::detail::modulateGiRadiance({1.0F, 1.0F, 1.0F}, {1.0F, 1.0F, 1.0F}, {0.8F, 0.5F, 0.2F},
-                                                          0.0F, {0.0F, 0.0F, 1.0F}, {0.0F, 0.0F, 1.0F}, pbr);
-        require(nearlyEqual(dielectricResult, {0.808F, 0.52F, 0.232F}),
-                "PBR dielectric GI must apply energy-conserving diffuse and F0 specular modulation.");
-
-        const glm::vec3 metalResult =
-            lumin::render::gi::detail::modulateGiRadiance({10.0F, 10.0F, 10.0F}, {1.0F, 1.0F, 1.0F}, {0.8F, 0.5F, 0.2F},
-                                                          1.0F, {0.0F, 0.0F, 1.0F}, {0.0F, 0.0F, 1.0F}, pbr);
-        require(nearlyEqual(metalResult, {0.8F, 0.5F, 0.2F}),
-                "PBR metals must suppress diffuse GI and tint specular GI with base reflectance.");
+        const glm::vec3 zero = lumin::render::gi::detail::combineGiRadiance({0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F},
+                                                                            {1.0F, 1.0F, 1.0F}, {1.0F, 1.0F, 1.0F});
+        require(nearlyEqual(zero, {0.0F, 0.0F, 0.0F}),
+                "A zero-energy path must remain black without an artificial ambient floor.");
     }
 
     class DispatchProbe {
@@ -330,11 +319,11 @@ namespace {
                     source.find("unpackReblurRadiance(denoisedDiffuseRadianceHitDistance.Load") != std::string::npos &&
                     source.find("unpackReblurRadiance(denoisedSpecularRadianceHitDistance.Load") != std::string::npos &&
                     source.find("globalIlluminationOutput[pixel] = kNeutralOutput") != std::string::npos &&
-                    source.find("material.metadata.x == kBlinnPhongSurfaceModel") != std::string::npos &&
-                    source.find("diffuseRadiance * albedo * diffuseWeight + specularRadiance * fresnel") !=
-                        std::string::npos &&
-                    source.find("float4(indirectRadiance, 0.0)") != std::string::npos,
-                "GI composite shader must decode REBLUR signals before both material modulation paths.");
+                    source.find("NRD_MaterialFactors") != std::string::npos &&
+                    source.find("diffuseRadiance * diffuseMaterialFactor") != std::string::npos &&
+                    source.find("specularRadiance * specularMaterialFactor") != std::string::npos &&
+                    source.find("ambientFloor") == std::string::npos,
+                "GI composite shader must remodulate REBLUR signals without non-physical ambient energy.");
     }
 
 } // namespace
@@ -343,7 +332,7 @@ int main() {
     try {
         testConstantsAndDispatchContract();
         testBindingAbiAndResourceValidation();
-        testBothMaterialModelsModulateUncoloredNrdSignals();
+        testCompositeRemodulatesDenoisedRadiance();
         testDispatchAndFrameGraphDeclarations();
         testShaderWritesNeutralBackgroundAndReplacementAlpha();
         std::puts("GiComposite PASS");

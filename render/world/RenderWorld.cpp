@@ -59,6 +59,7 @@ namespace lumin::render::world {
                 !sameFloat(left.metallicRoughness.metallic, right.metallicRoughness.metallic) ||
                 !sameVec3(left.blinnPhong.specularColor, right.blinnPhong.specularColor) ||
                 !sameFloat(left.blinnPhong.shininess, right.blinnPhong.shininess) ||
+                !sameFloat(left.blinnPhong.indexOfRefraction, right.blinnPhong.indexOfRefraction) ||
                 !sameFloat(left.textureScale, right.textureScale) ||
                 left.textures.has_value() != right.textures.has_value()) {
                 return false;

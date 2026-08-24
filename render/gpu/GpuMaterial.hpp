@@ -17,8 +17,19 @@ namespace lumin::render::gpu {
      *
      * - `baseColorMetallic`: `rgb = base color`，`a = metallic`；Blinn-Phong 的 `a` 固定为 0。
      * - `specularColorShininess`: `rgb = Blinn-Phong specular color`，`a = shininess`。
-     * - `surfaceParameters`: `x = NRD/GI 等效粗糙度`，`y = UV scale`，`z = normal-map Y sign`。
-     * - `metadata`: `x = SurfaceModel`，`y = texture descriptor index`，`z = has texture set`。
+     * `surfaceParameters.x` 是 NRD/GI 等效粗糙度。
+     *
+     * `surfaceParameters.y` 是 UV scale。
+     *
+     * `surfaceParameters.z` 是 normal-map Y sign。
+     *
+     * `surfaceParameters.w` 是 Blinn-Phong 介质由 IOR 推导的法线入射反射率。
+     *
+     * `metadata.x` 是 SurfaceModel。
+     *
+     * `metadata.y` 是 texture descriptor index。
+     *
+     * `metadata.z` 是 has texture set。
      *
      * `metadata.x` 的数值必须与 `scene::SurfaceModel` 保持一致。保留字段必须写零，以便未来追加语义。
      */

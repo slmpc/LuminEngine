@@ -1,4 +1,5 @@
 import GpuScene;
+import PhysicalLighting;
 #include "NRD.hlsli"
 
 struct GiCompositeConstants {
@@ -16,17 +17,7 @@ struct GiCompositeConstants {
 [[vk::binding(7, 0)]] ConstantBuffer<GiCompositeConstants> frame;
 [[vk::binding(8, 0)]] RWTexture2D<float4> globalIlluminationOutput;
 
-static const uint kBlinnPhongSurfaceModel = 1u;
 static const float4 kNeutralOutput = float4(0.0, 0.0, 0.0, 1.0);
-
-float3 safeNormalize(float3 value, float3 fallback) {
-    float lengthSquared = dot(value, value);
-    return lengthSquared > 1e-12 ? value * rsqrt(lengthSquared) : fallback;
-}
-
-float3 fresnelSchlick(float normalDotView, float3 reflectanceAtNormal) {
-    return reflectanceAtNormal + (1.0 - reflectanceAtNormal) * pow(1.0 - saturate(normalDotView), 5.0);
-}
 
 float3 unpackReblurRadiance(float4 packedSignal) {
     // Raw RT GI 与 NRD 输出都使用 REBLUR 的 YCoCg signal contract。
@@ -50,31 +41,25 @@ void compositeMain(uint3 dispatchThreadId : SV_DispatchThreadID) {
         return;
     }
 
-    GpuMaterialData material = materials[materialId];
     float3 diffuseRadiance =
         unpackReblurRadiance(denoisedDiffuseRadianceHitDistance.Load(int3(pixel, 0)));
     float3 specularRadiance =
         unpackReblurRadiance(denoisedSpecularRadianceHitDistance.Load(int3(pixel, 0)));
-    float4 albedoMetallic = albedoMetallicTexture.Load(int3(pixel, 0));
-    float3 albedo = saturate(albedoMetallic.rgb);
-    float metallic = saturate(albedoMetallic.a);
+    float4 normalRoughness = normalRoughnessTexture.Load(int3(pixel, 0));
+    float3 normal = luminPhysicalSafeNormalize(normalRoughness.xyz, float3(0.0, 0.0, 1.0));
+    GpuMaterialData primaryMaterial = materials[materialId];
+    primaryMaterial.baseColorMetallic = albedoMetallicTexture.Load(int3(pixel, 0));
+    primaryMaterial.surfaceParameters.x = normalRoughness.w;
+    LuminCookTorranceMaterial cookTorranceMaterial = luminMakeCookTorranceMaterial(primaryMaterial);
+    float3 toView = luminPhysicalSafeNormalize(frame.cameraPosition.xyz - position.xyz, normal);
+    float3 diffuseMaterialFactor;
+    float3 specularMaterialFactor;
+    NRD_MaterialFactors(normal, toView, cookTorranceMaterial.diffuseColor,
+                        cookTorranceMaterial.reflectanceAtNormal, cookTorranceMaterial.roughness,
+                        diffuseMaterialFactor, specularMaterialFactor);
 
-    float3 indirectRadiance;
-    if (material.metadata.x == kBlinnPhongSurfaceModel) {
-        // 路径采样已包含 cosine/pdf 权重；这里只恢复主表面的漫反射与传统镜面颜色。
-        float3 specularColor = saturate(material.specularColorShininess.rgb);
-        indirectRadiance = diffuseRadiance * albedo + specularRadiance * specularColor;
-    } else {
-        float3 normal = safeNormalize(normalRoughnessTexture.Load(int3(pixel, 0)).xyz,
-                                      float3(0.0, 0.0, 1.0));
-        float3 toView = safeNormalize(frame.cameraPosition.xyz - position.xyz, normal);
-        float normalDotView = saturate(dot(normal, toView));
-        float3 reflectanceAtNormal = lerp(float3(0.04), albedo, metallic);
-        float3 fresnel = fresnelSchlick(normalDotView, reflectanceAtNormal);
-        float3 diffuseWeight = (1.0 - fresnel) * (1.0 - metallic);
-        indirectRadiance = diffuseRadiance * albedo * diffuseWeight + specularRadiance * fresnel;
-    }
-
-    // alpha=0 禁用 deferred 的 legacy ambient，避免与真实间接辐亮度重复叠加。
-    globalIlluminationOutput[pixel] = float4(indirectRadiance, 0.0);
+    // 仅在 REBLUR 之后恢复主表面材质，避免空间滤波把 albedo、metallic 与 Fresnel 细节一起模糊。
+    float3 outgoingRadiance = diffuseRadiance * diffuseMaterialFactor +
+                              specularRadiance * specularMaterialFactor;
+    globalIlluminationOutput[pixel] = float4(luminClampFp16Radiance(outgoingRadiance), 0.0);
 }

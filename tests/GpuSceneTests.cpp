@@ -259,16 +259,19 @@ namespace {
         blinnPhong.albedo = {0.3f, 0.5f, 0.7f};
         blinnPhong.blinnPhong.specularColor = {0.2f, 0.4f, 0.8f};
         blinnPhong.blinnPhong.shininess = 32.0f;
+        blinnPhong.blinnPhong.indexOfRefraction = 2.0f;
         blinnPhong.textureScale = -2.0f;
         blinnPhong.textures = lumin::scene::PbrTextureSet{"base.png", "normal.png", "roughness.png", true};
         const GpuMaterialData gpu = lumin::render::gpu::packGpuMaterial(blinnPhong, 17);
         const float expectedRoughness = std::sqrt(2.0f / 34.0f);
+        const float expectedReflectanceAtNormal = 1.0f / 9.0f;
         require(gpu.metadata == glm::uvec4(1U, 17U, 1U, 0U) &&
                     gpu.baseColorMetallic == glm::vec4(0.3f, 0.5f, 0.7f, 0.0f) &&
                     gpu.specularColorShininess == glm::vec4(0.2f, 0.4f, 0.8f, 32.0f) &&
                     std::abs(gpu.surfaceParameters.x - expectedRoughness) < 1e-6f && gpu.surfaceParameters.y == 2.0f &&
-                    gpu.surfaceParameters.z == -1.0f && gpu.surfaceParameters.w == 0.0f,
-                "Blinn-Phong GPU packing must preserve direct-lighting data and derive canonical NRD roughness.");
+                    gpu.surfaceParameters.z == -1.0f &&
+                    std::abs(gpu.surfaceParameters.w - expectedReflectanceAtNormal) < 1e-6f,
+                "Blinn-Phong GPU packing must preserve Raster data and derive physical RT roughness and F0.");
 
         lumin::scene::Material partialTextures;
         partialTextures.textures = lumin::scene::PbrTextureSet{.baseColor = "base-color.png"};
@@ -287,6 +290,7 @@ namespace {
         material.surfaceModel = lumin::scene::SurfaceModel::BlinnPhong;
         material.blinnPhong.specularColor = {0.12f, 0.24f, 0.48f};
         material.blinnPhong.shininess = 96.0f;
+        material.blinnPhong.indexOfRefraction = 1.7f;
         require(fixture.level.setModelMaterial(fixture.model, material), "Surface-model update must succeed.");
 
         const auto delta = fixture.world.sync(fixture.level);

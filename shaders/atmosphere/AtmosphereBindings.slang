@@ -38,4 +38,27 @@ float3 atmosphereSampleEnvironmentRadiance(float3 worldDirection) {
         : lerp(horizonColor, nadirColor, saturate(-worldDirection.y * 3.0));
 }
 
+float3 atmosphereSampleSunDiskRadiance(float3 worldDirection) {
+    static const float sunAngularRadiusRadians = 0.004675;
+    float3 toSun = normalize(atmosphere.toSunWorld.xyz);
+    float cosineAngularRadius = cos(sunAngularRadiusRadians);
+    if (dot(normalize(worldDirection), toSun) < cosineAngularRadius) {
+        return float3(0.0);
+    }
+
+    float solidAngle = 2.0 * kAtmospherePi * (1.0 - cosineAngularRadius);
+    float3 transmittance = float3(1.0);
+    if (atmosphere.groundAlbedoAndEnabled.w >= 0.5) {
+        transmittance = atmosphereSampleTransmittanceToSun(
+            atmosphereTransmittanceLut, atmosphereSampler, atmosphereLocalCameraOriginKm(atmosphere), toSun,
+            atmosphere);
+    }
+    // 方向光照度除以太阳视立体角得到太阳盘辐亮度；散射 LUT 本身不包含这个直达项。
+    return atmosphereSolarIrradiance(atmosphere) * transmittance / max(solidAngle, 1.0e-7);
+}
+
+float3 atmosphereSamplePrimaryEnvironmentRadiance(float3 worldDirection) {
+    return atmosphereSampleEnvironmentRadiance(worldDirection) + atmosphereSampleSunDiskRadiance(worldDirection);
+}
+
 #endif

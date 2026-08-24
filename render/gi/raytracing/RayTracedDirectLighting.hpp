@@ -20,7 +20,32 @@ namespace lumin::render {
     class ShaderLibrary;
 }
 
+namespace lumin::scene {
+    struct DirectionalLight;
+}
+
 namespace lumin::render::gi {
+
+    /** 物理光照缓冲采用的固定相机基准曝光值，等价于晴天室外的 EV100 15。 */
+    inline constexpr float physicalLightingEv100 = 15.0F;
+    /** ISO 100 曝光的饱和归一化系数；预曝光为 `1 / (q * 2^EV100)`。 */
+    inline constexpr float physicalExposureSaturationScale = 1.2F;
+    /** 将物理照度/辐亮度预曝光到 FP16 scene-linear 缓冲的固定倍率。 */
+    inline constexpr float physicalLightingPreExposure = 1.0F / (physicalExposureSaturationScale * 32768.0F);
+
+    /**
+     * 将场景太阳照度转换为 Ray Tracing 使用的预曝光 scene-linear 入射照度。
+     *
+     * RGB 保持 lux 的线性比例并应用 EV100 15 物理预曝光。
+     * 该转换不匹配任意 Raster 常量；`w` 始终为 1。
+     * 关闭直射光时，atmosphere miss 与间接光仍可读取天空。
+     *
+     * @param sun 场景拥有的方向光快照，调用期间必须有效。
+     * @param directLightingEnabled 是否输出太阳直射光。
+     * @return `rgb` 为 RTDI、RTGI 与 SHARC 共用的太阳入射照度。
+     */
+    [[nodiscard]] glm::vec4 makeRayTracingSunIrradiance(const scene::DirectionalLight& sun,
+                                                        bool directLightingEnabled) noexcept;
 
     /** 与 `shaders/RtDi.slang` 同构的 primary-ray direct-lighting 常量。 */
     struct alignas(16) RayTracedDiConstants {
@@ -34,8 +59,8 @@ namespace lumin::render::gi {
         glm::vec4 cameraForward{0.0F, 0.0F, -1.0F, 0.0F};
         /// xyz 为从表面指向太阳的 world-space 单位向量。
         glm::vec4 toSunWorld{0.0F, 1.0F, 0.0F, 0.0F};
-        /// rgb 为太阳辐亮度，w 为天空可见性开关。
-        glm::vec4 sunRadiance{1.0F};
+        /// rgb 为预曝光太阳入射照度，w 为天空可见性开关。
+        glm::vec4 sunIrradiance{1.0F};
         /// xy 为 dispatch 分辨率，zw 为当前 jitter 对 screen UV 的偏移；用于与 raster motion 保持一致。
         glm::vec4 renderSize{1.0F};
         /// x=minT，y=maxT，z=直接光照开关，w=逻辑帧序号。
@@ -50,7 +75,7 @@ namespace lumin::render::gi {
     static_assert(offsetof(RayTracedDiConstants, cameraPosition) == 128);
     static_assert(offsetof(RayTracedDiConstants, cameraForward) == 144);
     static_assert(offsetof(RayTracedDiConstants, toSunWorld) == 160);
-    static_assert(offsetof(RayTracedDiConstants, sunRadiance) == 176);
+    static_assert(offsetof(RayTracedDiConstants, sunIrradiance) == 176);
     static_assert(offsetof(RayTracedDiConstants, renderSize) == 192);
     static_assert(offsetof(RayTracedDiConstants, traceParameters) == 208);
 

@@ -249,6 +249,7 @@ namespace lumin::project {
                        {"metallic", material.metallicRoughness.metallic},
                        {"specular", vectorJson(material.blinnPhong.specularColor)},
                        {"shininess", material.blinnPhong.shininess},
+                       {"ior", material.blinnPhong.indexOfRefraction},
                        {"textureScale", material.textureScale}};
             if (material.textures.has_value() && !material.textures->empty()) {
                 const auto makeRelative = [&root](const std::filesystem::path& path) {
@@ -277,6 +278,7 @@ namespace lumin::project {
             material.blinnPhong.specularColor =
                 readVector(value.value("specular", Json{}), material.blinnPhong.specularColor);
             material.blinnPhong.shininess = value.value("shininess", material.blinnPhong.shininess);
+            material.blinnPhong.indexOfRefraction = value.value("ior", material.blinnPhong.indexOfRefraction);
             material.textureScale = value.value("textureScale", material.textureScale);
             if (const auto iterator = value.find("textures"); iterator != value.end() && iterator->is_object()) {
                 scene::PbrTextureSet textures;
@@ -301,6 +303,7 @@ namespace lumin::project {
             material.surfaceModel = scene::SurfaceModel::BlinnPhong;
             material.blinnPhong.specularColor = source.specularColor;
             material.blinnPhong.shininess = source.shininess;
+            material.blinnPhong.indexOfRefraction = source.indexOfRefraction;
 
             const auto validatedTexture = [&root, &diagnostics,
                                            &source](const std::filesystem::path& texture) -> std::filesystem::path {

@@ -2,6 +2,7 @@
 
 #include "render/resources/PipelineFactory.hpp"
 #include "render/resources/ShaderLibrary.hpp"
+#include "scene/Environment.hpp"
 
 #include <array>
 #include <cstring>
@@ -84,6 +85,12 @@ namespace lumin::render::gi {
         }
 
     } // namespace
+
+    glm::vec4 makeRayTracingSunIrradiance(const scene::DirectionalLight& sun, bool directLightingEnabled) noexcept {
+        const float preExposedIlluminance =
+            directLightingEnabled ? sun.illuminanceLux * physicalLightingPreExposure : 0.0F;
+        return glm::vec4{sun.color * preExposedIlluminance, 1.0F};
+    }
 
     namespace detail {
 

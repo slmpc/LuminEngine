@@ -243,8 +243,8 @@ namespace {
                     level.find("cameraData.worldToView = matrixElements(sceneData.camera.view)") != std::string::npos &&
                     level.find(".denoisingRange = nrdDenoisingRange") != std::string::npos,
                 "NRD must receive non-jittered matrices, explicit jitter history, and the RT view-Z range.");
-        require(level.find("return glm::vec4{sun.color * directScale, 1.0f}") != std::string::npos,
-                "Disabling physical atmosphere must preserve the shared procedural environment fallback.");
+        require(countOccurrences(level, "gi::makeRayTracingSunIrradiance(sun, lightingSettings.enabled)") == 2,
+                "RTDI and RTGI must share the physically pre-exposed sun-irradiance conversion.");
 
         const std::size_t submit = level.find("context_.submitFrameCommands");
         const std::size_t runtimeCommit = level.find("commitHybridSurfaceFeature(identity)", submit);

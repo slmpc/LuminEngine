@@ -1,4 +1,5 @@
 import GpuScene;
+import PhysicalLighting;
 #include "NRD.hlsli"
 import atmosphere.AtmosphereBindings;
 
@@ -15,7 +16,7 @@ struct RayTracedGiConstants {
     float4 cameraPosition;
     float4 cameraForward;
     float4 toSunWorld;
-    float4 sunRadiance;
+    float4 sunIrradiance;
     float4 renderSize;
     float4 traceParameters;
 };
@@ -29,6 +30,7 @@ struct GiPayload {
 
 static const uint kRadianceRay = 0;
 static const uint kShadowRay = 1;
+static const uint kInvalidMaterial = 0xffffffffu;
 
 [[vk::binding(0, 0)]] RaytracingAccelerationStructure sceneTlas;
 [[vk::binding(1, 0)]] Texture2D<float4> positionTexture;
@@ -65,6 +67,7 @@ SharcParameters rayTracedGiSharcParameters() {
 [[vk::binding(21, 0)]] Texture2D<float4> baseColorTextures[];
 [[vk::binding(22, 0)]] Texture2D<float4> normalRoughnessTextures[];
 [[vk::binding(23, 0)]] SamplerState materialSampler;
+[[vk::binding(24, 0)]] Texture2D<uint> materialIdTexture;
 
 uint hashUint(uint value) {
     value ^= value >> 16;
@@ -76,17 +79,6 @@ uint hashUint(uint value) {
 
 float random01(uint seed) {
     return float(hashUint(seed) & 0x00ffffff) * (1.0 / 16777216.0);
-}
-
-float3 cosineHemisphere(float3 normal, uint seed) {
-    float2 random = float2(random01(seed), random01(seed ^ 0x9e3779b9));
-    float radius = sqrt(random.x);
-    float angle = 6.28318530718 * random.y;
-    float3 localDirection = float3(radius * cos(angle), radius * sin(angle), sqrt(1.0 - random.x));
-    float3 tangent = normalize(abs(normal.z) < 0.999 ? cross(float3(0.0, 0.0, 1.0), normal)
-                                                      : cross(float3(0.0, 1.0, 0.0), normal));
-    float3 bitangent = cross(normal, tangent);
-    return normalize(tangent * localDirection.x + bitangent * localDirection.y + normal * localDirection.z);
 }
 
 GiPayload traceRadiance(float3 origin, float3 direction) {
@@ -102,6 +94,15 @@ GiPayload traceRadiance(float3 origin, float3 direction) {
     payload.rayKind = kRadianceRay;
     payload.visibility = 0.0;
     TraceRay(sceneTlas, 0, 0xff, 0, 1, 0, ray, payload);
+    return payload;
+}
+
+GiPayload emptyRadiancePayload() {
+    GiPayload payload;
+    payload.radiance = float3(0.0);
+    payload.hitDistance = frame.traceParameters.y;
+    payload.rayKind = kRadianceRay;
+    payload.visibility = 0.0;
     return payload;
 }
 
@@ -121,7 +122,8 @@ void rayGenerationMain() {
     denoiserMotion[pixel] = motion + frame.renderSize.zw;
 
     // RT surface 将命中距离写入 position.w；miss 为负值，不能用小于 0.5 判断有效性。
-    if (positionSample.w <= 0.0) {
+    uint materialId = materialIdTexture.Load(int3(pixel, 0));
+    if (positionSample.w <= 0.0 || materialId == kInvalidMaterial) {
         diffuseRadianceHitDistance[pixel] = float4(0.0);
         specularRadianceHitDistance[pixel] = float4(0.0);
         viewZ[pixel] = frame.traceParameters.w;
@@ -134,26 +136,46 @@ void rayGenerationMain() {
     float roughness = saturate(normalRoughness.w);
     uint linearIndex = pixel.y * extent.x + pixel.x;
     uint seed = linearIndex ^ (uint(frame.traceParameters.z) * 0x68bc21eb);
-    float3 diffuseDirection = cosineHemisphere(normal, seed);
-    float3 viewIncident = normalize(worldPosition - frame.cameraPosition.xyz);
-    float3 reflectedDirection = reflect(viewIncident, normal);
-    float3 specularDirection = normalize(lerp(reflectedDirection, diffuseDirection, roughness * roughness));
+    GpuMaterialData primaryMaterial = materials[materialId];
+    primaryMaterial.baseColorMetallic = albedoMetallicTexture.Load(int3(pixel, 0));
+    primaryMaterial.surfaceParameters.x = roughness;
+    LuminCookTorranceMaterial cookTorranceMaterial = luminMakeCookTorranceMaterial(primaryMaterial);
+    float3 toView = luminPhysicalSafeNormalize(frame.cameraPosition.xyz - worldPosition, normal);
+    float3 diffuseMaterialFactor;
+    float3 specularMaterialFactor;
+    NRD_MaterialFactors(normal, toView, cookTorranceMaterial.diffuseColor,
+                        cookTorranceMaterial.reflectanceAtNormal, cookTorranceMaterial.roughness,
+                        diffuseMaterialFactor, specularMaterialFactor);
+    LuminBrdfSample diffuseSample = luminSampleCookTorranceDiffuse(
+        cookTorranceMaterial, normal, toView,
+        float2(random01(seed), random01(seed ^ 0x9e3779b9)));
+    LuminBrdfSample specularSample = luminSampleCookTorranceSpecular(
+        cookTorranceMaterial, normal, toView,
+        float2(random01(seed ^ 0x243f6a88), random01(seed ^ 0xb7e15162)));
     float3 origin = worldPosition + normal * frame.traceParameters.x;
 
-    GiPayload diffusePayload = traceRadiance(origin, diffuseDirection);
-    GiPayload specularPayload = traceRadiance(origin, specularDirection);
+    GiPayload diffusePayload = diffuseSample.valid != 0u
+        ? traceRadiance(origin, diffuseSample.direction) : emptyRadiancePayload();
+    GiPayload specularPayload = specularSample.valid != 0u
+        ? traceRadiance(origin, specularSample.direction) : emptyRadiancePayload();
     float primaryViewZ = max(dot(worldPosition - frame.cameraPosition.xyz, frame.cameraForward.xyz), 0.0);
     float3 hitDistanceParameters = float3(3.0, 0.1, 20.0);
-    float diffuseNormHitDistance = REBLUR_FrontEnd_GetNormHitDist(
-        diffusePayload.hitDistance, primaryViewZ, hitDistanceParameters, roughness);
-    float specularNormHitDistance = REBLUR_FrontEnd_GetNormHitDist(
-        specularPayload.hitDistance, primaryViewZ, hitDistanceParameters, roughness);
+    float diffuseNormHitDistance = diffuseSample.valid != 0u
+        ? REBLUR_FrontEnd_GetNormHitDist(
+              diffusePayload.hitDistance, primaryViewZ, hitDistanceParameters, roughness)
+        : 0.0;
+    float specularNormHitDistance = specularSample.valid != 0u
+        ? REBLUR_FrontEnd_GetNormHitDist(
+              specularPayload.hitDistance, primaryViewZ, hitDistanceParameters, roughness)
+        : 0.0;
 
-    // NRD 输入保持材质解调：primary albedo/F0 由 denoise 后的 composite 再乘回。
+    // 路径估计先包含完整 BRDF*cos/PDF，再按 NRD 契约解调主表面材质；Composite 使用同一因子恢复细节。
     diffuseRadianceHitDistance[pixel] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(
-        diffusePayload.radiance, diffuseNormHitDistance, true);
+        diffusePayload.radiance * diffuseSample.throughput / diffuseMaterialFactor,
+        diffuseNormHitDistance, true);
     specularRadianceHitDistance[pixel] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(
-        specularPayload.radiance, specularNormHitDistance, true);
+        specularPayload.radiance * specularSample.throughput / specularMaterialFactor,
+        specularNormHitDistance, true);
     denoiserNormalRoughness[pixel] = NRD_FrontEnd_PackNormalAndRoughness(normal, roughness, 0.0);
     viewZ[pixel] = primaryViewZ;
 }
@@ -161,7 +183,7 @@ void rayGenerationMain() {
 [shader("miss")]
 void radianceMissMain(inout GiPayload payload) {
     float3 direction = normalize(WorldRayDirection());
-    payload.radiance = atmosphereSampleEnvironmentRadiance(direction) * frame.sunRadiance.w;
+    payload.radiance = atmosphereSampleEnvironmentRadiance(direction) * frame.sunIrradiance.w;
     payload.hitDistance = frame.traceParameters.y;
 }
 
@@ -225,8 +247,11 @@ void closestHitMain(inout GiPayload payload, BuiltInTriangleIntersectionAttribut
     TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff, 0, 1, 1, shadowRay, shadowPayload);
 
     float noL = saturate(dot(worldNormal, toSun));
-    float3 direct = material.baseColorMetallic.rgb * frame.sunRadiance.rgb * (noL * shadowPayload.visibility);
-    float3 fallbackRadiance = direct + material.baseColorMetallic.rgb * 0.015;
+    float3 toView = luminPhysicalSafeNormalize(-WorldRayDirection(), worldNormal);
+    LuminCookTorranceLobes lobes = luminEvaluateCookTorrance(
+        luminMakeCookTorranceMaterial(material), worldNormal, toView, toSun);
+    float3 direct = (lobes.diffuse + lobes.specular) * frame.sunIrradiance.rgb *
+                    (noL * shadowPayload.visibility);
 #if LUMIN_ENABLE_SHARC
     SharcHitData sharcHit;
     sharcHit.positionWorld = hitPosition;
@@ -236,10 +261,10 @@ void closestHitMain(inout GiPayload payload, BuiltInTriangleIntersectionAttribut
         payload.radiance = cachedRadiance;
         InterlockedAdd(sharcStatistics[kSharcStatisticQueryHit], 1);
     } else {
-        payload.radiance = fallbackRadiance;
+        payload.radiance = direct;
     }
 #else
-    payload.radiance = fallbackRadiance;
+    payload.radiance = direct;
 #endif
     payload.hitDistance = RayTCurrent();
 }
