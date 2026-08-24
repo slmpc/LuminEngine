@@ -234,8 +234,7 @@ namespace lumin::render::pipelines {
                 if (unchanged) {
                     return FeatureSettingsChange{};
                 }
-                const bool topologyChanged = before.mode != after.mode || before.sharcEnabled != after.sharcEnabled ||
-                                             before.nrdEnabled != after.nrdEnabled;
+                const bool topologyChanged = before.mode != after.mode;
                 return FeatureSettingsChange{
                     .impact =
                         topologyChanged ? SettingsChangeImpact::PipelineRecompose : SettingsChangeImpact::HistoryReset,

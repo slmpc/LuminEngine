@@ -146,6 +146,15 @@ namespace lumin::render {
 
         renderPipeline_->commitFrame(identity);
         frameResourcesInitialized_[frame->frameIndex] = true;
+        if (recorded.usedHybridPath) {
+            directRadianceInitialized_[frame->frameIndex] = true;
+            directNrdOutputInitialized_[frame->frameIndex] =
+                directNrdOutputInitialized_[frame->frameIndex] || recorded.usedDirectNrd;
+            globalIlluminationInitialized_[frame->frameIndex] =
+                globalIlluminationInitialized_[frame->frameIndex] || recorded.usedIndirectLighting;
+        } else {
+            globalIlluminationInitialized_[frame->frameIndex] = true;
+        }
         previousViewProjection_ = recorded.viewProjection;
         previousView_ = recorded.view;
         previousProjection_ = recorded.projection;
@@ -197,15 +206,23 @@ namespace lumin::render {
 
     gi::BackendInfo pipelines::DefaultRenderPipelineSession::globalIlluminationBackendInfo() const noexcept {
         if (lastSubmittedFrameUsedHybridPath_) {
+            bool nrdActive = false;
+#if LUMIN_LEVEL_RENDERER_HAS_NRD
+            nrdActive = hybridGi_ != nullptr && hybridGi_->directNrd != nullptr &&
+                        committedFeatureConfiguration_.nrdEnabled;
+#endif
 #if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
             const bool sharcActive = hybridGi_ != nullptr && hybridGi_->sharcEnabled;
-            if (sharcActive && committedFeatureConfiguration_.nrdEnabled) {
+            if (sharcActive && nrdActive) {
                 return gi::BackendInfo{"Ray Tracing + SHARC + NRD", true, true};
             }
             if (sharcActive) {
                 return gi::BackendInfo{"Ray Tracing + SHARC", true, true};
             }
 #endif
+            if (nrdActive) {
+                return gi::BackendInfo{"Ray Tracing Direct + NRD", true, true};
+            }
             return gi::BackendInfo{"Ray Tracing Direct", false, true};
         }
         return globalIllumination_->info();
@@ -251,7 +268,12 @@ namespace lumin::render {
                 .add(core::RenderCapability::RayTracingPipeline);
 #if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
             if (hybridGi_->sharc != nullptr) {
-                capabilities.supported.add(core::RenderCapability::Nrd).add(core::RenderCapability::Sharc);
+                capabilities.supported.add(core::RenderCapability::Sharc);
+            }
+#endif
+#if LUMIN_LEVEL_RENDERER_HAS_NRD
+            if (hybridGi_->directNrd != nullptr) {
+                capabilities.supported.add(core::RenderCapability::Nrd);
             }
 #endif
         }
@@ -284,17 +306,10 @@ namespace lumin::render {
         const bool requestedSharcRuntime =
             requestedSharcEnabled_ && context_.rayTracingSupport().supportsSharcShaderStorage();
         if (hybridGi_ != nullptr && hybridGi_->sharcEnabled != requestedSharcRuntime) {
-            renderPipeline_->discardFrame();
-            context_.waitIdle();
-            frameGraph_.reset();
-            try {
-                createHybridGiResources();
-                pendingFrameChanges_.add(core::HistoryReason::FeatureConfigurationChanged);
-                diagnostic_.clear();
-            } catch (const std::exception& exception) {
-                diagnostic_ = std::string{"Hybrid resource reconfiguration failed; retaining the previous state: "} +
-                              exception.what();
-            }
+            // SHARC 资源常驻；开关只改变本帧图分支，FeatureConfigurationChanged 会重置 SHARC/NRD/TAA 历史。
+            hybridGi_->sharcEnabled = requestedSharcRuntime;
+            pendingFrameChanges_.add(core::HistoryReason::FeatureConfigurationChanged);
+            diagnostic_.clear();
         }
 #endif
         const world::RenderWorldSnapshotPtr snapshot = currentWorld_;

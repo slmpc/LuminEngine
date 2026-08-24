@@ -219,18 +219,20 @@ sampling，镜面
 Cook-Torrance 的低粗糙度掠射峰值在数学上可能超过 half 范围；BRDF 计算保持不截断，仅在 FP16 scene-radiance
 纹理写入边界限制到 `65504`，防止 `Inf/NaN` 污染后续 NRD、TAA 与 tone mapping。
 
-Ray Tracing 模式可分别关闭 SHARC 与 NRD。运行时关闭 SHARC 后不录制 cache update/resolve/statistics 或 indirect pass，
-间接光清零，RTDI 与天空继续工作；编译时关闭 SHARC 或设备缺少 SHARC storage 能力时同样保留 raw RTDI runtime，且不创建
-SHARC/NRD 间接光资源。关闭 NRD 后，原始 diffuse/specular radiance-hit-distance 直接交给 GI composite。
+Ray Tracing 模式可分别关闭 SHARC 与 NRD。运行时关闭 SHARC 后不录制 cache update/resolve/statistics 或 indirect
+pass，间接光清零，RTDI、天空和可选的 Direct NRD 继续工作；编译时关闭 SHARC 或设备缺少 SHARC storage 能力时行为
+相同。关闭 NRD 后，RTDI 直接使用 raw combined radiance，SHARC 的原始 diffuse/specular radiance-hit-distance 则直接
+交给 GI composite。开启 NRD 时，RTDI 与 SHARC indirect 使用互不共享历史和输出资源的两套 REBLUR 实例。
 Legacy 模式可分别关闭屏幕空间 AO 与 CSM。AO 后端共享 position/normal 输入与全分辨率输出：SSAO 使用旋转采样核，
 HBAO 对 8 个屏幕方向执行最大地平线搜索，GTAO 对 6 个切片执行双向地平线积分；三者均可调世界空间半径、强度和
 几何偏置。CSM 通过 `splitLambda` 和 `maxDistance` 控制四级联分割。TAA 是两条路径共用的
-后处理选项。任一模式、Feature 开关或 CSM 参数变化都会使相关时序历史失效；SHARC shader 变体变化还会在等待 GPU
-空闲后重建对应 SHARC update/indirect 资源。
+后处理选项。任一模式、Feature 开关或 CSM 参数变化都会使相关时序历史失效；运行时 SHARC 开关只切换常驻 Hybrid
+资源的帧图分支，不等待 GPU 或重建 SHARC update/indirect 资源。
 
-Hybrid GI 的一帧顺序为：按需物化 GPU Scene 和 BLAS/TLAS、执行 RTDI、SHARC clear/update/resolve、在
-`SharcIndirectLightingPass` 的二次 closest-hit 中查询 SHARC、输出 diffuse/specular radiance-hit-distance 与 NRD
-auxiliary signals、执行 NRD REBLUR，再由 GI composite 写入统一的 RGBA 间接光照目标，随后和 RTDI 合成为 TAA 输入。
+Hybrid GI 的一帧顺序为：按需物化 GPU Scene 和 BLAS/TLAS、执行 RTDI 并输出 raw combined 及 direct
+diffuse/specular 信号；Direct NRD 分支执行 signal preparation、REBLUR 和 direct composite。SHARC 分支执行
+clear/update/resolve，在 `SharcIndirectLightingPass` 的二次 closest-hit 中查询 cache，再由可选的独立 REBLUR 与 indirect
+composite 写入 RGBA 间接光目标。最后 Hybrid composite 组合选定的 raw/denoised direct 与 indirect，并交给 TAA。
 RT miss、SHARC update 和 raster sky 使用同一个 atmosphere descriptor set，避免环境输入在三条路径中漂移。
 
 GPU Scene 的紧凑 `GpuLightData` 表把太阳固定在索引 0，随后按稳定 Actor 身份排列全部启用的 Point/Spot 灯。
@@ -257,12 +259,14 @@ texture 和 AS；该回收是逐帧资源生命周期的一部分，不能仅依
 `AccelStructRead` 后再写入 TLAS。两者之间的 `AccelStructWrite -> AccelStructRead` 屏障保证大型 BLAS 的构建结果在 TLAS
 读取其设备地址和内容前可见；不得仅依靠命令录制顺序、CPU fence 或捕获工具带来的隐式串行化。
 
-`PostFxResources` 为每个帧槽拥有一张标准 RGBA 全局光照图像。RGB 保存线性间接辐射亮度，alpha 保存环境可见度；
+`PostFxResources` 为每个帧槽分别拥有 RTDI raw direct radiance、Direct NRD composite、标准 RGBA 全局光照和最终 HDR
+lighting 四张图像，四者不得发生物理资源别名。全局光照图像的 RGB 保存线性间接辐射亮度，alpha 保存环境可见度；
 禁用全局光照时的中性值为 `{0, 0, 0, 1}`。屏幕空间 AO 后端写入 `{0, 0, 0, ao}`，延迟光照按
 `legacyAmbient * globalIllumination.a + globalIllumination.rgb` 合成环境光。该图像同时支持颜色附件、采样和存储图像
 用途，以便后续后端使用光线追踪或计算通道写入相同契约。
-Ray Tracing composite 写入 `alpha=0`，RGB 为去噪后的 diffuse/specular 辐亮度乘各自主表面 NRD 材质因子之和。
-该调制与 SHARC indirect 前端解调严格配对，不重复计算路径 BRDF，也不注入常量环境光或 Raster ambient floor；
+Ray Tracing 的 direct/indirect NRD composite 写入 `alpha=0`，RGB 为去噪后的 diffuse/specular 辐亮度乘各自主表面 NRD
+材质因子之和。该调制分别与 RTDI preparation 和 SHARC indirect 前端解调严格配对，不重复计算路径 BRDF，也不注入
+常量环境光或 Raster ambient floor；
 无能量路径保持
 为黑色，亮度只能来自太阳、atmosphere environment 或真实追踪到的反弹光。
 
@@ -325,8 +329,10 @@ TAA resolve 在 tone mapping 阶段经过 AMD FSR1 RCAS 恢复高频细节。RCA
 
 ## 资源所有权
 
-`RasterFeatureResources` 拥有两个帧槽的 G-buffer 与四张 CSM 阴影图；`PostFxResources` 独立拥有标准全局光照输出、
-HDR 光照、TAA 解析/历史、后处理 uniform buffer、sampler 和 descriptor set。PostFX 只通过显式
+`RasterFeatureResources` 拥有两个帧槽的 G-buffer 与四张 CSM 阴影图；`PostFxResources` 独立拥有 RTDI raw 直接光、
+Direct NRD 输出、标准全局光照、最终 HDR 光照、TAA 解析/历史、后处理 uniform buffer、sampler 和 descriptor set。
+四路光照目标保持独立，因此 direct/indirect GI composite 不能覆盖各自输入，最终 Hybrid composite 也不会对同一纹理
+执行读写。PostFX 只通过显式
 `PostFxBindingInputs` 接收上游 sampled handle，销毁时必须先释放 descriptor set，再释放 Raster producer。
 默认 Presentation/PostFX 组合另行拥有一张可作为颜色附件和 sampled image 使用的 Viewport
 输出纹理；其物理像素尺寸来自 ImGui Viewport 内容区，尺寸连续两帧稳定后才重建，以免拖动 dock 边界时反复等待 GPU。

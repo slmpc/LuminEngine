@@ -65,8 +65,12 @@ namespace lumin::render {
 
     /** Lighting、Temporal AA 和 Tone Mapping 在一个帧槽中拥有的资源。 */
     struct PostFxFrameResources {
-        /// 标准间接光照或 Hybrid direct-radiance scratch。
+        /// Raster GI 或 Hybrid SHARC/NRD composite 的间接光输出。
         GpuTexture globalIllumination;
+        /// Hybrid RTDI 独占的直接光 scratch；不得与 `globalIllumination` 或 `lighting` 别名。
+        GpuTexture directRadiance;
+        /// NRD 恢复材质后的直接光；保留 RTDI 天空 fallback，且不得与其他 lighting UAV 别名。
+        GpuTexture denoisedDirectRadiance;
         /// HDR scene lighting 输出。
         GpuTexture lighting;
         /// Temporal AA resolve 输出。

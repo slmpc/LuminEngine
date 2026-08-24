@@ -222,6 +222,7 @@ namespace {
                              lumin::render::pipelines::feature_ids::globalIllumination())
                             .mode == lumin::render::GlobalIlluminationMode::Legacy,
                 "The panel adapter must publish edits through the typed Feature store.");
+
     }
 
     void testConsoleReturnsValues() {

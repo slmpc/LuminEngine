@@ -108,6 +108,7 @@ if(LUMIN_NRD_AVAILABLE)
     list(APPEND _lumin_gi_sources
         gi/raytracing/GiComposite.cpp
         gi/raytracing/NrdDenoiser.cpp
+        gi/raytracing/RtDiNrdInputs.cpp
     )
 endif()
 if(LUMIN_SHARC_AVAILABLE)

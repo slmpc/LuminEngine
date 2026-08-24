@@ -21,19 +21,30 @@ namespace lumin::render {
 
 namespace lumin::render::gi {
 
+    /** NRD composite 对 primary miss 的处理模式。 */
+    enum class GiCompositeMode : std::uint32_t {
+        /// 间接光在背景处贡献零辐亮度。
+        Indirect = 0,
+        /// 直接光在背景处保留 RTDI atmosphere fallback。
+        Direct = 1,
+    };
+
     /** 与 `shaders/GiComposite.slang` 同构的逐帧常量。 */
     struct alignas(16) GiCompositeConstants {
         /// xyz 为 world-space 相机位置；w 固定为 1。
         glm::vec4 cameraPosition{0.0F, 0.0F, 0.0F, 1.0F};
         /// xy 为输出尺寸，z 为材质记录数，w 为无效材质索引。
         glm::uvec4 renderInfo{1U, 1U, 0U, 0xffffffffU};
+        /// x 为 `GiCompositeMode`；yzw 保留。
+        glm::uvec4 options{0U};
     };
 
     static_assert(std::is_standard_layout_v<GiCompositeConstants>);
-    static_assert(sizeof(GiCompositeConstants) == 32);
+    static_assert(sizeof(GiCompositeConstants) == 48);
     static_assert(alignof(GiCompositeConstants) == 16);
     static_assert(offsetof(GiCompositeConstants, cameraPosition) == 0);
     static_assert(offsetof(GiCompositeConstants, renderInfo) == 16);
+    static_assert(offsetof(GiCompositeConstants, options) == 32);
 
     /** composite 使用的物理 NvRHI 资源；资源本身仍由调用方拥有。 */
     struct GiCompositeResources {
@@ -46,8 +57,10 @@ namespace lumin::render::gi {
         nvrhi::TextureHandle albedoMetallic;
         nvrhi::TextureHandle materialId;
         nvrhi::BufferHandle materials;
-        /// 现有 packed GI 纹理：rgb 为间接光，a 为旧环境光可见度。
-        nvrhi::TextureHandle globalIllumination;
+        /// primary miss 时使用的 RTDI atmosphere radiance；间接模式绑定但不读取。
+        nvrhi::TextureHandle fallbackRadiance;
+        /// 恢复主表面材质后的直接光或间接光输出。
+        nvrhi::TextureHandle output;
     };
 
     /** `GiCompositeResources` 在当前 FrameGraph 中已经存在的同一组资源身份。 */
@@ -59,7 +72,8 @@ namespace lumin::render::gi {
         FrameGraphResourceHandle albedoMetallic;
         FrameGraphResourceHandle materialId;
         FrameGraphResourceHandle materials;
-        FrameGraphResourceHandle globalIllumination;
+        FrameGraphResourceHandle fallbackRadiance;
+        FrameGraphResourceHandle output;
     };
 
     /** 一次 GI composite 录制的帧槽、尺寸和观察点。 */
@@ -67,6 +81,7 @@ namespace lumin::render::gi {
         core::FrameSlotIndex frameSlot;
         core::RenderExtent extent;
         glm::vec3 cameraPosition{0.0F};
+        GiCompositeMode mode = GiCompositeMode::Indirect;
         /// 写入该帧槽常量和 binding set 之前，调用方必须已等待对应 fence。
         bool frameSlotFenceWaited = false;
     };
@@ -148,7 +163,7 @@ namespace lumin::render::gi {
 
     } // namespace detail
 
-    /** 将降噪后的出射辐亮度写入间接光纹理；资源由调用方拥有并完成帧图导入。 */
+    /** 将降噪后的出射辐亮度写入直接光或间接光纹理；资源由调用方拥有并完成帧图导入。 */
     class GiCompositePass final {
     public:
         explicit GiCompositePass(const GiCompositeCreateInfo& createInfo);

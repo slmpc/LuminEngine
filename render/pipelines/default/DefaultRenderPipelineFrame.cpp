@@ -312,26 +312,41 @@ namespace lumin::render {
                 throw std::logic_error("Hybrid render topology requires the RT surface runtime.");
             }
             const gi::RayTracedDiFrameResources& surface = hybridGi_->directLighting->signals(frameIndex);
-            const auto importRtSurface = [&importer, frameInitialState](std::string name,
-                                                                        const nvrhi::TextureHandle& texture) {
+            const nvrhi::ResourceStates rtSignalInitialState =
+                hybridGi_->directLighting->frameSlotInitialized(frameIndex)
+                    ? nvrhi::ResourceStates::ShaderResource
+                    : nvrhi::ResourceStates::Common;
+            const auto importRtSurface = [&importer](std::string name, const nvrhi::TextureHandle& texture,
+                                                     nvrhi::ResourceStates initialState) {
                 return textureFrameData(
                     texture,
-                    importer.importTexture(std::move(name), textureDesc(GpuTexture{texture}, frameInitialState)));
+                    importer.importTexture(std::move(name), textureDesc(GpuTexture{texture}, initialState)));
             };
             rtSurface.worldPositionHitDistance =
-                importRtSurface("rt.surface.world-position", surface.worldPositionHitT);
-            rtSurface.normalRoughness = importRtSurface("rt.surface.normal-roughness", surface.normalRoughness);
-            rtSurface.albedoMetallic = importRtSurface("rt.surface.albedo-metallic", surface.albedoMetallic);
-            rtSurface.materialId = importRtSurface("rt.surface.material-id", surface.materialId);
-            rtSurface.motion = importRtSurface("rt.surface.motion", surface.motion);
-            rtSurface.viewDepth = importRtSurface("rt.surface.view-z", surface.viewZ);
-            rtSurface.visibility = importRtSurface("rt.surface.visibility", surface.visibilityMask);
+                importRtSurface("rt.surface.world-position", surface.worldPositionHitT, frameInitialState);
+            rtSurface.normalRoughness =
+                importRtSurface("rt.surface.normal-roughness", surface.normalRoughness, frameInitialState);
+            rtSurface.albedoMetallic =
+                importRtSurface("rt.surface.albedo-metallic", surface.albedoMetallic, frameInitialState);
+            rtSurface.materialId = importRtSurface("rt.surface.material-id", surface.materialId, frameInitialState);
+            rtSurface.motion = importRtSurface("rt.surface.motion", surface.motion, frameInitialState);
+            rtSurface.viewDepth = importRtSurface("rt.surface.view-z", surface.viewZ, rtSignalInitialState);
+            rtSurface.visibility =
+                importRtSurface("rt.surface.visibility", surface.visibilityMask, rtSignalInitialState);
+            rtSurface.directDiffuseRadianceHitDistance =
+                importRtSurface("rt.surface.direct-diffuse", surface.directDiffuseRadianceHitT,
+                                rtSignalInitialState);
+            rtSurface.directSpecularRadianceHitDistance =
+                importRtSurface("rt.surface.direct-specular", surface.directSpecularRadianceHitT,
+                                rtSignalInitialState);
             hybridData.surface.worldPositionHitT = rtSurface.worldPositionHitDistance.graphResource;
             hybridData.surface.normalRoughness = rtSurface.normalRoughness.graphResource;
             hybridData.surface.albedoMetallic = rtSurface.albedoMetallic.graphResource;
             hybridData.surface.materialId = rtSurface.materialId.graphResource;
             hybridData.surface.viewZ = rtSurface.viewDepth.graphResource;
             hybridData.surface.motion = rtSurface.motion.graphResource;
+            hybridData.surface.directDiffuseRadianceHitT = rtSurface.directDiffuseRadianceHitDistance.graphResource;
+            hybridData.surface.directSpecularRadianceHitT = rtSurface.directSpecularRadianceHitDistance.graphResource;
             hybridData.surface.visibilityMask = rtSurface.visibility.graphResource;
         }
 #endif
@@ -339,21 +354,37 @@ namespace lumin::render {
         indirectLighting.combined =
             textureFrameData(postFxFrame.globalIllumination,
                              importer.importTexture("global-illumination.output",
-                                                    textureDesc(postFxFrame.globalIllumination, frameInitialState)));
+                                                    textureDesc(postFxFrame.globalIllumination,
+                                                                globalIlluminationInitialized_[frameIndex]
+                                                                    ? nvrhi::ResourceStates::ShaderResource
+                                                                    : nvrhi::ResourceStates::Common)));
         core::DenoisedLightingData denoisedLighting{
+            .direct = {},
             .diffuse = {},
             .specular = {},
             .combined = indirectLighting.combined,
         };
         core::SceneHdrData sceneHdr;
-        sceneHdr.color =
-            textureFrameData(postFxFrame.lighting,
-                             importer.importTexture(hybridPathActive ? "rt.surface.direct-radiance" : "lighting.hdr",
-                                                    textureDesc(postFxFrame.lighting, frameInitialState)));
+        sceneHdr.color = textureFrameData(
+            postFxFrame.lighting,
+            importer.importTexture("lighting.hdr", textureDesc(postFxFrame.lighting, frameInitialState)));
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         if (hybridPathActive) {
-            rtSurface.directRadiance = indirectLighting.combined;
-            hybridData.surface.directRadiance = indirectLighting.combined.graphResource;
+            rtSurface.directRadiance =
+                textureFrameData(postFxFrame.directRadiance,
+                                 importer.importTexture("rt.surface.direct-radiance",
+                                                        textureDesc(postFxFrame.directRadiance,
+                                                                    directRadianceInitialized_[frameIndex]
+                                                                        ? nvrhi::ResourceStates::ShaderResource
+                                                                        : nvrhi::ResourceStates::Common)));
+            hybridData.surface.directRadiance = rtSurface.directRadiance.graphResource;
+            denoisedLighting.direct = textureFrameData(
+                postFxFrame.denoisedDirectRadiance,
+                importer.importTexture("rt.direct-radiance.denoised",
+                                       textureDesc(postFxFrame.denoisedDirectRadiance,
+                                                   directNrdOutputInitialized_[frameIndex]
+                                                       ? nvrhi::ResourceStates::ShaderResource
+                                                       : nvrhi::ResourceStates::Common)));
         }
 #endif
         sceneHdr.position = hybridPathActive ? rtSurface.worldPositionHitDistance : rasterSurface.position;
@@ -446,9 +477,21 @@ namespace lumin::render {
         blackboard.set(FrameImportServices{.importer = &importer});
         renderPipeline_->prepareFrame(identity, camera.cutEpoch, changes, frameGraph_, blackboard);
         frameGraph_.execute(FrameGraphContext{&commandList, nullptr, frameIndex});
-        const bool usedHybridPath = blackboard.get<HybridPassData>().active;
-        return RecordedFrameState{viewProjection, view, unjitteredProjection, jitter, featureConfiguration(settings),
-                                  usedHybridPath};
+        const HybridPassData& completedHybrid = blackboard.get<HybridPassData>();
+        const bool usedHybridPath = completedHybrid.active;
+        const core::DenoisedLightingData& completedLighting = blackboard.get<core::DenoisedLightingData>();
+        const bool usedDirectNrd =
+            usedHybridPath && completedLighting.direct.texture == postFxFrame.denoisedDirectRadiance.texture;
+        return RecordedFrameState{
+            .viewProjection = viewProjection,
+            .view = view,
+            .projection = unjitteredProjection,
+            .jitter = jitter,
+            .featureConfiguration = featureConfiguration(settings),
+            .usedHybridPath = usedHybridPath,
+            .usedDirectNrd = usedDirectNrd,
+            .usedIndirectLighting = usedHybridPath && completedHybrid.globalIlluminationActive,
+        };
     }
 
 } // namespace lumin::render

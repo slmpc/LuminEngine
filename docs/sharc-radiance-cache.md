@@ -20,6 +20,10 @@ Lumin Engine 的 SHARC 集成使用固定版本 `1.6.5`，shader 直接包含
    NRD 去噪后由 GI composite 恢复主表面材质因子。
 6. `sharc-statistics-readback` 在 query 完成后复制统计 buffer。只有对应 frame-slot fence 完成后才能映射。
 
+SHARC indirect 可把 raw 信号直接交给 GI composite，也可由其专用 NRD 实例先执行 REBLUR。全局 NRD 开关不依赖
+SHARC：关闭 SHARC 只清零间接光，RTDI、天空和 Direct NRD 仍继续运行。运行时开关只切换常驻资源的帧图分支和失效
+相关历史，不重建 Hybrid 资源。
+
 所有 buffer 和 sky-view LUT 的访问状态都通过同一个 `FrameGraphResourceHandle` 声明。shader dispatch 内没有
 手写 barrier；`UnorderedAccess` 的 write/read 和 write/write hazard 由 `FrameGraph` 生成内存依赖。
 

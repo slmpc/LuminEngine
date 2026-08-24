@@ -76,6 +76,8 @@ namespace lumin::render::pipelines {
             glm::vec2 jitter{0.0f};
             FeatureConfigurationState featureConfiguration;
             bool usedHybridPath = false;
+            bool usedDirectNrd = false;
+            bool usedIndirectLighting = false;
         };
 
         struct HybridGiState {
@@ -90,13 +92,19 @@ namespace lumin::render::pipelines {
             std::optional<gpu::GpuScenePreparedUpdate> pendingSceneUpdate;
             std::optional<core::RenderSequence> pendingSequence;
             std::uint32_t geometryDescriptorCapacity = 0;
+#if LUMIN_LEVEL_RENDERER_HAS_NRD
+            std::unique_ptr<gi::RtDiNrdInputsPass> directNrdInputs;
+            std::unique_ptr<gi::NrdDenoiser> directNrd;
+            std::unique_ptr<gi::GiCompositePass> directComposite;
+            std::optional<gi::NrdPreparedFrame> pendingDirectNrdFrame;
+#endif
 #if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
             bool sharcEnabled = false;
             std::unique_ptr<gi::SharcRadianceCache> sharc;
             std::unique_ptr<gi::SharcIndirectLightingPass> indirectLighting;
-            std::unique_ptr<gi::NrdDenoiser> nrd;
-            std::unique_ptr<gi::GiCompositePass> composite;
-            std::optional<gi::NrdPreparedFrame> pendingNrdFrame;
+            std::unique_ptr<gi::NrdDenoiser> indirectNrd;
+            std::unique_ptr<gi::GiCompositePass> indirectComposite;
+            std::optional<gi::NrdPreparedFrame> pendingIndirectNrdFrame;
 #endif
 #endif
         };
@@ -227,6 +235,12 @@ namespace lumin::render::pipelines {
         std::uint64_t nextRenderSequence_ = 0;
         core::FrameChangeSet pendingFrameChanges_;
         std::array<bool, frameSlotCount> frameResourcesInitialized_{};
+        /// RTDI 合并直接光由成功 Hybrid 提交单独发布，不能沿用 Raster/PostFX 的粗粒度状态。
+        std::array<bool, frameSlotCount> directRadianceInitialized_{};
+        /// Direct NRD composite 只在 NRD 实际启用并成功提交后进入 ShaderResource 状态。
+        std::array<bool, frameSlotCount> directNrdOutputInitialized_{};
+        /// Raster GI 或 SHARC composite 成功写入后，间接光纹理才可声明为 ShaderResource。
+        std::array<bool, frameSlotCount> globalIlluminationInitialized_{};
         bool atmosphereForceRebuild_ = true;
         bool requestedSharcEnabled_ = true;
         DefaultRenderPipelineKind activePipelineKind_ = DefaultRenderPipelineKind::Raster;

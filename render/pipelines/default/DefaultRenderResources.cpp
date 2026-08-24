@@ -80,6 +80,9 @@ namespace lumin::render {
         createModelRenderer();
         createHybridGiResources();
         frameResourcesInitialized_.fill(false);
+        directRadianceInitialized_.fill(false);
+        directNrdOutputInitialized_.fill(false);
+        globalIlluminationInitialized_.fill(false);
     }
 
     void pipelines::DefaultRenderPipelineSession::createViewportOutput() {
@@ -215,8 +218,10 @@ namespace lumin::render {
                     .materialId = raster.materialId.texture,
                     .viewZ = {},
                     .motion = raster.motion.texture,
-                    // Hybrid RTDI 使用 globalIllumination 作为 direct-radiance UAV，最终合成再写 lighting。
-                    .directRadiance = postFx.globalIllumination.texture,
+                    // RTDI、间接光与最终 HDR 必须使用三个独立 UAV，避免 GI composite 覆盖直接光。
+                    .directRadiance = postFx.directRadiance.texture,
+                    .directDiffuseRadianceHitT = {},
+                    .directSpecularRadianceHitT = {},
                     .visibilityMask = {},
                 };
             }
@@ -231,6 +236,30 @@ namespace lumin::render {
                     .atmosphereBindingLayout = atmosphereConsumerBindingLayout_,
                     .frames = runtime->directLightingFrames,
                 });
+
+#if LUMIN_LEVEL_RENDERER_HAS_NRD
+            runtime->directNrdInputs = std::make_unique<gi::RtDiNrdInputsPass>(gi::RtDiNrdInputsCreateInfo{
+                .device = context_.rhiDevice(),
+                .shaders = &shaderLibrary_,
+                .extent = renderExtent_,
+                .frameSlotCount = frameSlotCount,
+            });
+            runtime->directNrd = std::make_unique<gi::NrdDenoiser>(gi::NrdDenoiserCreateInfo{
+                .device = context_.rhiDevice(),
+                .extent = renderExtent_,
+                .frameSlotCount = frameSlotCount,
+            });
+            if (runtime->directNrdInputs->formats().normalRoughness !=
+                runtime->directNrd->expectedNormalRoughnessFormat()) {
+                throw std::runtime_error("RTDI preparation and NRD normal/roughness formats do not match.");
+            }
+            runtime->directComposite = std::make_unique<gi::GiCompositePass>(gi::GiCompositeCreateInfo{
+                .device = context_.rhiDevice(),
+                .shaders = &shaderLibrary_,
+                .extent = renderExtent_,
+                .frameSlotCount = frameSlotCount,
+            });
+#endif
 
 #if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
             if (context_.rayTracingSupport().supportsSharcShaderStorage()) {
@@ -275,16 +304,16 @@ namespace lumin::render {
                         .atmosphereBindingLayout = atmosphereConsumerBindingLayout_,
                         .frames = indirectFrames,
                     });
-                runtime->nrd = std::make_unique<gi::NrdDenoiser>(gi::NrdDenoiserCreateInfo{
+                runtime->indirectNrd = std::make_unique<gi::NrdDenoiser>(gi::NrdDenoiserCreateInfo{
                     .device = context_.rhiDevice(),
                     .extent = renderExtent_,
                     .frameSlotCount = frameSlotCount,
                 });
                 if (runtime->indirectLighting->formats().normalRoughness !=
-                    runtime->nrd->expectedNormalRoughnessFormat()) {
+                    runtime->indirectNrd->expectedNormalRoughnessFormat()) {
                     throw std::runtime_error("SHARC indirect and NRD normal/roughness formats do not match.");
                 }
-                runtime->composite = std::make_unique<gi::GiCompositePass>(gi::GiCompositeCreateInfo{
+                runtime->indirectComposite = std::make_unique<gi::GiCompositePass>(gi::GiCompositeCreateInfo{
                     .device = context_.rhiDevice(),
                     .shaders = &shaderLibrary_,
                     .extent = renderExtent_,

@@ -23,11 +23,17 @@
 #define LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI 0
 #endif
 
-#if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI && defined(LUMIN_HAS_NRD) && LUMIN_HAS_NRD && defined(LUMIN_HAS_SHARC) &&       \
-    LUMIN_HAS_SHARC
-#define LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT 1
+#if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI && defined(LUMIN_HAS_NRD) && LUMIN_HAS_NRD
+#define LUMIN_LEVEL_RENDERER_HAS_NRD 1
 #include "render/gi/raytracing/GiComposite.hpp"
 #include "render/gi/raytracing/NrdDenoiser.hpp"
+#include "render/gi/raytracing/RtDiNrdInputs.hpp"
+#else
+#define LUMIN_LEVEL_RENDERER_HAS_NRD 0
+#endif
+
+#if LUMIN_LEVEL_RENDERER_HAS_NRD && defined(LUMIN_HAS_SHARC) && LUMIN_HAS_SHARC
+#define LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT 1
 #include "render/gi/raytracing/SharcIndirectLighting.hpp"
 #include "render/gi/raytracing/SharcRadianceCache.hpp"
 #else

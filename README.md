@@ -63,8 +63,9 @@ cmake --preset debug -DLUMIN_RAY_TRACING=OFF
 - `ON`：编入 RT 实现；仍由运行时策略决定是否强制要求设备能力。
 - `OFF`：不提供 RT 实现，也不配置 SHARC/NRD vendor target；运行时不会查询或启用 RT 专属 Feature 与扩展。
 
-`LUMIN_ENABLE_SHARC=OFF` 或设备缺少 SHARC storage 能力时仍保留 RTDI 与天空，只关闭并清零间接光；默认构建继续使用
-SHARC indirect，并由 NRD REBLUR 对 diffuse/specular 信号降噪。
+`LUMIN_ENABLE_SHARC=OFF` 或设备缺少 SHARC storage 能力时仍保留 RTDI、天空和 Direct NRD，只关闭并清零间接光。
+默认构建为 RTDI 与 SHARC indirect 各维护一套 NRD REBLUR 实例；运行时 SHARC 与 NRD 开关相互独立，因此
+`RTDI`、`RTDI + NRD`、`RTDI + SHARC` 和 `RTDI + SHARC + NRD` 四种组合均有效。
 
 其他值会在 configure 阶段报错。该选择会写入生成头
 `generated/include/render/RayTracingBuildConfiguration.hpp`，属于构建产物能力，不能由运行时描述覆盖。
@@ -106,8 +107,9 @@ cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 状态、线性颜色、坎德拉强度、作用范围、Spot 内外锥半角和逐灯阴影。编辑器面板还可选择模型、修改变换与材质，并在 Render
 面板通过下拉框选择 `Legacy` 或 `Ray Tracing`。
 Legacy 提供 SSAO/HBAO/GTAO、AO 半径/强度/偏置、CSM、级联分割权重与最大阴影距离设置；Ray Tracing 提供 SHARC 与
-NRD 开关，其中 NRD 对 SHARC 产生的 diffuse/specular 间接光信号执行 REBLUR 降噪。TAA 与 FSR1 RCAS 锐度是两条路径
-共用的选项。面板还可调整相机、曝光和太阳方向，并在 Lua 控制台执行表达式
+NRD 独立开关。NRD 始终可对 RTDI 的随机直接光执行 REBLUR；SHARC 开启时，同一开关还会对其 diffuse/specular
+间接光信号使用独立实例降噪。TAA 与 FSR1 RCAS 锐度是两条路径共用的选项。面板还可调整相机、曝光和太阳方向，并在
+Lua 控制台执行表达式
 （例如 `return 6 * 7`）。当编辑器正在接收键盘、
 鼠标或文本输入时，应用会抑制 `Escape` 和相机控制，但不会暂停 `Game::tick`、`Level::tick` 或 Lua 生命周期。
 默认布局将 `Content Browser` 与 `Script Console` 合并为中央下方页签组；`Scene Hierarchy` 位于右上角，

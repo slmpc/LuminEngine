@@ -26,6 +26,7 @@ namespace lumin::render {
         RtDiRadianceMiss,
         RtDiShadowMiss,
         RtDiClosestHit,
+        RtDiNrdInputsCompute,
         SharcIndirectLightingRayGeneration,
         SharcIndirectLightingRadianceMiss,
         SharcIndirectLightingShadowMiss,

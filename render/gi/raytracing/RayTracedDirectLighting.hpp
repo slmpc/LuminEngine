@@ -179,6 +179,9 @@ namespace lumin::render::gi {
         /// 返回指定帧槽的 primary RT surface 物理资源。
         [[nodiscard]] const RayTracedDiFrameResources& signals(std::uint32_t frameIndex) const;
 
+        /// 返回指定帧槽是否至少成功提交过一次 primary RT surface 写入。
+        [[nodiscard]] bool frameSlotInitialized(std::uint32_t frameIndex) const;
+
     private:
         struct Impl;
         std::unique_ptr<Impl> impl_;

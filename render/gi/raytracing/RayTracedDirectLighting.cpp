@@ -34,6 +34,8 @@ namespace lumin::render::gi {
         constexpr std::uint32_t normalRoughnessTexturesBinding = 15;
         constexpr std::uint32_t materialSamplerBinding = 16;
         constexpr std::uint32_t lightsBinding = 17;
+        constexpr std::uint32_t directDiffuseOutputBinding = 18;
+        constexpr std::uint32_t directSpecularOutputBinding = 19;
 
         [[nodiscard]] nvrhi::BufferHandle createConstantBuffer(nvrhi::IDevice& device) {
             nvrhi::BufferDesc desc;
@@ -132,7 +134,9 @@ namespace lumin::render::gi {
                 .addItem(nvrhi::BindingLayoutItem::Texture_SRV(normalRoughnessTexturesBinding)
                              .setSize(maxMaterialTextureDescriptors))
                 .addItem(nvrhi::BindingLayoutItem::Sampler(materialSamplerBinding))
-                .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(lightsBinding));
+                .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(lightsBinding))
+                .addItem(nvrhi::BindingLayoutItem::Texture_UAV(directDiffuseOutputBinding))
+                .addItem(nvrhi::BindingLayoutItem::Texture_UAV(directSpecularOutputBinding));
             return desc;
         }
 
@@ -165,6 +169,10 @@ namespace lumin::render::gi {
                 .addItem(nvrhi::BindingSetItem::Texture_UAV(motionOutputBinding, outputs.motion))
                 .addItem(nvrhi::BindingSetItem::Texture_UAV(directRadianceOutputBinding, outputs.directRadiance))
                 .addItem(nvrhi::BindingSetItem::Texture_UAV(visibilityMaskOutputBinding, outputs.visibilityMask))
+                .addItem(nvrhi::BindingSetItem::Texture_UAV(directDiffuseOutputBinding,
+                                                            outputs.directDiffuseRadianceHitT))
+                .addItem(nvrhi::BindingSetItem::Texture_UAV(directSpecularOutputBinding,
+                                                            outputs.directSpecularRadianceHitT))
                 .addItem(nvrhi::BindingSetItem::ConstantBuffer(constantsBinding, constants));
             for (std::uint32_t index = 0; index < maxGeometryDescriptors; ++index) {
                 const gpu::GpuGeometryDescriptor& geometry = scene.geometry[index < scene.geometry.size() ? index : 0];
@@ -216,6 +224,14 @@ namespace lumin::render::gi {
                 if (!frame.visibilityMask) {
                     frame.visibilityMask = createSignalTexture(device, width, height, nvrhi::Format::R32_UINT,
                                                                "RT surface visibility mask");
+                }
+                if (!frame.directDiffuseRadianceHitT) {
+                    frame.directDiffuseRadianceHitT = createSignalTexture(
+                        device, width, height, nvrhi::Format::RGBA16_FLOAT, "RT direct diffuse radiance hit distance");
+                }
+                if (!frame.directSpecularRadianceHitT) {
+                    frame.directSpecularRadianceHitT = createSignalTexture(
+                        device, width, height, nvrhi::Format::RGBA16_FLOAT, "RT direct specular radiance hit distance");
                 }
                 if (!complete(frame)) {
                     throw std::invalid_argument("RT surface pass received incomplete output textures.");
@@ -356,7 +372,8 @@ namespace lumin::render::gi {
                 builder.read(environmentResources.atmosphere.constants, nvrhi::ResourceStates::ConstantBuffer);
                 for (const FrameGraphResourceHandle output :
                      {outputs.worldPositionHitT, outputs.normalRoughness, outputs.albedoMetallic, outputs.materialId,
-                      outputs.viewZ, outputs.motion, outputs.directRadiance, outputs.visibilityMask}) {
+                      outputs.viewZ, outputs.motion, outputs.directRadiance, outputs.directDiffuseRadianceHitT,
+                      outputs.directSpecularRadianceHitT, outputs.visibilityMask}) {
                     builder.writeTexture(output, nvrhi::ResourceStates::UnorderedAccess);
                 }
             },
@@ -394,6 +411,13 @@ namespace lumin::render::gi {
             throw std::out_of_range("RT surface frame index is outside the configured range.");
         }
         return impl_->frames[frameIndex];
+    }
+
+    bool RayTracedDirectLightingPass::frameSlotInitialized(std::uint32_t frameIndex) const {
+        if (frameIndex >= impl_->initialized.size()) {
+            throw std::out_of_range("RT surface frame index is outside the configured range.");
+        }
+        return impl_->initialized[frameIndex] != 0;
     }
 
 } // namespace lumin::render::gi

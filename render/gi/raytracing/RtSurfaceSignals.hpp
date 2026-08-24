@@ -29,12 +29,16 @@ namespace lumin::render::gi {
         nvrhi::TextureHandle motion;
         /// RT direct lighting；背景像素为 atmosphere miss radiance。
         nvrhi::TextureHandle directRadiance;
+        /// rgb 为未解调的直接光漫反射波瓣，a 为本次 shadow ray 的 world-space 命中距离。
+        nvrhi::TextureHandle directDiffuseRadianceHitT;
+        /// rgb 为未解调的直接光镜面波瓣，a 为本次 shadow ray 的 world-space 命中距离。
+        nvrhi::TextureHandle directSpecularRadianceHitT;
         /// 1 表示 primary hit，0 表示 miss。
         nvrhi::TextureHandle visibilityMask;
 
         [[nodiscard]] bool isValid() const noexcept {
             return worldPositionHitT && normalRoughness && albedoMetallic && materialId && viewZ && motion &&
-                   directRadiance && visibilityMask;
+                   directRadiance && directDiffuseRadianceHitT && directSpecularRadianceHitT && visibilityMask;
         }
     };
 
@@ -47,11 +51,14 @@ namespace lumin::render::gi {
         FrameGraphResourceHandle viewZ;
         FrameGraphResourceHandle motion;
         FrameGraphResourceHandle directRadiance;
+        FrameGraphResourceHandle directDiffuseRadianceHitT;
+        FrameGraphResourceHandle directSpecularRadianceHitT;
         FrameGraphResourceHandle visibilityMask;
 
         [[nodiscard]] bool isValid() const noexcept {
             return worldPositionHitT.isValid() && normalRoughness.isValid() && albedoMetallic.isValid() &&
                    materialId.isValid() && viewZ.isValid() && motion.isValid() && directRadiance.isValid() &&
+                   directDiffuseRadianceHitT.isValid() && directSpecularRadianceHitT.isValid() &&
                    visibilityMask.isValid();
         }
     };

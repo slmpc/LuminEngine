@@ -182,15 +182,27 @@ LuminCookTorranceLobes luminEvaluateCookTorrance(
     return result;
 }
 
-float3 luminEvaluateDirectLighting(
+LuminCookTorranceLobes luminEvaluateDirectLightingLobes(
     GpuMaterialData material, float3 normal, float3 toView, LuminLightSample light, float visibility) {
+    LuminCookTorranceLobes result;
+    result.diffuse = float3(0.0);
+    result.specular = float3(0.0);
     float normalDotLight = saturate(dot(normal, light.direction));
     if (light.valid == 0u || normalDotLight <= 0.0 || visibility <= 0.0) {
-        return float3(0.0);
+        return result;
     }
     LuminCookTorranceLobes lobes = luminEvaluateCookTorrance(
         luminMakeCookTorranceMaterial(material), normal, toView, light.direction);
-    return (lobes.diffuse + lobes.specular) * light.irradiance * (normalDotLight * visibility);
+    float3 incidentScale = light.irradiance * (normalDotLight * visibility);
+    result.diffuse = lobes.diffuse * incidentScale;
+    result.specular = lobes.specular * incidentScale;
+    return result;
+}
+
+float3 luminEvaluateDirectLighting(
+    GpuMaterialData material, float3 normal, float3 toView, LuminLightSample light, float visibility) {
+    LuminCookTorranceLobes lobes = luminEvaluateDirectLightingLobes(material, normal, toView, light, visibility);
+    return lobes.diffuse + lobes.specular;
 }
 
 void luminBuildTangentFrame(float3 normal, out float3 tangent, out float3 bitangent) {

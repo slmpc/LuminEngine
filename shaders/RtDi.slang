@@ -47,6 +47,8 @@ static const uint kInvalidMaterial = 0xffffffffu;
 [[vk::binding(15, 0)]] Texture2D<float4> normalRoughnessTextures[];
 [[vk::binding(16, 0)]] SamplerState materialSampler;
 [[vk::binding(17, 0)]] StructuredBuffer<GpuLightData> lights;
+[[vk::binding(18, 0)]] RWTexture2D<float4> directDiffuseRadianceHitT;
+[[vk::binding(19, 0)]] RWTexture2D<float4> directSpecularRadianceHitT;
 
 float2 clipToUv(float4 clipPosition) {
     float2 ndc = clipPosition.xy / max(abs(clipPosition.w), 1e-6);
@@ -74,6 +76,8 @@ void writeMiss(uint2 pixel, float3 environmentRadiance) {
     viewZ[pixel] = 0.0;
     motion[pixel] = float2(0.0);
     directRadiance[pixel] = float4(luminClampFp16Radiance(environmentRadiance), 1.0);
+    directDiffuseRadianceHitT[pixel] = float4(0.0);
+    directSpecularRadianceHitT[pixel] = float4(0.0);
     visibilityMask[pixel] = 0u;
 }
 
@@ -122,6 +126,7 @@ void shadowMissMain(inout PrimaryPayload payload) {
 void primaryClosestHitMain(inout PrimaryPayload payload, BuiltInTriangleIntersectionAttributes attributes) {
     if (payload.rayKind == kShadowRay) {
         payload.visibility = 0u;
+        payload.hitDistance = RayTCurrent();
         return;
     }
 
@@ -164,6 +169,7 @@ void primaryClosestHitMain(inout PrimaryPayload payload, BuiltInTriangleIntersec
     LuminLightSample lightSample = luminEvaluatePhysicalLight(
         lights[lightIndex], hitPosition, frame.traceParameters.x, frame.traceParameters.y);
     float visibility = lightSample.castsShadows == 0u ? 1.0 : 0.0;
+    float shadowHitDistance = lightSample.valid != 0u ? lightSample.shadowTMax : frame.traceParameters.y;
     if (lightSample.valid != 0u && lightSample.castsShadows != 0u && frame.traceParameters.z >= 0.5 &&
         dot(normal, lightSample.direction) > 0.0) {
         RayDesc shadowRay;
@@ -182,11 +188,18 @@ void primaryClosestHitMain(inout PrimaryPayload payload, BuiltInTriangleIntersec
         shadowPayload.padding = 0u;
         TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff, 0, 1, 1, shadowRay, shadowPayload);
         visibility = float(shadowPayload.visibility);
+        shadowHitDistance = shadowPayload.hitDistance;
     }
 
-    float3 direct = lightSample.valid != 0u && frame.traceParameters.z >= 0.5
-        ? luminEvaluateDirectLighting(material, normal, toView, lightSample, visibility) * float(lightCount)
-        : float3(0.0);
+    LuminCookTorranceLobes directLobes;
+    directLobes.diffuse = float3(0.0);
+    directLobes.specular = float3(0.0);
+    if (lightSample.valid != 0u && frame.traceParameters.z >= 0.5) {
+        directLobes = luminEvaluateDirectLightingLobes(material, normal, toView, lightSample, visibility);
+        directLobes.diffuse *= float(lightCount);
+        directLobes.specular *= float(lightCount);
+    }
+    float3 direct = directLobes.diffuse + directLobes.specular;
     // 光线由当前抖动投影生成，dispatch 像素中心已经是当前采样位置，不能再次叠加 jitter。
     // previousViewProjection 保留上一帧抖动，因此两者相减会自然得到 TAA 所需的 previous-current motion。
     float2 currentUv = (float2(pixel) + 0.5) / float2(extent);
@@ -202,5 +215,10 @@ void primaryClosestHitMain(inout PrimaryPayload payload, BuiltInTriangleIntersec
     motion[pixel] = previousUv - currentUv;
     // Cook-Torrance 的低粗糙度掠射峰值可超过 half 上限；仅在 FP16 scene-radiance 存储边界截断，避免 Inf 污染 TAA。
     directRadiance[pixel] = float4(luminClampFp16Radiance(direct), 1.0);
+    float storedShadowHitDistance = clamp(shadowHitDistance, 0.0, kLuminFp16Max);
+    directDiffuseRadianceHitT[pixel] =
+        float4(luminClampFp16Radiance(directLobes.diffuse), storedShadowHitDistance);
+    directSpecularRadianceHitT[pixel] =
+        float4(luminClampFp16Radiance(directLobes.specular), storedShadowHitDistance);
     visibilityMask[pixel] = 1u;
 }

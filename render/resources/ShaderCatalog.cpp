@@ -78,7 +78,12 @@ namespace lumin::render {
                             field("cameraPosition", 128, 16), field("cameraForward", 144, 16),
                             field("toSunWorld", 160, 16), field("sunIrradiance", 176, 16), field("renderSize", 192, 16),
                             field("traceParameters", 208, 16), field("samplingParameters", 224, 16)})
-                .abiStruct("GiCompositeConstants", 32, {field("cameraPosition", 0, 16), field("renderInfo", 16, 16)})
+                .abiStruct("RtDiNrdInputsConstants", 48,
+                           {field("cameraPosition", 0, 16), field("renderParameters", 16, 16),
+                            field("renderInfo", 32, 16)})
+                .abiStruct("GiCompositeConstants", 48,
+                           {field("cameraPosition", 0, 16), field("renderInfo", 16, 16),
+                            field("options", 32, 16)})
                 .abiStruct("HybridLightingCompositeConstants", 16, {field("renderInfo", 0, 16)})
                 .abiStruct("SharcGpuConstants", 128,
                            {field("cameraPositionSceneScale", 0, 16),
@@ -142,7 +147,8 @@ namespace lumin::render {
                            binding("materialIdTexture", ShaderBindingKind::SampledImage, 0, 5),
                            binding("materials", ShaderBindingKind::StructuredBuffer, 0, 6),
                            binding("frame", ShaderBindingKind::ConstantBuffer, 0, 7),
-                           binding("globalIlluminationOutput", ShaderBindingKind::StorageImage, 0, 8)})
+                           binding("lightingOutput", ShaderBindingKind::StorageImage, 0, 8),
+                           binding("fallbackRadiance", ShaderBindingKind::SampledImage, 0, 9)})
                 .abiStructs({"GpuMaterialData", "GiCompositeConstants"})
                 .entry(ShaderId::GiCompositeCompute, "gi-composite.compute", "compositeMain", ShaderStage::Compute,
                        "GiComposite.comp");
@@ -197,7 +203,9 @@ namespace lumin::render {
             rtDi.bindings({binding("baseColorTextures", ShaderBindingKind::SampledImage, 0, 14),
                            binding("normalRoughnessTextures", ShaderBindingKind::SampledImage, 0, 15),
                            binding("materialSampler", ShaderBindingKind::Sampler, 0, 16),
-                           binding("lights", ShaderBindingKind::StructuredBuffer, 0, 17)})
+                           binding("lights", ShaderBindingKind::StructuredBuffer, 0, 17),
+                           binding("directDiffuseRadianceHitT", ShaderBindingKind::StorageImage, 0, 18),
+                           binding("directSpecularRadianceHitT", ShaderBindingKind::StorageImage, 0, 19)})
                 .entry(ShaderId::RtDiRayGeneration, "rt-di.ray-generation", "rayGenerationMain",
                        ShaderStage::RayGeneration, "RtDi.rgen")
                 .entry(ShaderId::RtDiRadianceMiss, "rt-di.radiance-miss", "primaryMissMain", ShaderStage::Miss,
@@ -206,6 +214,28 @@ namespace lumin::render {
                        "RtDi.shadow.rmiss")
                 .entry(ShaderId::RtDiClosestHit, "rt-di.closest-hit", "primaryClosestHitMain", ShaderStage::ClosestHit,
                        "RtDi.rchit");
+
+            builder.module("RtDiNrdInputs.slang")
+                .requireFeatures({ShaderFeature::RayTracing, ShaderFeature::Nrd})
+                .includeDirectories({"../thirdparty/nrd/Shaders"})
+                .bindings({binding("rawDiffuseRadianceHitT", ShaderBindingKind::SampledImage, 0, 0),
+                           binding("rawSpecularRadianceHitT", ShaderBindingKind::SampledImage, 0, 1),
+                           binding("positionTexture", ShaderBindingKind::SampledImage, 0, 2),
+                           binding("normalRoughnessTexture", ShaderBindingKind::SampledImage, 0, 3),
+                           binding("albedoMetallicTexture", ShaderBindingKind::SampledImage, 0, 4),
+                           binding("materialIdTexture", ShaderBindingKind::SampledImage, 0, 5),
+                           binding("viewZTexture", ShaderBindingKind::SampledImage, 0, 6),
+                           binding("motionTexture", ShaderBindingKind::SampledImage, 0, 7),
+                           binding("materials", ShaderBindingKind::StructuredBuffer, 0, 8),
+                           binding("frame", ShaderBindingKind::ConstantBuffer, 0, 9),
+                           binding("diffuseRadianceHitDistance", ShaderBindingKind::StorageImage, 0, 10),
+                           binding("specularRadianceHitDistance", ShaderBindingKind::StorageImage, 0, 11),
+                           binding("denoiserViewZ", ShaderBindingKind::StorageImage, 0, 12),
+                           binding("denoiserNormalRoughness", ShaderBindingKind::StorageImage, 0, 13),
+                           binding("denoiserMotion", ShaderBindingKind::StorageImage, 0, 14)})
+                .abiStructs({"GpuMaterialData", "RtDiNrdInputsConstants"})
+                .entry(ShaderId::RtDiNrdInputsCompute, "rt-di-nrd-inputs.compute", "prepareMain",
+                       ShaderStage::Compute, "RtDiNrdInputs.comp");
 
             auto& sharcIndirect = builder.module("SharcIndirectLighting.slang");
             sharcIndirect.requireFeatures({ShaderFeature::RayTracing, ShaderFeature::Nrd, ShaderFeature::Sharc})

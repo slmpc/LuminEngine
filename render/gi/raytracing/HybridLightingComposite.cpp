@@ -155,14 +155,17 @@ namespace lumin::render::gi {
         const nvrhi::ComputePipelineHandle pipeline = impl_->pipeline;
         const std::uint32_t dispatchX = divideRoundUp(parameters.extent.width, threadGroupWidth);
         const std::uint32_t dispatchY = divideRoundUp(parameters.extent.height, threadGroupHeight);
+        const HybridLightingCompositeMode mode = parameters.mode;
         return frameGraph.addPass(
             "Hybrid lighting composite", FrameGraphPassType::Compute,
-            [graphResources, constantsResource, dependency](FrameGraphBuilder& builder) {
+            [graphResources, constantsResource, dependency, mode](FrameGraphBuilder& builder) {
                 if (dependency.isValid()) {
                     builder.dependsOn(dependency);
                 }
                 builder.readTexture(graphResources.directRadiance, nvrhi::ResourceStates::ShaderResource);
-                builder.readTexture(graphResources.indirectRadiance, nvrhi::ResourceStates::ShaderResource);
+                if (mode != HybridLightingCompositeMode::DirectOnly) {
+                    builder.readTexture(graphResources.indirectRadiance, nvrhi::ResourceStates::ShaderResource);
+                }
                 builder.read(constantsResource, nvrhi::ResourceStates::ConstantBuffer);
                 builder.writeTexture(graphResources.output, nvrhi::ResourceStates::UnorderedAccess);
             },

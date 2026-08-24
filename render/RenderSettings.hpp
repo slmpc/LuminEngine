@@ -52,7 +52,7 @@ namespace lumin::render {
         float ambientOcclusionBias = 0.08f;
         /// Ray Tracing 路径是否启用 SHARC radiance cache。
         bool sharcEnabled = true;
-        /// Ray Tracing 路径是否启用 NRD 间接光去噪。
+        /// Ray Tracing 路径是否启用 NRD 直接光与间接光去噪。
         bool nrdEnabled = true;
     };
 

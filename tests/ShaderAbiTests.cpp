@@ -1,6 +1,7 @@
 #include "render/ModelRenderer.hpp"
 #include "render/features/postfx/PostFxResources.hpp"
 #include "render/gi/raytracing/GiComposite.hpp"
+#include "render/gi/raytracing/RtDiNrdInputs.hpp"
 #include "render/gi/raytracing/SharcIndirectLighting.hpp"
 #include "render/gi/raytracing/SharcRadianceCache.hpp"
 #include "render/gpu/GpuMaterial.hpp"
@@ -38,6 +39,7 @@ namespace {
                   offsetof(ObjectData, materialParameters) == 208 && offsetof(ObjectData, metadata) == 224);
 
     using lumin::render::gi::GiCompositeConstants;
+    using lumin::render::gi::RtDiNrdInputsConstants;
     using lumin::render::gi::SharcGpuConstants;
     using lumin::render::gi::SharcIndirectLightingConstants;
     using lumin::render::gpu::GpuInstanceData;
@@ -61,9 +63,13 @@ namespace {
                   offsetof(SharcIndirectLightingConstants, renderParameters) == 32 &&
                   offsetof(SharcIndirectLightingConstants, traceParameters) == 48 &&
                   offsetof(SharcIndirectLightingConstants, samplingParameters) == 64);
-    static_assert(sizeof(GiCompositeConstants) == 32 && alignof(GiCompositeConstants) == 16 &&
+    static_assert(sizeof(GiCompositeConstants) == 48 && alignof(GiCompositeConstants) == 16 &&
                   offsetof(GiCompositeConstants, cameraPosition) == 0 &&
-                  offsetof(GiCompositeConstants, renderInfo) == 16);
+                  offsetof(GiCompositeConstants, renderInfo) == 16 && offsetof(GiCompositeConstants, options) == 32);
+    static_assert(sizeof(RtDiNrdInputsConstants) == 48 && alignof(RtDiNrdInputsConstants) == 16 &&
+                  offsetof(RtDiNrdInputsConstants, cameraPosition) == 0 &&
+                  offsetof(RtDiNrdInputsConstants, renderParameters) == 16 &&
+                  offsetof(RtDiNrdInputsConstants, renderInfo) == 32);
     static_assert(sizeof(SharcGpuConstants) == 128 && alignof(SharcGpuConstants) == 16 &&
                   offsetof(SharcGpuConstants, cameraPositionSceneScale) == 0 &&
                   offsetof(SharcGpuConstants, previousCameraPositionLogarithmBase) == 16 &&

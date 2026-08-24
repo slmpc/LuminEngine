@@ -32,7 +32,7 @@ namespace lumin::render {
         }
 #endif
 
-#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
+#if LUMIN_LEVEL_RENDERER_HAS_NRD
         constexpr float nrdDenoisingRange = 500000.0f;
 
         std::array<float, 16> matrixElements(const glm::mat4& matrix) {
@@ -267,10 +267,17 @@ namespace lumin::render {
             runtime.directLighting->hasPendingFrame()) {
             throw std::logic_error("Hybrid surface already owns an unfinished render frame.");
         }
+#if LUMIN_LEVEL_RENDERER_HAS_NRD
+        if (runtime.pendingDirectNrdFrame ||
+            (runtime.directNrdInputs != nullptr && runtime.directNrdInputs->hasPendingFrame()) ||
+            (runtime.directNrd != nullptr && runtime.directNrd->hasPendingFrame())) {
+            throw std::logic_error("Hybrid surface already owns an unfinished direct-lighting NRD frame.");
+        }
+#endif
 #if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
-        if (runtime.pendingNrdFrame || (runtime.sharc != nullptr && runtime.sharc->hasPendingFrame()) ||
+        if (runtime.pendingIndirectNrdFrame || (runtime.sharc != nullptr && runtime.sharc->hasPendingFrame()) ||
             (runtime.indirectLighting != nullptr && runtime.indirectLighting->hasPendingFrame()) ||
-            (runtime.nrd != nullptr && runtime.nrd->hasPendingFrame())) {
+            (runtime.indirectNrd != nullptr && runtime.indirectNrd->hasPendingFrame())) {
             throw std::logic_error("Hybrid surface already owns an unfinished indirect-lighting frame.");
         }
 #endif
@@ -424,6 +431,8 @@ namespace lumin::render {
         surfaceData.viewDepth.readyPass = data.surfacePass;
         surfaceData.visibility.readyPass = data.surfacePass;
         surfaceData.directRadiance.readyPass = data.surfacePass;
+        surfaceData.directDiffuseRadianceHitDistance.readyPass = data.surfacePass;
+        surfaceData.directSpecularRadianceHitDistance.readyPass = data.surfacePass;
         context.blackboard().set(std::move(gpuScene));
 #else
         static_cast<void>(context);
@@ -526,9 +535,9 @@ namespace lumin::render {
         HybridPassData& data = context.blackboard().get<HybridPassData>();
         const DirectLightingFeatureSettings& lightingSettings =
             sceneData.settings.get<DirectLightingFeatureSettings>(pipelines::feature_ids::lightingComposite());
-        if (runtime.pendingNrdFrame || (runtime.sharc != nullptr && runtime.sharc->hasPendingFrame()) ||
+        if (runtime.pendingIndirectNrdFrame || (runtime.sharc != nullptr && runtime.sharc->hasPendingFrame()) ||
             (runtime.indirectLighting != nullptr && runtime.indirectLighting->hasPendingFrame()) ||
-            (runtime.nrd != nullptr && runtime.nrd->hasPendingFrame())) {
+            (runtime.indirectNrd != nullptr && runtime.indirectNrd->hasPendingFrame())) {
             throw std::logic_error("Hybrid GI already owns an unfinished indirect-lighting frame.");
         }
         const AtmospherePassData& atmosphereData = context.blackboard().get<AtmospherePassData>();
@@ -604,8 +613,8 @@ namespace lumin::render {
                                                     static_cast<float>(context.identity().extent.height)};
         const glm::vec2 effectiveJitterDelta = currentEffectiveJitter - previousEffectiveJitter;
         if (runtime.sharcEnabled) {
-            if (runtime.sharc == nullptr || runtime.indirectLighting == nullptr || runtime.nrd == nullptr ||
-                runtime.composite == nullptr) {
+            if (runtime.sharc == nullptr || runtime.indirectLighting == nullptr || runtime.indirectNrd == nullptr ||
+                runtime.indirectComposite == nullptr) {
                 throw std::logic_error("Enabled SHARC indirect lighting requires its complete runtime.");
             }
             data.sharcRecord = runtime.sharc->record(
@@ -657,10 +666,8 @@ namespace lumin::render {
             static_cast<void>(runtime.sharc->recordStatisticsReadback(context.frameGraph(), *data.sharcRecord,
                                                                       data.indirectOutput->tracePass));
             data.globalIlluminationActive = true;
-        } else if (runtime.indirectLighting != nullptr) {
-            data.indirectOutput = runtime.indirectLighting->recordClear(context.frameGraph(), frameIndex, true);
         }
-        if (runtime.indirectLighting == nullptr || !data.indirectOutput) {
+        if (!data.globalIlluminationActive || runtime.indirectLighting == nullptr || !data.indirectOutput) {
             return;
         }
         const gi::SharcIndirectLightingFrameResources& output = runtime.indirectLighting->resources(frameIndex);
@@ -683,17 +690,28 @@ namespace lumin::render {
     }
 
     void pipelines::DefaultRenderPipelineSession::discardGiDenoiserFeature() noexcept {
-#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
+#if LUMIN_LEVEL_RENDERER_HAS_NRD
         if (hybridGi_ == nullptr) {
             return;
         }
         HybridGiState& runtime = *hybridGi_;
-        if (runtime.pendingNrdFrame) {
-            runtime.nrd->discardFrame(*runtime.pendingNrdFrame);
-        } else if (runtime.nrd != nullptr) {
-            runtime.nrd->discardPendingFrame();
+        if (runtime.pendingDirectNrdFrame) {
+            runtime.directNrd->discardFrame(*runtime.pendingDirectNrdFrame);
+        } else if (runtime.directNrd != nullptr) {
+            runtime.directNrd->discardPendingFrame();
         }
-        runtime.pendingNrdFrame.reset();
+        runtime.pendingDirectNrdFrame.reset();
+        if (runtime.directNrdInputs != nullptr) {
+            runtime.directNrdInputs->discardPendingFrame();
+        }
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
+        if (runtime.pendingIndirectNrdFrame) {
+            runtime.indirectNrd->discardFrame(*runtime.pendingIndirectNrdFrame);
+        } else if (runtime.indirectNrd != nullptr) {
+            runtime.indirectNrd->discardPendingFrame();
+        }
+        runtime.pendingIndirectNrdFrame.reset();
+#endif
 #endif
     }
 
@@ -707,15 +725,29 @@ namespace lumin::render {
         if (*runtime.pendingSequence != identity.sequence) {
             std::terminate();
         }
-#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
-        if (runtime.pendingNrdFrame) {
-            if (runtime.pendingNrdFrame->sequence() != identity.sequence ||
-                runtime.pendingNrdFrame->frameSlot() != identity.frameSlot) {
+#if LUMIN_LEVEL_RENDERER_HAS_NRD
+        if (runtime.pendingDirectNrdFrame) {
+            if (runtime.pendingDirectNrdFrame->sequence() != identity.sequence ||
+                runtime.pendingDirectNrdFrame->frameSlot() != identity.frameSlot ||
+                runtime.directNrdInputs == nullptr || !runtime.directNrdInputs->hasPendingFrame()) {
                 std::terminate();
             }
-            runtime.nrd->commitSubmittedFrame(*runtime.pendingNrdFrame);
-            runtime.pendingNrdFrame.reset();
+            runtime.directNrd->commitSubmittedFrame(*runtime.pendingDirectNrdFrame);
+            runtime.directNrdInputs->commitSubmittedFrame();
+            runtime.pendingDirectNrdFrame.reset();
+        } else if (runtime.directNrdInputs != nullptr && runtime.directNrdInputs->hasPendingFrame()) {
+            std::terminate();
         }
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
+        if (runtime.pendingIndirectNrdFrame) {
+            if (runtime.pendingIndirectNrdFrame->sequence() != identity.sequence ||
+                runtime.pendingIndirectNrdFrame->frameSlot() != identity.frameSlot) {
+                std::terminate();
+            }
+            runtime.indirectNrd->commitSubmittedFrame(*runtime.pendingIndirectNrdFrame);
+            runtime.pendingIndirectNrdFrame.reset();
+        }
+#endif
 #endif
         runtime.pendingSequence.reset();
 #else
@@ -728,137 +760,254 @@ namespace lumin::render {
         if (!data.active) {
             return;
         }
-#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
-        const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
         const core::RtSurfaceData& surface = context.blackboard().get<core::RtSurfaceData>();
         core::DenoisedLightingData& denoised = context.blackboard().get<core::DenoisedLightingData>();
+#if LUMIN_LEVEL_RENDERER_HAS_NRD
+        const core::FrameSceneData& sceneData = context.blackboard().get<core::FrameSceneData>();
+        const core::TextureFrameData directCompositeOutput = denoised.direct;
+#endif
+        denoised.direct = surface.directRadiance;
+#if LUMIN_LEVEL_RENDERER_HAS_NRD
         const GlobalIlluminationSettings& settings =
             sceneData.settings.get<GlobalIlluminationSettings>(pipelines::feature_ids::globalIllumination());
         const std::uint32_t frameIndex = context.identity().frameSlot.value();
-        if (!data.globalIlluminationActive) {
-            return;
-        }
         HybridGiState& runtime = *hybridGi_;
         if (!runtime.pendingSequence || *runtime.pendingSequence != context.identity().sequence ||
-            !runtime.pendingSceneUpdate || !data.indirectOutput || runtime.pendingNrdFrame) {
-            throw std::logic_error("NRD requires the current frame's SHARC indirect transaction.");
+            !runtime.pendingSceneUpdate || runtime.pendingDirectNrdFrame ||
+            (runtime.directNrdInputs != nullptr && runtime.directNrdInputs->hasPendingFrame()) ||
+            (runtime.directNrd != nullptr && runtime.directNrd->hasPendingFrame())) {
+            throw std::logic_error("Direct NRD requires the current frame's RTDI transaction.");
         }
 
-        const gi::SharcIndirectLightingFrameResources& signals = runtime.indirectLighting->resources(frameIndex);
-        const gi::SharcIndirectLightingGraphOutput& graphSignals = *data.indirectOutput;
-        nvrhi::TextureHandle diffuseInput = signals.diffuseRadianceHitDistance;
-        nvrhi::TextureHandle specularInput = signals.specularRadianceHitDistance;
-        FrameGraphResourceHandle diffuseGraphInput = graphSignals.diffuseRadianceHitDistance;
-        FrameGraphResourceHandle specularGraphInput = graphSignals.specularRadianceHitDistance;
-        FrameGraphPassHandle signalReadyPass = graphSignals.tracePass;
+        const core::HistoryAction diffuseAction = context.historyAction(core::HistoryDomain::NrdDiffuse);
+        const core::HistoryAction specularAction = context.historyAction(core::HistoryDomain::NrdSpecular);
+        const bool resetCameraHistory = !hasSubmittedFrame_ || diffuseAction == core::HistoryAction::FullReset ||
+                                        specularAction == core::HistoryAction::FullReset;
+        const glm::mat4& previousView = resetCameraHistory ? sceneData.camera.view : previousView_;
+        const glm::mat4& previousProjection =
+            resetCameraHistory ? sceneData.camera.projection : previousProjection_;
+        const glm::vec2 previousJitter = resetCameraHistory ? sceneData.camera.jitter : previousJitter_;
+        gi::NrdCameraData cameraData;
+        cameraData.viewToClip = matrixElements(sceneData.camera.projection);
+        cameraData.viewToClipPrevious = matrixElements(previousProjection);
+        cameraData.worldToView = matrixElements(sceneData.camera.view);
+        cameraData.worldToViewPrevious = matrixElements(previousView);
+        cameraData.jitter = {sceneData.camera.jitter.x, sceneData.camera.jitter.y};
+        cameraData.jitterPrevious = {previousJitter.x, previousJitter.y};
+        const gi::NrdFrameParameters nrdParameters{
+            .frameSlot = context.identity().frameSlot,
+            .sequence = context.identity().sequence,
+            .extent = context.identity().extent,
+            .camera = cameraData,
+            .diffuseHistory = diffuseAction,
+            .specularHistory = specularAction,
+            .cameraCut = context.changes().containsAny(core::HistoryReason::CameraCut),
+            .renderResourcesRecreated = context.changes().containsAny(core::HistoryReason::RenderExtentChanged |
+                                                                      core::HistoryReason::SwapchainRecreated |
+                                                                      core::HistoryReason::DeviceRecovered),
+            .frameSlotFenceWaited = true,
+            .timeDeltaMilliseconds = 0.0f,
+            .denoisingRange = nrdDenoisingRange,
+        };
 
         if (settings.nrdEnabled) {
-            const core::HistoryAction diffuseAction = context.historyAction(core::HistoryDomain::NrdDiffuse);
-            const core::HistoryAction specularAction = context.historyAction(core::HistoryDomain::NrdSpecular);
-            const bool resetCameraHistory = !hasSubmittedFrame_ || diffuseAction == core::HistoryAction::FullReset ||
-                                            specularAction == core::HistoryAction::FullReset;
-            const glm::mat4& previousView = resetCameraHistory ? sceneData.camera.view : previousView_;
-            const glm::mat4& previousProjection =
-                resetCameraHistory ? sceneData.camera.projection : previousProjection_;
-            const glm::vec2 previousJitter = resetCameraHistory ? sceneData.camera.jitter : previousJitter_;
-
-            gi::NrdCameraData cameraData;
-            cameraData.viewToClip = matrixElements(sceneData.camera.projection);
-            cameraData.viewToClipPrevious = matrixElements(previousProjection);
-            cameraData.worldToView = matrixElements(sceneData.camera.view);
-            cameraData.worldToViewPrevious = matrixElements(previousView);
-            cameraData.jitter = {sceneData.camera.jitter.x, sceneData.camera.jitter.y};
-            cameraData.jitterPrevious = {previousJitter.x, previousJitter.y};
-
-            runtime.pendingNrdFrame = runtime.nrd->record(
-                context.frameGraph(),
-                gi::NrdFrameParameters{
-                    .frameSlot = context.identity().frameSlot,
-                    .sequence = context.identity().sequence,
-                    .extent = context.identity().extent,
-                    .camera = cameraData,
-                    .diffuseHistory = diffuseAction,
-                    .specularHistory = specularAction,
-                    .cameraCut = context.changes().containsAny(core::HistoryReason::CameraCut),
-                    .renderResourcesRecreated = context.changes().containsAny(core::HistoryReason::RenderExtentChanged |
-                                                                              core::HistoryReason::SwapchainRecreated |
-                                                                              core::HistoryReason::DeviceRecovered),
-                    .frameSlotFenceWaited = true,
-                    .timeDeltaMilliseconds = 0.0f,
-                    .denoisingRange = nrdDenoisingRange,
-                },
-                gi::NrdSignalBindings{
-                    .diffuseRadianceHitDistance = gi::NrdTextureBinding{signals.diffuseRadianceHitDistance.Get(),
-                                                                        graphSignals.diffuseRadianceHitDistance},
-                    .specularRadianceHitDistance = gi::NrdTextureBinding{signals.specularRadianceHitDistance.Get(),
-                                                                         graphSignals.specularRadianceHitDistance},
-                    .viewZ = gi::NrdTextureBinding{signals.viewZ.Get(), graphSignals.viewZ},
-                    .normalRoughness =
-                        gi::NrdTextureBinding{signals.normalRoughness.Get(), graphSignals.normalRoughness},
-                    .motion = gi::NrdTextureBinding{signals.motion.Get(), graphSignals.motion},
-                });
-
-            const std::span<const FrameGraphPassHandle> nrdPasses = runtime.pendingNrdFrame->passes();
-            if (nrdPasses.empty()) {
-                throw std::logic_error("NRD did not register any denoising dispatches.");
+            if (runtime.directNrdInputs == nullptr || runtime.directNrd == nullptr ||
+                runtime.directComposite == nullptr || !directCompositeOutput.isValid()) {
+                throw std::logic_error("Enabled direct NRD requires its complete runtime and output.");
             }
-            const gi::NrdOutputResources& nrdOutputs = runtime.nrd->outputs();
-            const gi::NrdGraphOutputs& nrdGraphOutputs = runtime.pendingNrdFrame->outputs();
-            diffuseInput = nrdOutputs.diffuseRadianceHitDistance;
-            specularInput = nrdOutputs.specularRadianceHitDistance;
-            diffuseGraphInput = nrdGraphOutputs.diffuseRadianceHitDistance;
-            specularGraphInput = nrdGraphOutputs.specularRadianceHitDistance;
-            signalReadyPass = nrdPasses.back();
+            const glm::vec2 currentJitterUv{
+                -sceneData.camera.jitter.x / static_cast<float>(context.identity().extent.width),
+                sceneData.camera.jitter.y / static_cast<float>(context.identity().extent.height)};
+            const glm::vec2 previousJitterUv{
+                -previousJitter.x / static_cast<float>(context.identity().extent.width),
+                previousJitter.y / static_cast<float>(context.identity().extent.height)};
+            const gi::RtDiNrdGraphOutput prepared = runtime.directNrdInputs->record(
+                context.frameGraph(),
+                gi::RtDiNrdFrameParameters{
+                    .frameSlot = context.identity().frameSlot,
+                    .extent = context.identity().extent,
+                    .cameraPosition = glm::vec3{sceneData.camera.position},
+                    .jitterDeltaUv = currentJitterUv - previousJitterUv,
+                    .denoisingRange = nrdDenoisingRange,
+                    .frameSlotFenceWaited = true,
+                },
+                gi::RtDiNrdInputResources{
+                    .diffuseRadianceHitT = surface.directDiffuseRadianceHitDistance.texture,
+                    .specularRadianceHitT = surface.directSpecularRadianceHitDistance.texture,
+                    .position = surface.worldPositionHitDistance.texture,
+                    .normalRoughness = surface.normalRoughness.texture,
+                    .albedoMetallic = surface.albedoMetallic.texture,
+                    .materialId = surface.materialId.texture,
+                    .viewZ = surface.viewDepth.texture,
+                    .motion = surface.motion.texture,
+                    .materials = data.sceneDescriptors.materials,
+                },
+                gi::RtDiNrdInputGraphResources{
+                    .diffuseRadianceHitT = surface.directDiffuseRadianceHitDistance.graphResource,
+                    .specularRadianceHitT = surface.directSpecularRadianceHitDistance.graphResource,
+                    .position = surface.worldPositionHitDistance.graphResource,
+                    .normalRoughness = surface.normalRoughness.graphResource,
+                    .albedoMetallic = surface.albedoMetallic.graphResource,
+                    .materialId = surface.materialId.graphResource,
+                    .viewZ = surface.viewDepth.graphResource,
+                    .motion = surface.motion.graphResource,
+                    .materials = data.materials,
+                    .readyPass = data.surfacePass,
+                });
+            const gi::RtDiNrdSignalResources& preparedSignals = runtime.directNrdInputs->resources(frameIndex);
+            runtime.pendingDirectNrdFrame = runtime.directNrd->record(
+                context.frameGraph(), nrdParameters,
+                gi::NrdSignalBindings{
+                    .diffuseRadianceHitDistance =
+                        gi::NrdTextureBinding{preparedSignals.diffuseRadianceHitDistance.Get(),
+                                              prepared.diffuseRadianceHitDistance},
+                    .specularRadianceHitDistance =
+                        gi::NrdTextureBinding{preparedSignals.specularRadianceHitDistance.Get(),
+                                              prepared.specularRadianceHitDistance},
+                    .viewZ = gi::NrdTextureBinding{preparedSignals.viewZ.Get(), prepared.viewZ},
+                    .normalRoughness =
+                        gi::NrdTextureBinding{preparedSignals.normalRoughness.Get(), prepared.normalRoughness},
+                    .motion = gi::NrdTextureBinding{preparedSignals.motion.Get(), prepared.motion},
+                });
+            const std::span<const FrameGraphPassHandle> directNrdPasses = runtime.pendingDirectNrdFrame->passes();
+            if (directNrdPasses.empty()) {
+                throw std::logic_error("Direct NRD did not register any denoising dispatches.");
+            }
+            const gi::NrdOutputResources& directNrdOutputs = runtime.directNrd->outputs();
+            const gi::NrdGraphOutputs& directNrdGraphOutputs = runtime.pendingDirectNrdFrame->outputs();
+            denoised.direct = directCompositeOutput;
+            denoised.direct.readyPass = runtime.directComposite->record(
+                context.frameGraph(),
+                gi::GiCompositeFrameParameters{
+                    .frameSlot = context.identity().frameSlot,
+                    .extent = context.identity().extent,
+                    .cameraPosition = glm::vec3{sceneData.camera.position},
+                    .mode = gi::GiCompositeMode::Direct,
+                    .frameSlotFenceWaited = true,
+                },
+                gi::GiCompositeResources{
+                    .diffuseRadianceHitDistance = directNrdOutputs.diffuseRadianceHitDistance,
+                    .specularRadianceHitDistance = directNrdOutputs.specularRadianceHitDistance,
+                    .position = surface.worldPositionHitDistance.texture,
+                    .normalRoughness = surface.normalRoughness.texture,
+                    .albedoMetallic = surface.albedoMetallic.texture,
+                    .materialId = surface.materialId.texture,
+                    .materials = data.sceneDescriptors.materials,
+                    .fallbackRadiance = surface.directRadiance.texture,
+                    .output = denoised.direct.texture,
+                },
+                gi::GiCompositeGraphResources{
+                    .diffuseRadianceHitDistance = directNrdGraphOutputs.diffuseRadianceHitDistance,
+                    .specularRadianceHitDistance = directNrdGraphOutputs.specularRadianceHitDistance,
+                    .position = surface.worldPositionHitDistance.graphResource,
+                    .normalRoughness = surface.normalRoughness.graphResource,
+                    .albedoMetallic = surface.albedoMetallic.graphResource,
+                    .materialId = surface.materialId.graphResource,
+                    .materials = data.materials,
+                    .fallbackRadiance = surface.directRadiance.graphResource,
+                    .output = denoised.direct.graphResource,
+                },
+                directNrdPasses.back());
         }
 
-        denoised.diffuse = core::TextureFrameData{.texture = diffuseInput,
-                                                  .graphResource = diffuseGraphInput,
-                                                  .readyPass = signalReadyPass,
-                                                  .format = diffuseInput->getDesc().format,
-                                                  .extent = context.identity().extent};
-        denoised.specular = core::TextureFrameData{.texture = specularInput,
-                                                   .graphResource = specularGraphInput,
-                                                   .readyPass = signalReadyPass,
-                                                   .format = specularInput->getDesc().format,
-                                                   .extent = context.identity().extent};
-        denoised.combined.readyPass =
-            runtime.composite->record(context.frameGraph(),
-                                      gi::GiCompositeFrameParameters{
-                                          .frameSlot = context.identity().frameSlot,
-                                          .extent = context.identity().extent,
-                                          .cameraPosition = glm::vec3{sceneData.camera.position},
-                                          .frameSlotFenceWaited = true,
-                                      },
-                                      gi::GiCompositeResources{
-                                          .diffuseRadianceHitDistance = diffuseInput,
-                                          .specularRadianceHitDistance = specularInput,
-                                          .position = surface.worldPositionHitDistance.texture,
-                                          .normalRoughness = surface.normalRoughness.texture,
-                                          .albedoMetallic = surface.albedoMetallic.texture,
-                                          .materialId = surface.materialId.texture,
-                                          .materials = data.sceneDescriptors.materials,
-                                          .globalIllumination = denoised.combined.texture,
-                                      },
-                                      gi::GiCompositeGraphResources{
-                                          .diffuseRadianceHitDistance = diffuseGraphInput,
-                                          .specularRadianceHitDistance = specularGraphInput,
-                                          .position = surface.worldPositionHitDistance.graphResource,
-                                          .normalRoughness = surface.normalRoughness.graphResource,
-                                          .albedoMetallic = surface.albedoMetallic.graphResource,
-                                          .materialId = surface.materialId.graphResource,
-                                          .materials = data.materials,
-                                          .globalIllumination = denoised.combined.graphResource,
-                                      },
-                                      signalReadyPass);
-#else
-        static_cast<void>(context);
+#if LUMIN_LEVEL_RENDERER_HAS_SHARC_INDIRECT
+        if (data.globalIlluminationActive) {
+            if (!data.indirectOutput || runtime.indirectLighting == nullptr || runtime.indirectComposite == nullptr ||
+                runtime.pendingIndirectNrdFrame ||
+                (runtime.indirectNrd != nullptr && runtime.indirectNrd->hasPendingFrame())) {
+                throw std::logic_error("Indirect denoising requires the current SHARC transaction.");
+            }
+            const gi::SharcIndirectLightingFrameResources& signals = runtime.indirectLighting->resources(frameIndex);
+            const gi::SharcIndirectLightingGraphOutput& graphSignals = *data.indirectOutput;
+            nvrhi::TextureHandle diffuseInput = signals.diffuseRadianceHitDistance;
+            nvrhi::TextureHandle specularInput = signals.specularRadianceHitDistance;
+            FrameGraphResourceHandle diffuseGraphInput = graphSignals.diffuseRadianceHitDistance;
+            FrameGraphResourceHandle specularGraphInput = graphSignals.specularRadianceHitDistance;
+            FrameGraphPassHandle signalReadyPass = graphSignals.tracePass;
+
+            if (settings.nrdEnabled) {
+                if (runtime.indirectNrd == nullptr) {
+                    throw std::logic_error("Enabled indirect NRD requires its denoiser runtime.");
+                }
+                runtime.pendingIndirectNrdFrame = runtime.indirectNrd->record(
+                    context.frameGraph(), nrdParameters,
+                    gi::NrdSignalBindings{
+                        .diffuseRadianceHitDistance =
+                            gi::NrdTextureBinding{signals.diffuseRadianceHitDistance.Get(),
+                                                  graphSignals.diffuseRadianceHitDistance},
+                        .specularRadianceHitDistance =
+                            gi::NrdTextureBinding{signals.specularRadianceHitDistance.Get(),
+                                                  graphSignals.specularRadianceHitDistance},
+                        .viewZ = gi::NrdTextureBinding{signals.viewZ.Get(), graphSignals.viewZ},
+                        .normalRoughness =
+                            gi::NrdTextureBinding{signals.normalRoughness.Get(), graphSignals.normalRoughness},
+                        .motion = gi::NrdTextureBinding{signals.motion.Get(), graphSignals.motion},
+                    });
+                const std::span<const FrameGraphPassHandle> indirectNrdPasses =
+                    runtime.pendingIndirectNrdFrame->passes();
+                if (indirectNrdPasses.empty()) {
+                    throw std::logic_error("Indirect NRD did not register any denoising dispatches.");
+                }
+                const gi::NrdOutputResources& outputs = runtime.indirectNrd->outputs();
+                const gi::NrdGraphOutputs& graphOutputs = runtime.pendingIndirectNrdFrame->outputs();
+                diffuseInput = outputs.diffuseRadianceHitDistance;
+                specularInput = outputs.specularRadianceHitDistance;
+                diffuseGraphInput = graphOutputs.diffuseRadianceHitDistance;
+                specularGraphInput = graphOutputs.specularRadianceHitDistance;
+                signalReadyPass = indirectNrdPasses.back();
+            }
+
+            denoised.diffuse = core::TextureFrameData{.texture = diffuseInput,
+                                                      .graphResource = diffuseGraphInput,
+                                                      .readyPass = signalReadyPass,
+                                                      .format = diffuseInput->getDesc().format,
+                                                      .extent = context.identity().extent};
+            denoised.specular = core::TextureFrameData{.texture = specularInput,
+                                                       .graphResource = specularGraphInput,
+                                                       .readyPass = signalReadyPass,
+                                                       .format = specularInput->getDesc().format,
+                                                       .extent = context.identity().extent};
+            denoised.combined.readyPass = runtime.indirectComposite->record(
+                context.frameGraph(),
+                gi::GiCompositeFrameParameters{
+                    .frameSlot = context.identity().frameSlot,
+                    .extent = context.identity().extent,
+                    .cameraPosition = glm::vec3{sceneData.camera.position},
+                    .mode = gi::GiCompositeMode::Indirect,
+                    .frameSlotFenceWaited = true,
+                },
+                gi::GiCompositeResources{
+                    .diffuseRadianceHitDistance = diffuseInput,
+                    .specularRadianceHitDistance = specularInput,
+                    .position = surface.worldPositionHitDistance.texture,
+                    .normalRoughness = surface.normalRoughness.texture,
+                    .albedoMetallic = surface.albedoMetallic.texture,
+                    .materialId = surface.materialId.texture,
+                    .materials = data.sceneDescriptors.materials,
+                    .fallbackRadiance = surface.directRadiance.texture,
+                    .output = denoised.combined.texture,
+                },
+                gi::GiCompositeGraphResources{
+                    .diffuseRadianceHitDistance = diffuseGraphInput,
+                    .specularRadianceHitDistance = specularGraphInput,
+                    .position = surface.worldPositionHitDistance.graphResource,
+                    .normalRoughness = surface.normalRoughness.graphResource,
+                    .albedoMetallic = surface.albedoMetallic.graphResource,
+                    .materialId = surface.materialId.graphResource,
+                    .materials = data.materials,
+                    .fallbackRadiance = surface.directRadiance.graphResource,
+                    .output = denoised.combined.graphResource,
+                },
+                signalReadyPass);
+        }
+#endif
 #endif
     }
 
     void
     pipelines::DefaultRenderPipelineSession::addSkyCompositeFeaturePasses(core::RenderFeatureFrameContext& context) {
         core::SceneHdrData& sceneHdr = context.blackboard().get<core::SceneHdrData>();
-        const core::DenoisedLightingData& indirect = context.blackboard().get<core::DenoisedLightingData>();
+        const core::DenoisedLightingData& lighting = context.blackboard().get<core::DenoisedLightingData>();
         const std::uint32_t frameIndex = context.identity().frameSlot.value();
 #if LUMIN_LEVEL_RENDERER_HAS_HYBRID_GI
         HybridPassData& hybridData = context.blackboard().get<HybridPassData>();
@@ -866,14 +1015,13 @@ namespace lumin::render {
         if (hybridData.active) {
             if (hybridGi_ == nullptr || hybridGi_->lightingComposite == nullptr ||
                 hybridGi_->directLighting == nullptr || !hybridData.surface.directRadiance.isValid() ||
-                !hybridData.surfacePass.isValid()) {
+                !hybridData.surfacePass.isValid() || !lighting.direct.isValid()) {
                 throw std::logic_error("Hybrid composite requires the current RTDI surface output.");
             }
-            if (hybridData.globalIlluminationActive && !indirect.combined.isValid()) {
+            if (hybridData.globalIlluminationActive && !lighting.combined.isValid()) {
                 throw std::logic_error("Hybrid indirect composite requires the current NRD output.");
             }
 
-            const gi::RayTracedDiFrameResources& surface = hybridGi_->directLighting->signals(frameIndex);
             sceneHdr.color.readyPass = hybridGi_->lightingComposite->record(
                 context.frameGraph(),
                 gi::HybridLightingCompositeFrameParameters{
@@ -884,16 +1032,16 @@ namespace lumin::render {
                     .frameSlotFenceWaited = true,
                 },
                 gi::HybridLightingCompositeResources{
-                    .directRadiance = surface.directRadiance,
-                    .indirectRadiance = indirect.combined.texture,
+                    .directRadiance = lighting.direct.texture,
+                    .indirectRadiance = lighting.combined.texture,
                     .output = sceneHdr.color.texture,
                 },
                 gi::HybridLightingCompositeGraphResources{
-                    .directRadiance = hybridData.surface.directRadiance,
-                    .indirectRadiance = indirect.combined.graphResource,
+                    .directRadiance = lighting.direct.graphResource,
+                    .indirectRadiance = lighting.combined.graphResource,
                     .output = sceneHdr.color.graphResource,
                 },
-                hybridData.globalIlluminationActive ? indirect.combined.readyPass : hybridData.surfacePass);
+                hybridData.globalIlluminationActive ? lighting.combined.readyPass : lighting.direct.readyPass);
             return;
         }
 #endif
@@ -915,8 +1063,8 @@ namespace lumin::render {
             });
         graph.addPass(
             "Procedural sky", FrameGraphPassType::Graphics,
-            [&sceneHdr, &indirect, &atmosphereData](FrameGraphBuilder& builder) {
-                builder.readTexture(indirect.combined.graphResource, nvrhi::ResourceStates::ShaderResource);
+            [&sceneHdr, &lighting, &atmosphereData](FrameGraphBuilder& builder) {
+                builder.readTexture(lighting.combined.graphResource, nvrhi::ResourceStates::ShaderResource);
                 for (const FrameGraphResourceHandle lut : atmosphereData.graphRecord->resources.textures) {
                     builder.readTexture(lut, nvrhi::ResourceStates::ShaderResource);
                 }
