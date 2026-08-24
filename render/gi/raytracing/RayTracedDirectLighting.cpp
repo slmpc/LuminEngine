@@ -33,6 +33,7 @@ namespace lumin::render::gi {
         constexpr std::uint32_t baseColorTexturesBinding = 14;
         constexpr std::uint32_t normalRoughnessTexturesBinding = 15;
         constexpr std::uint32_t materialSamplerBinding = 16;
+        constexpr std::uint32_t lightsBinding = 17;
 
         [[nodiscard]] nvrhi::BufferHandle createConstantBuffer(nvrhi::IDevice& device) {
             nvrhi::BufferDesc desc;
@@ -130,17 +131,19 @@ namespace lumin::render::gi {
                              .setSize(maxMaterialTextureDescriptors))
                 .addItem(nvrhi::BindingLayoutItem::Texture_SRV(normalRoughnessTexturesBinding)
                              .setSize(maxMaterialTextureDescriptors))
-                .addItem(nvrhi::BindingLayoutItem::Sampler(materialSamplerBinding));
+                .addItem(nvrhi::BindingLayoutItem::Sampler(materialSamplerBinding))
+                .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(lightsBinding));
             return desc;
         }
 
         nvrhi::BindingSetDesc makeRayTracedDiBindingSetDesc(const RayTracedDiFrameResources& outputs,
-                                                            const RayTracedGiSceneBindings& scene,
+                                                            const RayTracingSceneBindings& scene,
                                                             std::uint32_t maxGeometryDescriptors,
                                                             std::uint32_t maxMaterialTextureDescriptors,
                                                             nvrhi::BufferHandle constants) {
             if (!complete(outputs) || !scene.descriptors.rayTracingEnabled || !scene.descriptors.tlas ||
-                !scene.descriptors.instances || !scene.descriptors.materials || scene.geometry.empty() ||
+                !scene.descriptors.instances || !scene.descriptors.materials || !scene.descriptors.lights ||
+                scene.descriptors.lightCount == 0 || scene.geometry.empty() ||
                 scene.geometry.size() > maxGeometryDescriptors || scene.baseColorTextures.empty() ||
                 scene.baseColorTextures.size() != scene.normalRoughnessTextures.size() ||
                 scene.baseColorTextures.size() > maxMaterialTextureDescriptors || !scene.materialSampler ||
@@ -153,6 +156,7 @@ namespace lumin::render::gi {
             desc.addItem(nvrhi::BindingSetItem::RayTracingAccelStruct(tlasBinding, scene.descriptors.tlas))
                 .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(instancesBinding, scene.descriptors.instances))
                 .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(materialsBinding, scene.descriptors.materials))
+                .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(lightsBinding, scene.descriptors.lights))
                 .addItem(nvrhi::BindingSetItem::Texture_UAV(worldPositionOutputBinding, outputs.worldPositionHitT))
                 .addItem(nvrhi::BindingSetItem::Texture_UAV(normalRoughnessOutputBinding, outputs.normalRoughness))
                 .addItem(nvrhi::BindingSetItem::Texture_UAV(albedoMetallicOutputBinding, outputs.albedoMetallic))
@@ -282,8 +286,8 @@ namespace lumin::render::gi {
     FrameGraphPassHandle
     RayTracedDirectLightingPass::record(FrameGraph& frameGraph, std::uint32_t frameIndex, bool frameSlotFenceWaited,
                                         const RayTracedDiConstants& constants, const RayTracedDiGraphResources& outputs,
-                                        const RayTracedGiSceneBindings& scene,
-                                        const RayTracedGiSceneGraphResources& sceneResources,
+                                        const RayTracingSceneBindings& scene,
+                                        const RayTracingSceneGraphResources& sceneResources,
                                         const RayTracingEnvironmentBindings& environment,
                                         const RayTracingEnvironmentGraphResources& environmentResources) {
         if (!frameSlotFenceWaited) {
@@ -294,7 +298,7 @@ namespace lumin::render::gi {
         }
         if (frameIndex >= impl_->frames.size() || !outputs.isValid() || !sceneResources.tlas.isValid() ||
             !sceneResources.instances.isValid() || !sceneResources.materials.isValid() ||
-            sceneResources.vertices.size() != scene.geometry.size() ||
+            !sceneResources.lights.isValid() || sceneResources.vertices.size() != scene.geometry.size() ||
             sceneResources.indices.size() != scene.geometry.size() ||
             sceneResources.baseColorTextures.size() != scene.baseColorTextures.size() ||
             sceneResources.normalRoughnessTextures.size() != scene.normalRoughnessTextures.size() ||
@@ -333,6 +337,7 @@ namespace lumin::render::gi {
                 builder.readAccelerationStructure(sceneResources.tlas);
                 builder.read(sceneResources.instances, nvrhi::ResourceStates::ShaderResource);
                 builder.read(sceneResources.materials, nvrhi::ResourceStates::ShaderResource);
+                builder.read(sceneResources.lights, nvrhi::ResourceStates::ShaderResource);
                 for (const FrameGraphResourceHandle resource : vertexResources) {
                     builder.read(resource, nvrhi::ResourceStates::ShaderResource);
                 }

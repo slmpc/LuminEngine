@@ -148,14 +148,7 @@ namespace lumin::render::gi {
 
     } // namespace detail
 
-    /**
-     * 将 NRD 去噪后的完整出射辐亮度写入引擎现有 packed GI 纹理。
-     *
-     * 有效几何使用与 RTGI 相同的 NRD 因子恢复主表面材质，不注入非物理环境光。
-     * 背景或无效材质写入 neutral output `{0, 0, 0, 1}`。
-     * 本 pass 不拥有时序历史，也不导入调用方资源。
-     * 调用方必须同时传入物理 NvRHI 对象及其已有 FrameGraph 身份。
-     */
+    /** 将降噪后的出射辐亮度写入间接光纹理；资源由调用方拥有并完成帧图导入。 */
     class GiCompositePass final {
     public:
         explicit GiCompositePass(const GiCompositeCreateInfo& createInfo);

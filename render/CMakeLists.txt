@@ -101,14 +101,16 @@ set(_lumin_gi_sources gi/legacy/LegacyBackend.cpp)
 if(LUMIN_NRD_AVAILABLE)
     list(APPEND _lumin_gi_sources
         gi/raytracing/GiComposite.cpp
-        gi/raytracing/HybridLightingComposite.cpp
         gi/raytracing/NrdDenoiser.cpp
-        gi/raytracing/RayTracedDirectLighting.cpp
-        gi/raytracing/RayTracedGi.cpp
     )
 endif()
 if(LUMIN_SHARC_AVAILABLE)
-    list(APPEND _lumin_gi_sources gi/raytracing/SharcRadianceCache.cpp)
+    list(APPEND _lumin_gi_sources
+        gi/raytracing/HybridLightingComposite.cpp
+        gi/raytracing/RayTracedDirectLighting.cpp
+        gi/raytracing/SharcIndirectLighting.cpp
+        gi/raytracing/SharcRadianceCache.cpp
+    )
 endif()
 add_library(lumin_render_gi STATIC ${_lumin_gi_sources})
 add_library(Lumin::GiFeatures ALIAS lumin_render_gi)

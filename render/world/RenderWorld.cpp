@@ -19,6 +19,10 @@ namespace lumin::render::world {
             return left.index < right.index || (left.index == right.index && left.generation < right.generation);
         }
 
+        [[nodiscard]] bool handleLess(scene::ActorHandle left, scene::ActorHandle right) noexcept {
+            return left.index < right.index || (left.index == right.index && left.generation < right.generation);
+        }
+
         [[nodiscard]] bool sameFloat(float left, float right) noexcept {
             return std::bit_cast<std::uint32_t>(left) == std::bit_cast<std::uint32_t>(right);
         }
@@ -78,6 +82,23 @@ namespace lumin::render::world {
                                                 const scene::DirectionalLight& right) noexcept {
             return sameVec3(left.direction, right.direction) && sameVec3(left.color, right.color) &&
                    sameFloat(left.illuminanceLux, right.illuminanceLux) && left.castsShadows == right.castsShadows;
+        }
+
+        [[nodiscard]] bool sameLocalLights(const RenderWorldSnapshot& left, const RenderWorldSnapshot& right) noexcept {
+            const auto& leftLights = left.localLights();
+            const auto& rightLights = right.localLights();
+            if (leftLights.size() != rightLights.size()) {
+                return false;
+            }
+            for (std::size_t index = 0; index < leftLights.size(); ++index) {
+                if (leftLights[index].actorHandle != rightLights[index].actorHandle ||
+                    !sameVec3(leftLights[index].position, rightLights[index].position) ||
+                    !sameVec3(leftLights[index].direction, rightLights[index].direction) ||
+                    leftLights[index].light != rightLights[index].light) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         [[nodiscard]] bool sameAtmosphere(const scene::AtmosphereParameters& left,
@@ -177,7 +198,8 @@ namespace lumin::render::world {
                 changes |= SceneChangeMask::InstanceTopology;
             }
             changes |= sharedInstanceDataChanges(previous, current);
-            if (!sameDirectionalLight(previous.environment().sun, current.environment().sun)) {
+            if (!sameDirectionalLight(previous.environment().sun, current.environment().sun) ||
+                !sameLocalLights(previous, current)) {
                 changes |= SceneChangeMask::Lighting;
             }
             if (!sameAtmosphere(previous.environment().atmosphere, current.environment().atmosphere) ||
@@ -262,17 +284,38 @@ namespace lumin::render::world {
             return instances;
         }
 
+        [[nodiscard]] std::vector<RenderWorldLocalLight> captureLocalLights(const scene::Level& level) {
+            std::vector<RenderWorldLocalLight> localLights;
+            std::vector<scene::ActorHandle> actorHandles = level.actorHandles();
+            std::sort(actorHandles.begin(), actorHandles.end(), [](scene::ActorHandle left, scene::ActorHandle right) {
+                return handleLess(left, right);
+            });
+            localLights.reserve(actorHandles.size());
+            for (const scene::ActorHandle handle : actorHandles) {
+                const scene::Actor* actor = level.actor(handle);
+                if (actor == nullptr || !actor->localLight().has_value()) {
+                    continue;
+                }
+                localLights.push_back(RenderWorldLocalLight{handle, actor->transform().position,
+                                                            scene::localLightDirection(actor->transform()),
+                                                            *actor->localLight()});
+            }
+            return localLights;
+        }
+
     } // namespace
 
     RenderWorldSnapshot::RenderWorldSnapshot(std::uint64_t sourceRevision, std::uint64_t sourceTopologyRevision,
                                              std::uint64_t sourceModelRevision, std::uint64_t sourceLightingRevision,
                                              std::uint64_t sourceAtmosphereRevision,
                                              scene::SceneEnvironment environment, std::vector<RenderWorldMesh> meshes,
-                                             std::vector<RenderWorldInstance> instances)
+                                             std::vector<RenderWorldInstance> instances,
+                                             std::vector<RenderWorldLocalLight> localLights)
         : RenderWorldSnapshot(sourceRevision, sourceTopologyRevision, sourceModelRevision, sourceLightingRevision,
                               sourceAtmosphereRevision, std::move(environment),
                               std::make_shared<const std::vector<RenderWorldMesh>>(std::move(meshes)),
-                              std::make_shared<const std::vector<RenderWorldInstance>>(std::move(instances))) {
+                              std::make_shared<const std::vector<RenderWorldInstance>>(std::move(instances)),
+                              std::make_shared<const std::vector<RenderWorldLocalLight>>(std::move(localLights))) {
     }
 
     RenderWorldSnapshot::RenderWorldSnapshot(std::uint64_t sourceRevision, std::uint64_t sourceTopologyRevision,
@@ -280,11 +323,12 @@ namespace lumin::render::world {
                                              std::uint64_t sourceAtmosphereRevision,
                                              scene::SceneEnvironment environment,
                                              std::shared_ptr<const std::vector<RenderWorldMesh>> meshes,
-                                             std::shared_ptr<const std::vector<RenderWorldInstance>> instances)
+                                             std::shared_ptr<const std::vector<RenderWorldInstance>> instances,
+                                             std::shared_ptr<const std::vector<RenderWorldLocalLight>> localLights)
         : sourceRevision_(sourceRevision), sourceTopologyRevision_(sourceTopologyRevision),
           sourceModelRevision_(sourceModelRevision), sourceLightingRevision_(sourceLightingRevision),
           sourceAtmosphereRevision_(sourceAtmosphereRevision), environment_(std::move(environment)),
-          meshes_(std::move(meshes)), instances_(std::move(instances)) {
+          meshes_(std::move(meshes)), instances_(std::move(instances)), localLights_(std::move(localLights)) {
     }
 
     std::uint64_t RenderWorldSnapshot::sourceRevision() const noexcept {
@@ -319,12 +363,24 @@ namespace lumin::render::world {
         return *instances_;
     }
 
+    const std::vector<RenderWorldLocalLight>& RenderWorldSnapshot::localLights() const noexcept {
+        return *localLights_;
+    }
+
     const RenderWorldInstance* RenderWorldSnapshot::findInstance(scene::ModelHandle handle) const noexcept {
         const auto found = std::lower_bound(instances_->begin(), instances_->end(), handle,
                                             [](const RenderWorldInstance& instance, scene::ModelHandle candidate) {
                                                 return handleLess(instance.modelHandle, candidate);
                                             });
         return found != instances_->end() && found->modelHandle == handle ? &*found : nullptr;
+    }
+
+    const RenderWorldLocalLight* RenderWorldSnapshot::findLocalLight(scene::ActorHandle handle) const noexcept {
+        const auto found = std::lower_bound(localLights_->begin(), localLights_->end(), handle,
+                                            [](const RenderWorldLocalLight& light, scene::ActorHandle candidate) {
+                                                return handleLess(light.actorHandle, candidate);
+                                            });
+        return found != localLights_->end() && found->actorHandle == handle ? &*found : nullptr;
     }
 
     SceneChangeMask changesBetween(const RenderWorldSnapshotPtr& previous, const RenderWorldSnapshotPtr& current) {
@@ -353,10 +409,12 @@ namespace lumin::render::world {
         const std::vector<scene::MeshHandle> meshHandles = collectMeshHandles(sourceModels);
         std::vector<RenderWorldMesh> meshes = captureMeshes(level, meshHandles);
         std::vector<RenderWorldInstance> instances = captureInstances(std::move(sourceModels), meshes);
+        std::vector<RenderWorldLocalLight> localLights = captureLocalLights(level);
 
-        return RenderWorldSnapshotPtr{new RenderWorldSnapshot(
-            level.revision(), level.topologyRevision(), level.modelRevision(), level.lightingRevision(),
-            level.atmosphereRevision(), level.environment(), std::move(meshes), std::move(instances))};
+        return RenderWorldSnapshotPtr{
+            new RenderWorldSnapshot(level.revision(), level.topologyRevision(), level.modelRevision(),
+                                    level.lightingRevision(), level.atmosphereRevision(), level.environment(),
+                                    std::move(meshes), std::move(instances), std::move(localLights))};
     }
 
     SceneDelta RenderWorldCache::sync(const scene::Level& level) {
@@ -380,12 +438,17 @@ namespace lumin::render::world {
         const std::uint64_t sourceLightingRevision = level.lightingRevision();
         const std::uint64_t sourceAtmosphereRevision = level.atmosphereRevision();
         RenderWorldSnapshotPtr next;
+        std::shared_ptr<const std::vector<RenderWorldLocalLight>> localLights = snapshot_->localLights_;
+        if (snapshot_->sourceLightingRevision() != sourceLightingRevision) {
+            localLights = std::make_shared<const std::vector<RenderWorldLocalLight>>(captureLocalLights(level));
+        }
 
         if (snapshot_->sourceTopologyRevision() == sourceTopologyRevision &&
             snapshot_->sourceModelRevision() == sourceModelRevision) {
-            next = RenderWorldSnapshotPtr{new RenderWorldSnapshot(
-                sourceRevision, sourceTopologyRevision, sourceModelRevision, sourceLightingRevision,
-                sourceAtmosphereRevision, level.environment(), snapshot_->meshes_, snapshot_->instances_)};
+            next = RenderWorldSnapshotPtr{
+                new RenderWorldSnapshot(sourceRevision, sourceTopologyRevision, sourceModelRevision,
+                                        sourceLightingRevision, sourceAtmosphereRevision, level.environment(),
+                                        snapshot_->meshes_, snapshot_->instances_, std::move(localLights))};
         } else {
             std::vector<SourceModel> sourceModels = captureSourceModels(level);
             std::shared_ptr<const std::vector<RenderWorldMesh>> meshes = snapshot_->meshes_;
@@ -401,7 +464,8 @@ namespace lumin::render::world {
             next = RenderWorldSnapshotPtr{new RenderWorldSnapshot(
                 sourceRevision, sourceTopologyRevision, sourceModelRevision, sourceLightingRevision,
                 sourceAtmosphereRevision, level.environment(), std::move(meshes),
-                std::make_shared<const std::vector<RenderWorldInstance>>(std::move(instances)))};
+                std::make_shared<const std::vector<RenderWorldInstance>>(std::move(instances)),
+                std::move(localLights))};
         }
 
         const SceneChangeMask changes = changesBetween(snapshot_, next);

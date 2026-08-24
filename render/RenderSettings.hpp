@@ -22,7 +22,7 @@ namespace lumin::render {
     enum class GlobalIlluminationMode {
         /// 使用 Raster G-buffer 和屏幕空间 AO。
         Legacy,
-        /// 使用 GPU Scene、Ray Tracing、SHARC 与可选 NRD。
+        /// 使用 GPU Scene、Ray Tracing、SHARC 与 NRD。
         RayTracing,
     };
 
@@ -52,7 +52,7 @@ namespace lumin::render {
         float ambientOcclusionBias = 0.08f;
         /// Ray Tracing 路径是否启用 SHARC radiance cache。
         bool sharcEnabled = true;
-        /// Ray Tracing 路径是否启用 NRD 去噪。
+        /// Ray Tracing 路径是否启用 NRD 间接光去噪。
         bool nrdEnabled = true;
     };
 

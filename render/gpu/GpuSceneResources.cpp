@@ -1,14 +1,17 @@
 #include "render/gpu/GpuSceneResources.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #include <glm/geometric.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
+#include <glm/trigonometric.hpp>
 
 namespace lumin::render::gpu {
     namespace {
@@ -67,22 +70,78 @@ namespace lumin::render::gpu {
             instance.setTransform(transform);
         }
 
-        [[nodiscard]] GpuDirectionalLightData packLight(const scene::DirectionalLight& light) {
+        [[nodiscard]] GpuLightData packSun(const scene::DirectionalLight& light, float metersPerWorldUnit) {
             glm::vec3 direction = light.direction;
             const float length = glm::length(direction);
             if (length > 0.0F) {
                 direction /= length;
             }
-            return GpuDirectionalLightData{
-                .directionIlluminance = glm::vec4{direction, std::max(light.illuminanceLux, 0.0F)},
-                .colorCastsShadows = glm::vec4{light.color, light.castsShadows ? 1.0F : 0.0F},
+            return GpuLightData{
+                .positionRange = glm::vec4{0.0F},
+                .directionCosOuter = glm::vec4{direction, -1.0F},
+                .colorIntensity = glm::vec4{light.color, std::max(light.illuminanceLux, 0.0F)},
+                .parameters = glm::vec4{1.0F, metersPerWorldUnit, static_cast<float>(GpuLightType::Directional),
+                                        light.castsShadows ? 1.0F : 0.0F},
             };
+        }
+
+        [[nodiscard]] bool localLightEnabled(const scene::LocalLight& light) noexcept {
+            return std::visit(
+                [](const auto& value) {
+                    return value.enabled;
+                },
+                light);
+        }
+
+        [[nodiscard]] GpuLightData packLocalLight(const world::RenderWorldLocalLight& source,
+                                                  float metersPerWorldUnit) {
+            return std::visit(
+                [&](const auto& light) {
+                    using Light = std::remove_cvref_t<decltype(light)>;
+                    constexpr bool isSpot = std::is_same_v<Light, scene::SpotLight>;
+                    float innerCosine = 1.0F;
+                    float outerCosine = -1.0F;
+                    if constexpr (isSpot) {
+                        innerCosine = std::cos(glm::radians(light.innerConeAngleDegrees));
+                        outerCosine = std::cos(glm::radians(light.outerConeAngleDegrees));
+                    }
+                    return GpuLightData{
+                        .positionRange = glm::vec4{source.position, light.range},
+                        .directionCosOuter = glm::vec4{source.direction, outerCosine},
+                        .colorIntensity = glm::vec4{light.color, light.luminousIntensityCandela},
+                        .parameters = glm::vec4{innerCosine, metersPerWorldUnit,
+                                                static_cast<float>(isSpot ? GpuLightType::Spot : GpuLightType::Point),
+                                                light.castsShadows ? 1.0F : 0.0F},
+                    };
+                },
+                source.light);
+        }
+
+        [[nodiscard]] std::vector<GpuLightData> packLightTable(const world::RenderWorldSnapshot& snapshot) {
+            const float metersPerWorldUnit =
+                snapshot.environment().atmosphereTransform.kilometersPerWorldUnit * 1000.0F;
+            std::vector<GpuLightData> records;
+            records.reserve(snapshot.localLights().size() + 1U);
+            records.push_back(packSun(snapshot.environment().sun, metersPerWorldUnit));
+            for (const world::RenderWorldLocalLight& localLight : snapshot.localLights()) {
+                if (localLightEnabled(localLight.light)) {
+                    records.push_back(packLocalLight(localLight, metersPerWorldUnit));
+                }
+            }
+            if (records.size() > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::overflow_error("GPU scene light count exceeds the shader index range.");
+            }
+            return records;
         }
 
     } // namespace
 
     struct GpuSceneResources::SlotVersion {
         GpuSceneDescriptors descriptors;
+        std::uint64_t sourceTopologyRevision = 0;
+        std::uint64_t sourceModelRevision = 0;
+        std::uint64_t sourceLightingRevision = 0;
+        std::uint64_t sourceAtmosphereRevision = 0;
         std::vector<GpuGeometryDescriptor> geometry;
         std::vector<BufferUpload> uploads;
         std::vector<nvrhi::rt::GeometryDesc> blasGeometry;
@@ -221,6 +280,110 @@ namespace lumin::render::gpu {
         }
 
         const std::uint64_t targetGeneration = plan.baseGeneration() + (plan.hasGpuWork() ? 1U : 0U);
+        const world::RenderWorldSnapshot& snapshot = *plan.targetSnapshot();
+
+        const bool canPatchOnlyLights = slots_[slot] &&
+                                        slots_[slot]->sourceTopologyRevision == snapshot.sourceTopologyRevision() &&
+                                        slots_[slot]->sourceModelRevision == snapshot.sourceModelRevision() &&
+                                        (slots_[slot]->sourceLightingRevision != snapshot.sourceLightingRevision() ||
+                                         slots_[slot]->sourceAtmosphereRevision != snapshot.sourceAtmosphereRevision());
+        if (canPatchOnlyLights) {
+            auto version = std::make_shared<SlotVersion>(*slots_[slot]);
+            version->descriptors.generation = targetGeneration;
+            version->sourceLightingRevision = snapshot.sourceLightingRevision();
+            version->sourceAtmosphereRevision = snapshot.sourceAtmosphereRevision();
+            version->uploads.clear();
+            version->blasGeometry.clear();
+            version->tlasInstances.clear();
+
+            std::vector<GpuLightData> lightRecords = packLightTable(snapshot);
+            version->descriptors.lightCount = static_cast<std::uint32_t>(lightRecords.size());
+            version->descriptors.lights = backend_.createBuffer(structuredBufferDesc(
+                lightRecords.size() * sizeof(GpuLightData), sizeof(GpuLightData), "GpuScene.LightRecords"));
+            if (!version->descriptors.lights) {
+                throw std::runtime_error("Failed to create the GPU scene light record buffer.");
+            }
+            version->uploads.push_back(BufferUpload{version->descriptors.lights, asBytes<GpuLightData>(lightRecords)});
+
+            GpuScenePreparedUpdate ticket;
+            ticket.owner_ = this;
+            ticket.frameSlot_ = frameSlot;
+            ticket.serial_ = nextSerial_++;
+            ticket.generation_ = targetGeneration;
+            ticket.geometryResources_.reserve(version->geometry.size());
+            ticket.bufferResources_.reserve(version->geometry.size() * 2U + 4U);
+            for (std::size_t index = 0; index < version->geometry.size(); ++index) {
+                const GpuGeometryDescriptor& geometry = version->geometry[index];
+                const FrameGraphResourceHandle vertices =
+                    frameGraph.importBuffer("gpu-scene-light-cow-vertices-" + std::to_string(index),
+                                            FrameGraphBufferDesc{.size = geometry.vertices->getDesc().byteSize,
+                                                                 .buffer = geometry.vertices,
+                                                                 .initialState = nvrhi::ResourceStates::ShaderResource,
+                                                                 .finalState = nvrhi::ResourceStates::ShaderResource});
+                const FrameGraphResourceHandle indices =
+                    frameGraph.importBuffer("gpu-scene-light-cow-indices-" + std::to_string(index),
+                                            FrameGraphBufferDesc{.size = geometry.indices->getDesc().byteSize,
+                                                                 .buffer = geometry.indices,
+                                                                 .initialState = nvrhi::ResourceStates::ShaderResource,
+                                                                 .finalState = nvrhi::ResourceStates::ShaderResource});
+                ticket.bufferResources_.push_back(vertices);
+                ticket.bufferResources_.push_back(indices);
+                ticket.geometryResources_.push_back(
+                    GpuGeometryFrameGraphResources{geometry.meshIndex, vertices, indices});
+            }
+            const auto importReusedTable = [&](const char* name, const nvrhi::BufferHandle& buffer) {
+                const FrameGraphResourceHandle resource = frameGraph.importBuffer(
+                    name, FrameGraphBufferDesc{.size = buffer->getDesc().byteSize,
+                                               .buffer = buffer,
+                                               .initialState = nvrhi::ResourceStates::ShaderResource,
+                                               .finalState = nvrhi::ResourceStates::ShaderResource});
+                ticket.bufferResources_.push_back(resource);
+                return resource;
+            };
+            ticket.meshRecordsResource_ =
+                importReusedTable("gpu-scene-light-cow-mesh-records", version->descriptors.meshes);
+            ticket.instanceRecordsResource_ =
+                importReusedTable("gpu-scene-light-cow-instance-records", version->descriptors.instances);
+            ticket.materialRecordsResource_ =
+                importReusedTable("gpu-scene-light-cow-material-records", version->descriptors.materials);
+            ticket.lightRecordsResource_ =
+                frameGraph.importBuffer("gpu-scene-light-cow-light-records",
+                                        FrameGraphBufferDesc{.size = version->descriptors.lights->getDesc().byteSize,
+                                                             .buffer = version->descriptors.lights,
+                                                             .initialState = nvrhi::ResourceStates::Common,
+                                                             .finalState = nvrhi::ResourceStates::ShaderResource});
+            ticket.bufferResources_.push_back(ticket.lightRecordsResource_);
+
+            if (config_.rayTracingEnabled) {
+                for (std::size_t index = 0; index < version->geometry.size(); ++index) {
+                    if (version->geometry[index].blas) {
+                        static_cast<void>(frameGraph.importAccelerationStructure(
+                            "gpu-scene-light-cow-blas-" + std::to_string(index),
+                            FrameGraphAccelerationStructureDesc{.accelerationStructure = version->geometry[index].blas,
+                                                                .initialState = nvrhi::ResourceStates::AccelStructRead,
+                                                                .finalState = nvrhi::ResourceStates::AccelStructRead}));
+                    }
+                }
+                ticket.topLevelAccelerationStructureResource_ = frameGraph.importAccelerationStructure(
+                    "gpu-scene-light-cow-tlas",
+                    FrameGraphAccelerationStructureDesc{.accelerationStructure = version->descriptors.tlas,
+                                                        .initialState = nvrhi::ResourceStates::AccelStructRead,
+                                                        .finalState = nvrhi::ResourceStates::AccelStructRead});
+            }
+            ticket.uploadPass_ = frameGraph.addPass(
+                "gpu-scene-upload-light-table", FrameGraphPassType::Transfer,
+                [lightRecordsResource = ticket.lightRecordsResource_](FrameGraphBuilder& builder) {
+                    builder.write(lightRecordsResource, nvrhi::ResourceStates::CopyDest);
+                },
+                [this, version](const FrameGraphContext& context) {
+                    const BufferUpload& upload = version->uploads.front();
+                    backend_.writeBuffer(context.commandList, upload.buffer, upload.bytes.data(), upload.bytes.size());
+                });
+
+            pending_[slot] =
+                std::make_shared<PendingVersion>(PendingVersion{ticket.serial_, version, std::move(version)});
+            return ticket;
+        }
 
         // 稳定帧只需把该 frame slot 已提交的资源重新导入本帧 FrameGraph。资源状态仍由 FrameGraph
         // 声明和转换，但不会创建 buffer/AS，也不会录制上传或 build 命令。
@@ -295,8 +458,11 @@ namespace lumin::render::gpu {
         version->descriptors.generation = targetGeneration;
         version->descriptors.rayTracingEnabled = config_.rayTracingEnabled;
 
-        const auto& snapshot = *plan.targetSnapshot();
         const auto& layout = plan.targetLayout();
+        version->sourceTopologyRevision = snapshot.sourceTopologyRevision();
+        version->sourceModelRevision = snapshot.sourceModelRevision();
+        version->sourceLightingRevision = snapshot.sourceLightingRevision();
+        version->sourceAtmosphereRevision = snapshot.sourceAtmosphereRevision();
 
         std::vector<GpuMeshIndex> meshIndices;
         meshIndices.reserve(layout.meshes().size());
@@ -315,8 +481,8 @@ namespace lumin::render::gpu {
         std::vector<GpuMeshData> meshRecords(tableSize<GpuMeshIndex>(meshIndices));
         std::vector<GpuInstanceData> instanceRecords(tableSize<GpuInstanceIndex>(instanceIndices));
         std::vector<GpuMaterialData> materialRecords(tableSize<GpuMaterialIndex>(materialIndices));
-        std::vector<GpuDirectionalLightData> lightRecords(1);
-        lightRecords[sunLightGpuIndex.value()] = packLight(snapshot.environment().sun);
+        std::vector<GpuLightData> lightRecords = packLightTable(snapshot);
+        version->descriptors.lightCount = static_cast<std::uint32_t>(lightRecords.size());
 
         version->geometry.reserve(layout.meshes().size());
         version->blasGeometry.reserve(layout.meshes().size());

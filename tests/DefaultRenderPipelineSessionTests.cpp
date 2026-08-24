@@ -201,7 +201,7 @@ namespace {
         for (const std::string& owner : std::vector<std::string>{
                  "std::make_unique<gpu::GpuSceneResources>", "std::make_unique<gpu::GpuSceneUpdatePlanner>",
                  "std::make_unique<gi::RayTracedDirectLightingPass>", "std::make_unique<gi::SharcRadianceCache>",
-                 "std::make_unique<gi::RayTracedGiPass>", "std::make_unique<gi::NrdDenoiser>",
+                 "std::make_unique<gi::SharcIndirectLightingPass>", "std::make_unique<gi::NrdDenoiser>",
                  "std::make_unique<gi::GiCompositePass>", "std::make_unique<gi::HybridLightingCompositePass>"}) {
             require(level.find(owner) != std::string::npos, "Default pipeline is missing a hybrid GI resource owner.");
         }
@@ -218,7 +218,7 @@ namespace {
         position = requireAfter(level, "runtime.sceneResources->candidateDescriptors", position);
         position = requireAfter(level, "runtime.sceneResources->candidateGeometry", position);
         position = requireAfter(level, "runtime.sharc->record(", position);
-        position = requireAfter(level, "runtime.rayTracedGi->record(", position);
+        position = requireAfter(level, "runtime.indirectLighting->record(", position);
         position = requireAfter(level, "recordStatisticsReadback", position);
         position = requireAfter(level, "pipelines::DefaultRenderPipelineSession::addGiDenoiserFeaturePasses", position);
         position = requireAfter(level, "runtime.nrd->record(", position);
@@ -227,7 +227,7 @@ namespace {
                     level.find("if (settings.nrdEnabled)") != std::string::npos &&
                     level.find("diffuseInput = signals.diffuseRadianceHitDistance") != std::string::npos &&
                     level.find("specularInput = signals.specularRadianceHitDistance") != std::string::npos,
-                "SHARC and NRD must be optional while raw RT GI remains a valid composite input.");
+                "NRD must be optional while raw SHARC indirect signals remain valid composite inputs.");
         require(level.find("if (!settings.enabled)") != std::string::npos &&
                     level.find("settings.splitLambda") != std::string::npos &&
                     level.find("settings.maxDistance") != std::string::npos &&
@@ -236,7 +236,7 @@ namespace {
 
         require(level.find(".atmosphere = atmosphereConsumerBindingSets_[frameIndex]") != std::string::npos &&
                     level.find(".atmosphere = atmosphereData.graphRecord->resources") != std::string::npos,
-                "RT GI and SHARC must consume the raster atmosphere binding set and the same LUT graph resources.");
+                "SHARC update and indirect lighting must consume the raster atmosphere binding set and LUT graph.");
         require(level.find("currentEffectiveJitter - previousEffectiveJitter") != std::string::npos &&
                     level.find("cameraData.viewToClip = matrixElements(sceneData.camera.projection)") !=
                         std::string::npos &&
@@ -244,7 +244,7 @@ namespace {
                     level.find(".denoisingRange = nrdDenoisingRange") != std::string::npos,
                 "NRD must receive non-jittered matrices, explicit jitter history, and the RT view-Z range.");
         require(countOccurrences(level, "gi::makeRayTracingSunIrradiance(sun, lightingSettings.enabled)") == 2,
-                "RTDI and RTGI must share the physically pre-exposed sun-irradiance conversion.");
+                "RTDI and SHARC update must share the physically pre-exposed sun-irradiance conversion.");
 
         const std::size_t submit = level.find("context_.submitFrameCommands");
         const std::size_t runtimeCommit = level.find("commitHybridSurfaceFeature(identity)", submit);
@@ -257,14 +257,14 @@ namespace {
         require(level.find("runtime.sceneResources->finishUpdate(*runtime.pendingSceneUpdate, false)") !=
                         std::string::npos &&
                     level.find("runtime.sharc->discardPendingFrame()") != std::string::npos &&
-                    level.find("runtime.rayTracedGi->discardPendingFrame()") != std::string::npos &&
+                    level.find("runtime.indirectLighting->discardPendingFrame()") != std::string::npos &&
                     level.find("runtime.nrd->discardFrame(*runtime.pendingNrdFrame)") != std::string::npos,
                 "Record and submit failures must discard every hybrid GI candidate.");
         require(level.find("DefaultRenderPipelineKind::Hybrid") != std::string::npos &&
                     level.find("rt.surface.world-position") != std::string::npos &&
                     level.find("hybridData.active = hybridPathActive") != std::string::npos,
                 "Hybrid must select a dedicated RT surface topology and resource namespace.");
-        std::cout << "HYBRID_GI=GPUScene>RTDI>SHARC>RT>NRD>Composite;TRANSACTION=submit-commit/failure-discard\n";
+        std::cout << "HYBRID_GI=GPUScene>RTDI>SHARC>Indirect>NRD>Composite;TRANSACTION=submit-commit/failure-discard\n";
     }
 
     void verifyFeaturePipelineContract(const std::string& level, const std::string& pipelineDefinition,
@@ -372,9 +372,11 @@ namespace {
                     rtDirect.find("float2 currentUv = (float2(pixel) + 0.5) / float2(extent) +") == std::string::npos,
                 "RTDI current UV must use the jittered dispatch sample exactly once.");
 
-        const std::string rtGi = readSource("shaders/RtGi.slang");
-        require(rtGi.find("denoiserMotion[pixel] = motion + frame.renderSize.zw;") != std::string::npos,
-                "RTGI must remove projection jitter before handing motion to NRD.");
+        const std::string indirect = readSource("shaders/SharcIndirectLighting.slang");
+        require(
+            indirect.find("denoiserMotion[pixel] = motionTexture.Load(int3(pixel, 0)) + frame.renderParameters.zw;") !=
+                std::string::npos,
+            "SHARC indirect must remove projection jitter before handing motion to NRD.");
         std::cout << "HYBRID_MOTION=RTDI-jitter-once;NRD=non-jittered-previous-minus-current\n";
     }
 
@@ -426,7 +428,8 @@ namespace {
         require(gpuScene.find("float3 luminOrientShadingNormal") != std::string::npos,
                 "GPU Scene shaders must provide one shared double-sided normal orientation helper.");
 
-        for (const std::string& path : {"shaders/RtDi.slang", "shaders/RtGi.slang", "shaders/SharcUpdate.slang"}) {
+        for (const std::string& path :
+             {"shaders/RtDi.slang", "shaders/SharcIndirectLighting.slang", "shaders/SharcUpdate.slang"}) {
             const std::string source = readSource(path);
             require(source.find("RAY_FLAG_CULL_BACK_FACING_TRIANGLES") == std::string::npos,
                     path + " must not cull triangles that the raster G-buffer renders.");

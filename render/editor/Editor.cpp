@@ -12,6 +12,7 @@
 #include <cstring>
 #include <filesystem>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 // clang-format off
@@ -422,7 +423,10 @@ namespace lumin::editor {
                 }
             }
             if (pendingActorSelection.has_value() && snapshot().findActor(*pendingActorSelection) != nullptr) {
-                selectActor(*pendingActorSelection);
+                selection = SelectionState::Actor;
+                actor = *pendingActorSelection;
+                model.reset();
+                script.reset();
                 pendingActorSelection.reset();
             }
         }
@@ -1350,6 +1354,21 @@ namespace lumin::editor {
 
         void drawHierarchy() {
             ImGui::Begin("Scene Hierarchy", &engineSettings.windows.sceneHierarchy);
+            if (ImGui::Button("+")) {
+                ImGui::OpenPopup("CreateActor");
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Create actor");
+            }
+            if (ImGui::BeginPopup("CreateActor")) {
+                if (ImGui::MenuItem("Point Light")) {
+                    createLightActor(scene::PointLight{});
+                }
+                if (ImGui::MenuItem("Spot Light")) {
+                    createLightActor(scene::SpotLight{});
+                }
+                ImGui::EndPopup();
+            }
             for (const EditorActorSnapshot& value : snapshot().actors) {
                 const scene::ActorHandle handle = value.handle;
                 const std::string label =
@@ -1388,39 +1407,18 @@ namespace lumin::editor {
                         }
                         ImGui::EndMenu();
                     }
-                    if (ImGui::MenuItem("Duplicate") && value.modelHandle.isValid()) {
-                        const EditorModelSnapshot* sourceModel = snapshot().findModel(value.modelHandle);
-                        if (sourceModel != nullptr && sourceModel->meshAsset.has_value()) {
-                            const project::AssetId meshAsset = *sourceModel->meshAsset;
-                            scene::Transform transform = value.transform;
-                            const scene::Material material = value.material;
-                            transform.position.x += 0.5f;
-                            static_cast<void>(
-                                submitCommand([meshAsset, transform,
-                                               material](scene::Level& level, scene::Camera&, scripting::ScriptRuntime&,
-                                                         project::ProjectSession& projectSession) {
-                                    const auto copy = projectSession.createActorFromMesh(meshAsset, transform);
-                                    if (copy.has_value()) {
-                                        if (scene::Actor* actor = level.actor(*copy); actor != nullptr) {
-                                            actor->setMaterial(material);
-                                        }
-                                        projectSession.markDirty();
-                                    }
-                                    return makeCommandOutcome(copy.has_value(), {}, copy);
-                                }));
-                        }
+                    const bool canDuplicate = value.localLight.has_value() || value.modelHandle.isValid();
+                    if (!canDuplicate) {
+                        ImGui::BeginDisabled();
+                    }
+                    if (ImGui::MenuItem("Duplicate")) {
+                        duplicateSelectedActor();
+                    }
+                    if (!canDuplicate) {
+                        ImGui::EndDisabled();
                     }
                     if (ImGui::MenuItem("Delete")) {
-                        static_cast<void>(
-                            submitCommand([handle](scene::Level& level, scene::Camera&, scripting::ScriptRuntime&,
-                                                   project::ProjectSession& projectSession) {
-                                const bool destroyed = level.destroyActor(handle);
-                                if (destroyed) {
-                                    projectSession.markDirty();
-                                }
-                                return makeCommandOutcome(destroyed);
-                            }));
-                        clearSelection();
+                        deleteSelectedActor();
                     }
                     ImGui::EndPopup();
                 }
@@ -1521,6 +1519,61 @@ namespace lumin::editor {
             }
         }
 
+        void editLocalLight(scene::LocalLight light) {
+            bool changed = false;
+            int type = std::holds_alternative<scene::PointLight>(light) ? 0 : 1;
+            constexpr const char* lightTypes[] = {"Point", "Spot"};
+            propertyLabel("Type");
+            if (ImGui::Combo("##lightType", &type, lightTypes, std::size(lightTypes))) {
+                if (type == 0) {
+                    const scene::SpotLight& source = std::get<scene::SpotLight>(light);
+                    light = scene::PointLight{source.enabled, source.color, source.luminousIntensityCandela,
+                                              source.range, source.castsShadows};
+                } else {
+                    const scene::PointLight& source = std::get<scene::PointLight>(light);
+                    scene::SpotLight replacement;
+                    replacement.enabled = source.enabled;
+                    replacement.color = source.color;
+                    replacement.luminousIntensityCandela = source.luminousIntensityCandela;
+                    replacement.range = source.range;
+                    replacement.castsShadows = source.castsShadows;
+                    light = replacement;
+                }
+                changed = true;
+            }
+            std::visit(
+                [&](auto& value) {
+                    propertyLabel("Enabled");
+                    changed |= ImGui::Checkbox("##lightEnabled", &value.enabled);
+                    propertyLabel("Color");
+                    changed |= ImGui::ColorEdit3("##lightColor", &value.color.x);
+                    propertyLabel("Intensity (cd)");
+                    changed |= ImGui::DragFloat("##lightIntensity", &value.luminousIntensityCandela, 10.0f, 0.0f,
+                                                1000000.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
+                    propertyLabel("Range");
+                    changed |= ImGui::DragFloat("##lightRange", &value.range, 0.1f, 0.001f, 100000.0f, "%.3f",
+                                                ImGuiSliderFlags_Logarithmic);
+                    propertyLabel("Cast shadows");
+                    changed |= ImGui::Checkbox("##lightCastsShadows", &value.castsShadows);
+                    using LightType = std::decay_t<decltype(value)>;
+                    if constexpr (std::is_same_v<LightType, scene::SpotLight>) {
+                        propertyLabel("Inner cone");
+                        changed |= ImGui::SliderFloat("##innerCone", &value.innerConeAngleDegrees, 0.0f,
+                                                      value.outerConeAngleDegrees, "%.1f deg");
+                        propertyLabel("Outer cone");
+                        changed |= ImGui::SliderFloat("##outerCone", &value.outerConeAngleDegrees,
+                                                      value.innerConeAngleDegrees, 90.0f, "%.1f deg");
+                    }
+                },
+                light);
+            if (changed) {
+                setSelectedLocalLight(std::move(light));
+            }
+            if (ImGui::Button("Remove Light")) {
+                clearSelectedLocalLight();
+            }
+        }
+
         void drawInspector() {
             if (focusDetails) {
                 ImGui::SetNextWindowFocus();
@@ -1554,8 +1607,27 @@ namespace lumin::editor {
                     }
                     section("Transform");
                     editTransform(selected->transform);
-                    section("Material");
-                    editMaterial(selected->material);
+                    if (selected->modelHandle.isValid()) {
+                        section("Material");
+                        editMaterial(selected->material);
+                    }
+                    section("Light");
+                    if (selected->localLight.has_value()) {
+                        editLocalLight(*selected->localLight);
+                    } else {
+                        if (ImGui::Button("Add Light")) {
+                            ImGui::OpenPopup("AddLocalLight");
+                        }
+                        if (ImGui::BeginPopup("AddLocalLight")) {
+                            if (ImGui::MenuItem("Point Light")) {
+                                setSelectedLocalLight(scene::PointLight{});
+                            }
+                            if (ImGui::MenuItem("Spot Light")) {
+                                setSelectedLocalLight(scene::SpotLight{});
+                            }
+                            ImGui::EndPopup();
+                        }
+                    }
                     section("Scripts");
                     std::vector<scripting::ScriptInfo> attached = snapshot().scriptsForActor(*actor);
                     for (std::size_t index = 0; index < attached.size(); ++index) {
@@ -2173,6 +2245,124 @@ namespace lumin::editor {
             }
             return false;
         }
+
+        bool createLightActor(scene::LocalLight light, const scene::Transform& transform = {}) {
+            if (!logic.submit || !scene::validateLocalLight(light)) {
+                return false;
+            }
+            const auto immediate = submitCommand(
+                [light = std::move(light), transform](scene::Level&, scene::Camera&, scripting::ScriptRuntime&,
+                                                      project::ProjectSession& projectSession) mutable {
+                    const scene::ActorHandle created = projectSession.createLightActor(std::move(light), transform);
+                    return makeCommandOutcome(created.isValid(), {}, created);
+                });
+            return !immediate.has_value() || immediate->succeeded;
+        }
+
+        bool setSelectedLocalLight(scene::LocalLight light) {
+            if (!logic.submit || !actor.has_value() || !scene::validateLocalLight(light)) {
+                return false;
+            }
+            const scene::ActorHandle handle = *actor;
+            const auto immediate = submitCommand(
+                [handle, light = std::move(light)](scene::Level& level, scene::Camera&, scripting::ScriptRuntime&,
+                                                   project::ProjectSession& projectSession) mutable {
+                    scene::Actor* selected = level.actor(handle);
+                    if (selected == nullptr) {
+                        return makeCommandOutcome(false, "Selected actor is no longer alive.");
+                    }
+                    selected->setLocalLight(std::move(light));
+                    projectSession.markDirty();
+                    return EditorCommandOutcome{};
+                });
+            return !immediate.has_value() || immediate->succeeded;
+        }
+
+        bool clearSelectedLocalLight() {
+            if (!logic.submit || !actor.has_value()) {
+                return false;
+            }
+            const scene::ActorHandle handle = *actor;
+            const auto immediate =
+                submitCommand([handle](scene::Level& level, scene::Camera&, scripting::ScriptRuntime&,
+                                       project::ProjectSession& projectSession) {
+                    scene::Actor* selected = level.actor(handle);
+                    if (selected == nullptr || !selected->localLight().has_value()) {
+                        return makeCommandOutcome(false, "Selected actor has no local light.");
+                    }
+                    selected->clearLocalLight();
+                    projectSession.markDirty();
+                    return EditorCommandOutcome{};
+                });
+            return !immediate.has_value() || immediate->succeeded;
+        }
+
+        bool duplicateSelectedActor() {
+            if (!logic.submit || !actor.has_value()) {
+                return false;
+            }
+            const scene::ActorHandle handle = *actor;
+            const auto immediate =
+                submitCommand([handle](scene::Level& level, scene::Camera&, scripting::ScriptRuntime&,
+                                       project::ProjectSession& projectSession) {
+                    const scene::Actor* source = level.actor(handle);
+                    if (source == nullptr) {
+                        return makeCommandOutcome(false, "Selected actor is no longer alive.");
+                    }
+
+                    scene::Transform transform = source->transform();
+                    transform.position.x += 0.5f;
+                    const std::string name = source->name() + " Copy";
+                    const scene::Material material = source->material();
+                    const std::optional<scene::LocalLight> localLight = source->localLight();
+                    std::optional<scene::ActorHandle> copy;
+                    if (source->modelHandle().isValid()) {
+                        const auto meshAsset = projectSession.assetForMesh(level.model(source->modelHandle()).mesh);
+                        if (!meshAsset.has_value()) {
+                            return makeCommandOutcome(false, "The actor mesh is not a project asset.");
+                        }
+                        copy = projectSession.createActorFromMesh(*meshAsset, transform);
+                    } else if (localLight.has_value()) {
+                        copy = projectSession.createLightActor(*localLight, transform);
+                    } else {
+                        return makeCommandOutcome(false, "The actor has no duplicable model or local light.");
+                    }
+                    if (!copy.has_value()) {
+                        return makeCommandOutcome(false, "Could not duplicate actor.");
+                    }
+                    if (scene::Actor* destination = level.actor(*copy); destination != nullptr) {
+                        destination->setName(name);
+                        destination->setMaterial(material);
+                        if (localLight.has_value()) {
+                            destination->setLocalLight(*localLight);
+                        }
+                    }
+                    projectSession.markDirty();
+                    return makeCommandOutcome(true, {}, copy);
+                });
+            return !immediate.has_value() || immediate->succeeded;
+        }
+
+        bool deleteSelectedActor() {
+            if (!logic.submit || !actor.has_value()) {
+                return false;
+            }
+            const scene::ActorHandle handle = *actor;
+            const auto immediate = submitCommand([handle](scene::Level& level, scene::Camera&,
+                                                          scripting::ScriptRuntime&,
+                                                          project::ProjectSession& projectSession) {
+                const bool destroyed = level.destroyActor(handle);
+                if (destroyed) {
+                    projectSession.markDirty();
+                }
+                return makeCommandOutcome(destroyed, destroyed ? std::string{} : "Selected actor is no longer alive.");
+            });
+            const bool accepted = !immediate.has_value() || immediate->succeeded;
+            if (accepted) {
+                clearSelection();
+            }
+            return accepted;
+        }
     };
 
     Editor::Editor(EditorLogicServices logic, render::RenderSettings& settings, BackendInfoProvider backendInfo,
@@ -2291,6 +2481,26 @@ namespace lumin::editor {
 
     bool Editor::setSelectedMaterial(const scene::Material& material) {
         return impl_->setSelectedMaterial(material);
+    }
+
+    bool Editor::createLightActor(scene::LocalLight light, scene::Transform transform) {
+        return impl_->createLightActor(std::move(light), transform);
+    }
+
+    bool Editor::setSelectedLocalLight(scene::LocalLight light) {
+        return impl_->setSelectedLocalLight(std::move(light));
+    }
+
+    bool Editor::clearSelectedLocalLight() {
+        return impl_->clearSelectedLocalLight();
+    }
+
+    bool Editor::duplicateSelectedActor() {
+        return impl_->duplicateSelectedActor();
+    }
+
+    bool Editor::deleteSelectedActor() {
+        return impl_->deleteSelectedActor();
     }
 
     void Editor::setCameraSpeed(float speed) {

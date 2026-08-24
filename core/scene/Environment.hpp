@@ -1,5 +1,7 @@
 #pragma once
 
+#include <variant>
+
 #include <glm/vec3.hpp>
 
 namespace lumin::scene {
@@ -11,6 +13,45 @@ namespace lumin::scene {
         float illuminanceLux = 110000.0f;
         bool castsShadows = true;
     };
+
+    /** 可挂载到 Actor 的全向点光源，光强使用坎德拉。 */
+    struct PointLight {
+        /** 是否参与渲染世界的有效光源表。 */
+        bool enabled = true;
+        /** 线性 RGB 光色，各分量必须有限且非负。 */
+        glm::vec3 color{1.0f};
+        /** 发光强度，单位为坎德拉。 */
+        float luminousIntensityCandela = 1000.0f;
+        /** 平滑衰减截止距离，单位为 world unit。 */
+        float range = 10.0f;
+        /** 光线追踪直接光是否发射可见性射线。 */
+        bool castsShadows = true;
+
+        friend bool operator==(const PointLight&, const PointLight&) = default;
+    };
+
+    /** 可挂载到 Actor 的锥形光源，传播方向为 Actor 本地 `-Z`。 */
+    struct SpotLight {
+        /** 是否参与渲染世界的有效光源表。 */
+        bool enabled = true;
+        /** 线性 RGB 光色，各分量必须有限且非负。 */
+        glm::vec3 color{1.0f};
+        /** 发光强度，单位为坎德拉。 */
+        float luminousIntensityCandela = 1000.0f;
+        /** 平滑衰减截止距离，单位为 world unit。 */
+        float range = 10.0f;
+        /** 光线追踪直接光是否发射可见性射线。 */
+        bool castsShadows = true;
+        /** 完全照明区域的锥体半角，单位为度。 */
+        float innerConeAngleDegrees = 20.0f;
+        /** 光照衰减到零的锥体半角，单位为度。 */
+        float outerConeAngleDegrees = 30.0f;
+
+        friend bool operator==(const SpotLight&, const SpotLight&) = default;
+    };
+
+    /** Actor 可选局部光源的统一值类型。 */
+    using LocalLight = std::variant<PointLight, SpotLight>;
 
     /**
      * 世界空间与大气物理空间之间的显式映射。
@@ -58,6 +99,15 @@ namespace lumin::scene {
 
     /** 返回方向光参数是否有限并满足大气照明约束。 */
     [[nodiscard]] bool validateDirectionalLight(const DirectionalLight& light) noexcept;
+
+    /** 返回点光源参数是否有限并满足局部光约束。 */
+    [[nodiscard]] bool validatePointLight(const PointLight& light) noexcept;
+
+    /** 返回锥形光源参数是否有限并满足强度、范围和锥角约束。 */
+    [[nodiscard]] bool validateSpotLight(const SpotLight& light) noexcept;
+
+    /** 返回局部光源变体当前保存的参数是否有效。 */
+    [[nodiscard]] bool validateLocalLight(const LocalLight& light) noexcept;
 
     /** 返回世界空间到大气物理空间的映射是否有效。 */
     [[nodiscard]] bool validateAtmosphereTransform(const AtmosphereTransform& transform) noexcept;

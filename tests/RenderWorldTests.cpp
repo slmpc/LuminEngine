@@ -186,8 +186,7 @@ namespace {
         const auto lighting = cache.sync(level);
         require(lighting.changes == SceneChangeMask::Lighting,
                 "A sun-only edit must report an independent lighting change.");
-        require(lighting.snapshot->environment().sun.color == sun.color &&
-                    before->environment().sun.color != sun.color,
+        require(lighting.snapshot->environment().sun.color == sun.color && before->environment().sun.color != sun.color,
                 "Environment values must be copied into immutable snapshots.");
 
         lumin::scene::AtmosphereParameters atmosphere = level.environment().atmosphere;
@@ -198,6 +197,50 @@ namespace {
                 "An atmosphere-only edit must report an independent atmosphere change.");
         require(&atmosphereDelta.snapshot->meshes()[0] == &lighting.snapshot->meshes()[0],
                 "Environment edits must preserve renderer-owned immutable geometry storage.");
+    }
+
+    void testLocalLightsAreStableAndCopyOnWrite() {
+        lumin::scene::Level level;
+        const auto first = level.spawnActor();
+        const auto second = level.spawnActor();
+        lumin::scene::Actor* pointActor = level.actor(first);
+        lumin::scene::Actor* spotActor = level.actor(second);
+
+        lumin::scene::PointLight point;
+        point.enabled = false;
+        point.color = {0.2f, 0.4f, 0.8f};
+        pointActor->setLocalLight(point);
+        lumin::scene::SpotLight spot;
+        spot.innerConeAngleDegrees = 12.0f;
+        spot.outerConeAngleDegrees = 24.0f;
+        spotActor->setLocalLight(spot);
+        lumin::scene::Transform spotTransform;
+        spotTransform.position = {3.0f, 4.0f, 5.0f};
+        spotTransform.rotationDegrees.y = 90.0f;
+        spotTransform.scale = {2.0f, 8.0f, 0.25f};
+        spotActor->setTransform(spotTransform);
+
+        RenderWorldCache cache;
+        const auto before = cache.sync(level).snapshot;
+        require(before->localLights().size() == 2 && before->localLights()[0].actorHandle == first &&
+                    before->localLights()[1].actorHandle == second,
+                "RenderWorld local lights must include disabled lights in stable ActorHandle order.");
+        const auto* capturedSpot = before->findLocalLight(second);
+        require(capturedSpot != nullptr && capturedSpot->position == spotTransform.position &&
+                    glm::length(capturedSpot->direction - glm::vec3{-1.0f, 0.0f, 0.0f}) < 0.0001f &&
+                    std::holds_alternative<lumin::scene::SpotLight>(capturedSpot->light),
+                "RenderWorld must capture world position, scale-independent direction and light type.");
+
+        spot.luminousIntensityCandela = 2500.0f;
+        spotActor->setLocalLight(spot);
+        const auto changed = cache.sync(level);
+        require(changed.changes == SceneChangeMask::Lighting && changed.snapshot != before,
+                "Editing local-light parameters must publish only a Lighting delta.");
+        require(std::get<lumin::scene::SpotLight>(before->findLocalLight(second)->light).luminousIntensityCandela ==
+                        1000.0f &&
+                    std::get<lumin::scene::SpotLight>(changed.snapshot->findLocalLight(second)->light)
+                            .luminousIntensityCandela == 2500.0f,
+                "Local-light snapshots must remain immutable across copy-on-write updates.");
     }
 
 } // namespace
@@ -211,6 +254,7 @@ int main() {
         testUnchangedSyncReturnsNoneAndReusesSnapshot();
         testCacheDoesNotConfuseIndependentLevels();
         testEnvironmentChangesHaveIndependentDeltaBits();
+        testLocalLightsAreStableAndCopyOnWrite();
         std::cout << "RenderWorld PASS\n";
         return 0;
     } catch (const std::exception& error) {

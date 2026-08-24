@@ -35,6 +35,7 @@ static const uint kInvalidMaterial = 0xffffffffu;
 [[vk::binding(15, 0)]] Texture2D<float4> normalRoughnessTextures[];
 [[vk::binding(16, 0)]] SamplerState materialSampler;
 [[vk::binding(17, 0)]] Texture2D<uint> materialIdTexture;
+[[vk::binding(18, 0)]] StructuredBuffer<GpuLightData> lights;
 
 uint sharcHashUint(uint value) {
     value ^= value >> 16;
@@ -169,28 +170,33 @@ void sharcUpdateClosestHitMain(
             0.04, 1.0);
     }
     float3 hitPosition = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
-    float3 toSun = normalize(sharcFrame.toSunWorldRadianceScale.xyz);
-
-    SharcUpdatePayload shadowPayload;
-    SharcInit(shadowPayload.cacheState);
-    shadowPayload.throughput = float3(1.0);
-    shadowPayload.rayKind = kSharcShadowRay;
-    shadowPayload.visibility = 0.0;
-    RayDesc shadowRay;
-    shadowRay.Origin = hitPosition + worldNormal * sharcFrame.traceParameters.x;
-    shadowRay.Direction = toSun;
-    shadowRay.TMin = sharcFrame.traceParameters.x;
-    shadowRay.TMax = sharcFrame.traceParameters.y;
-    TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff, 0, 1, 1, shadowRay, shadowPayload);
-
-    float noL = saturate(dot(worldNormal, toSun));
     float3 toView = luminPhysicalSafeNormalize(-WorldRayDirection(), worldNormal);
-    LuminCookTorranceLobes lobes = luminEvaluateCookTorrance(
-        luminMakeCookTorranceMaterial(material), worldNormal, toView, toSun);
-    float3 directLighting = (lobes.diffuse + lobes.specular) * sharcFrame.sunIrradiance.rgb *
-                            (noL * shadowPayload.visibility);
+    uint lightCount = max(sharcFrame.samplingParameters.x, 1u);
+    uint lightSeed = luminLightRandomSeed(
+        DispatchRaysIndex().xy, sharcFrame.cacheParameters.w, InstanceID(), PrimitiveIndex());
+    uint lightIndex = luminSampleLightIndex(luminRandom01(lightSeed), lightCount);
+    LuminLightSample lightSample = luminEvaluatePhysicalLight(
+        lights[lightIndex], hitPosition, sharcFrame.traceParameters.x, sharcFrame.traceParameters.y);
+    float visibility = lightSample.castsShadows == 0u ? 1.0 : 0.0;
+    if (lightSample.valid != 0u && lightSample.castsShadows != 0u &&
+        dot(worldNormal, lightSample.direction) > 0.0) {
+        SharcUpdatePayload shadowPayload;
+        SharcInit(shadowPayload.cacheState);
+        shadowPayload.throughput = float3(1.0);
+        shadowPayload.rayKind = kSharcShadowRay;
+        shadowPayload.visibility = 0.0;
+        RayDesc shadowRay;
+        shadowRay.Origin = hitPosition + worldNormal * sharcFrame.traceParameters.x;
+        shadowRay.Direction = lightSample.direction;
+        shadowRay.TMin = sharcFrame.traceParameters.x;
+        shadowRay.TMax = lightSample.shadowTMax;
+        TraceRay(sceneTlas, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff, 0, 1, 1, shadowRay, shadowPayload);
+        visibility = shadowPayload.visibility;
+    }
+    float3 directLighting = luminEvaluateDirectLighting(material, worldNormal, toView, lightSample, visibility) *
+                            float(lightCount);
     SharcHitData hitData;
     hitData.positionWorld = hitPosition;
     hitData.normalWorld = worldNormal;
-    sharcRecordHit(payload, hitData, directLighting, sharcRandom01(PrimitiveIndex() ^ InstanceID()));
+    sharcRecordHit(payload, hitData, directLighting, luminRandom01(lightSeed ^ 0xb7e15162u));
 }

@@ -203,10 +203,7 @@ namespace lumin::render {
             if (committedFeatureConfiguration_.sharcEnabled) {
                 return gi::BackendInfo{"Ray Tracing + SHARC", true, true};
             }
-            if (committedFeatureConfiguration_.nrdEnabled) {
-                return gi::BackendInfo{"Ray Tracing + NRD", true, true};
-            }
-            return gi::BackendInfo{"Ray Tracing", false, true};
+            return gi::BackendInfo{"Ray Tracing Direct", false, true};
         }
         return globalIllumination_->info();
     }

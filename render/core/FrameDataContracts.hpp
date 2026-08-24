@@ -188,9 +188,9 @@ namespace lumin::render::core {
 
     /// GI Feature 发布的原始间接光照信号。
     struct IndirectLightingData {
-        /// 漫反射间接辐射及命中距离。
+        /// 按 NRD REBLUR 契约编码的漫反射辐亮度与命中距离。
         TextureFrameData diffuse;
-        /// 镜面间接辐射及命中距离。
+        /// 按 NRD REBLUR 契约编码的镜面辐亮度与命中距离。
         TextureFrameData specular;
         /// 可选的预合成间接光照；未生产时可无效。
         TextureFrameData combined;
@@ -198,11 +198,11 @@ namespace lumin::render::core {
 
     /// Denoising Feature 发布的稳定间接光照信号。
     struct DenoisedLightingData {
-        /// 去噪后的漫反射间接辐射。
+        /// 去噪后的漫反射间接辐亮度与命中距离。
         TextureFrameData diffuse;
-        /// 去噪后的镜面间接辐射。
+        /// 去噪后的镜面间接辐亮度与命中距离。
         TextureFrameData specular;
-        /// 可选的预合成去噪结果；未生产时可无效。
+        /// 已恢复主表面材质的合并间接光照。
         TextureFrameData combined;
     };
 

@@ -174,19 +174,25 @@ namespace lumin::project {
         /**
          * 从 Mesh 资源创建一个或多个 Actor。
          *
-         * 单材质 OBJ 创建一个 Actor；多材质
-         * OBJ 按稳定的材质分区创建多个 Actor，并为每个 Actor 应用 MTL 材质。
+         * 单材质 OBJ 创建一个
+         * Actor；多材质
+
+         * * OBJ 按稳定的材质分区创建多个 Actor，并为每个 Actor 应用 MTL 材质。
          */
         [[nodiscard]] std::vector<scene::ActorHandle> createActorsFromMesh(const AssetId& asset,
                                                                            scene::Transform transform = {});
         /**
          * 从 Mesh 资源创建 Actor，并返回第一个 Actor。
          *
+         *
          * 为兼容旧调用方保留；多材质
-         * OBJ 的其余 Actor 也会同时创建并由当前场景拥有。
+
+         * * OBJ 的其余 Actor 也会同时创建并由当前场景拥有。
          */
         [[nodiscard]] std::optional<scene::ActorHandle> createActorFromMesh(const AssetId& asset,
                                                                             scene::Transform transform = {});
+        /** 创建持久化局部光 Actor，自动分配 ID、默认名称并标记项目已修改。 */
+        [[nodiscard]] scene::ActorHandle createLightActor(scene::LocalLight light, scene::Transform transform = {});
         /** 返回 Mesh 资源的首个材质分区，供只支持单网格的兼容调用方使用。 */
         [[nodiscard]] std::optional<scene::MeshHandle> meshForAsset(const AssetId& asset);
         /** 返回运行时 Mesh 所属的项目资源。 */

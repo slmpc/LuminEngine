@@ -26,6 +26,90 @@ struct LuminBrdfSample {
     uint valid;
 };
 
+struct LuminLightSample {
+    float3 direction;
+    float3 irradiance;
+    float shadowTMax;
+    uint valid;
+    uint castsShadows;
+};
+
+static const float kLuminPhysicalLightingPreExposure = 1.0 / (1.2 * 32768.0);
+
+uint luminHash(uint value) {
+    value ^= value >> 16u;
+    value *= 0x7feb352du;
+    value ^= value >> 15u;
+    value *= 0x846ca68bu;
+    return value ^ (value >> 16u);
+}
+
+uint luminHashCombine(uint seed, uint value) {
+    return luminHash(seed ^ (value + 0x9e3779b9u + (seed << 6u) + (seed >> 2u)));
+}
+
+float luminRandom01(uint seed) {
+    return float(luminHash(seed) & 0x00ffffffu) * (1.0 / 16777216.0);
+}
+
+uint luminLightRandomSeed(uint2 pixel, uint frameSequence, uint instanceIndex, uint primitiveIndex) {
+    uint seed = luminHashCombine(pixel.x, pixel.y);
+    seed = luminHashCombine(seed, frameSequence);
+    seed = luminHashCombine(seed, instanceIndex);
+    return luminHashCombine(seed, primitiveIndex);
+}
+
+uint luminSampleLightIndex(float randomValue, uint lightCount) {
+    return min(uint(randomValue * float(lightCount)), lightCount - 1u);
+}
+
+LuminLightSample luminEvaluatePhysicalLight(
+    GpuLightData light, float3 surfacePosition, float minTraceDistance, float globalTraceDistance) {
+    LuminLightSample result;
+    result.direction = float3(0.0, 1.0, 0.0);
+    result.irradiance = float3(0.0);
+    result.shadowTMax = globalTraceDistance;
+    result.valid = 0u;
+    result.castsShadows = luminLightCastsShadows(light) ? 1u : 0u;
+
+    uint type = luminLightType(light);
+    if (type == kLuminLightDirectional) {
+        result.direction = luminPhysicalSafeNormalize(-light.directionCosOuter.xyz, result.direction);
+        result.irradiance = max(light.colorIntensity.rgb, float3(0.0)) *
+                            max(light.colorIntensity.w, 0.0) * kLuminPhysicalLightingPreExposure;
+        result.valid = any(result.irradiance > 0.0) ? 1u : 0u;
+        return result;
+    }
+
+    float3 toLightVector = light.positionRange.xyz - surfacePosition;
+    float distanceSquared = dot(toLightVector, toLightVector);
+    float distanceWorld = sqrt(max(distanceSquared, 0.0));
+    float range = max(light.positionRange.w, 0.0);
+    if (distanceWorld <= minTraceDistance || distanceWorld >= range || range <= 0.0) {
+        return result;
+    }
+    result.direction = toLightVector / distanceWorld;
+    float distanceMeters = distanceWorld * max(light.parameters.y, 1.0e-6);
+    float ratioSquared = (distanceSquared / max(range * range, 1.0e-12));
+    float rangeAttenuation = saturate(1.0 - ratioSquared * ratioSquared);
+    rangeAttenuation *= rangeAttenuation;
+    float coneAttenuation = 1.0;
+    if (type == kLuminLightSpot) {
+        float coneCosine = dot(luminPhysicalSafeNormalize(light.directionCosOuter.xyz, float3(0.0, 0.0, -1.0)),
+                               -result.direction);
+        coneAttenuation = saturate((coneCosine - light.directionCosOuter.w) /
+                                   max(light.parameters.x - light.directionCosOuter.w, 1.0e-6));
+        coneAttenuation = coneAttenuation * coneAttenuation * (3.0 - 2.0 * coneAttenuation);
+    }
+    float illuminance = max(light.colorIntensity.w, 0.0) /
+                        max(distanceMeters * distanceMeters, 1.0e-12) * rangeAttenuation * coneAttenuation;
+    result.irradiance = max(light.colorIntensity.rgb, float3(0.0)) *
+                        illuminance * kLuminPhysicalLightingPreExposure;
+    result.shadowTMax = max(distanceWorld - minTraceDistance, minTraceDistance);
+    result.valid = any(result.irradiance > 0.0) ? 1u : 0u;
+    return result;
+}
+
 float3 luminPhysicalSafeNormalize(float3 value, float3 fallback) {
     float lengthSquared = dot(value, value);
     return lengthSquared > 1.0e-12 ? value * rsqrt(lengthSquared) : fallback;
@@ -96,6 +180,17 @@ LuminCookTorranceLobes luminEvaluateCookTorrance(
                       max(4.0 * normalDotView * normalDotLight, 1.0e-6);
     result.diffuse = (1.0 - fresnel) * material.diffuseColor / kLuminPi;
     return result;
+}
+
+float3 luminEvaluateDirectLighting(
+    GpuMaterialData material, float3 normal, float3 toView, LuminLightSample light, float visibility) {
+    float normalDotLight = saturate(dot(normal, light.direction));
+    if (light.valid == 0u || normalDotLight <= 0.0 || visibility <= 0.0) {
+        return float3(0.0);
+    }
+    LuminCookTorranceLobes lobes = luminEvaluateCookTorrance(
+        luminMakeCookTorranceMaterial(material), normal, toView, light.direction);
+    return (lobes.diffuse + lobes.specular) * light.irradiance * (normalDotLight * visibility);
 }
 
 void luminBuildTangentFrame(float3 normal, out float3 tangent, out float3 bitangent) {

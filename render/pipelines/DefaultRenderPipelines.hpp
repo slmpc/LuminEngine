@@ -19,7 +19,7 @@ namespace lumin::render::pipelines {
     enum class DefaultRenderPipelineKind : std::uint8_t {
         /// CSM、G-buffer 与屏幕空间 AO 路径。
         Raster,
-        /// Primary RT surface、SHARC 与 NRD 路径。
+        /// Primary RT surface、RTDI、SHARC 间接光与 NRD 路径。
         Hybrid,
     };
 

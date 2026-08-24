@@ -10,8 +10,8 @@
 #include <glm/vec4.hpp>
 #include <nvrhi/nvrhi.h>
 
-#include "render/resources/FrameGraph.hpp"
 #include "render/gpu/GpuScene.hpp"
+#include "render/resources/FrameGraph.hpp"
 
 namespace lumin::render::gpu {
 
@@ -41,18 +41,32 @@ namespace lumin::render::gpu {
         glm::uvec4 counts{0U};
     };
 
-    /** 场景方向光的共享 GPU 记录。 */
-    struct alignas(16) GpuDirectionalLightData {
-        /// xyz 为光线传播方向，w 为 illuminanceLux。
-        glm::vec4 directionIlluminance{0.0F};
-        /// rgb 为线性光色，w 为 castsShadows 标志。
-        glm::vec4 colorCastsShadows{0.0F};
+    /** GPU 光源记录中的类型标识，与 `GpuScene.slang` 保持一致。 */
+    enum class GpuLightType : std::uint32_t {
+        /** 无限远太阳方向光。 */
+        Directional = 0,
+        /** 全向点光源。 */
+        Point = 1,
+        /** 沿 Actor 本地 `-Z` 传播的锥形光源。 */
+        Spot = 2,
+    };
+
+    /** RTDI 与 SHARC 共用的统一 GPU 光源记录。 */
+    struct alignas(16) GpuLightData {
+        /// xyz 为世界位置；w 为 world-unit range，方向光固定为零。
+        glm::vec4 positionRange{0.0F};
+        /// xyz 为光线传播方向；w 为 Spot 外锥余弦。
+        glm::vec4 directionCosOuter{0.0F};
+        /// rgb 为线性光色；w 为太阳 lux 或局部灯 candela。
+        glm::vec4 colorIntensity{0.0F};
+        /// x=Spot 内锥余弦，y=meters/world-unit，z=`GpuLightType`，w=castsShadows。
+        glm::vec4 parameters{0.0F};
     };
 
     static_assert(sizeof(GpuPackedVertex) == 32);
     static_assert(sizeof(GpuInstanceData) == 144);
     static_assert(sizeof(GpuMeshData) == 16);
-    static_assert(sizeof(GpuDirectionalLightData) == 32);
+    static_assert(sizeof(GpuLightData) == 64);
 
     /** 每个物理 geometry 版本对外暴露的只读资源描述。 */
     struct GpuGeometryDescriptor {
@@ -78,8 +92,10 @@ namespace lumin::render::gpu {
         nvrhi::BufferHandle instances;
         /// 统一材质 structured buffer。
         nvrhi::BufferHandle materials;
-        /// 方向光 structured buffer。
+        /// 太阳与启用局部灯组成的统一 structured buffer。
         nvrhi::BufferHandle lights;
+        /// `lights` 中可被 shader 采样的有效记录数；索引 0 固定为太阳。
+        std::uint32_t lightCount = 0;
         /// RT 开启时的当前 TLAS；fallback 模式为空。
         nvrhi::rt::AccelStructHandle tlas;
         /// 此物理版本是否包含可追踪 AS。

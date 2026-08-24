@@ -123,6 +123,16 @@ namespace lumin::editor {
 
         bool setSelectedTransform(const scene::Transform& transform);
         bool setSelectedMaterial(const scene::Material& material);
+        /** 创建局部光 Actor，并在逻辑快照发布后选中它。 */
+        bool createLightActor(scene::LocalLight light, scene::Transform transform = {});
+        /** 校验并替换当前 Actor 的局部光源。 */
+        bool setSelectedLocalLight(scene::LocalLight light);
+        /** 移除当前 Actor 的局部光源。 */
+        bool clearSelectedLocalLight();
+        /** 复制当前带模型或局部光源的 Actor。 */
+        bool duplicateSelectedActor();
+        /** 删除当前选中的 Actor。 */
+        bool deleteSelectedActor();
 
         void setCameraSpeed(float speed);
         void setCameraPosition(const glm::vec3& position);

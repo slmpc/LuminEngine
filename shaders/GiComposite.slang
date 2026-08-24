@@ -20,7 +20,7 @@ struct GiCompositeConstants {
 static const float4 kNeutralOutput = float4(0.0, 0.0, 0.0, 1.0);
 
 float3 unpackReblurRadiance(float4 packedSignal) {
-    // Raw RT GI 与 NRD 输出都使用 REBLUR 的 YCoCg signal contract。
+    // Raw SHARC indirect 与 NRD 输出都使用 REBLUR 的 YCoCg signal contract。
     return max(REBLUR_BackEnd_UnpackRadianceAndNormHitDist(packedSignal).rgb, 0.0);
 }
 

@@ -18,8 +18,8 @@
 #include "render/gi/raytracing/GiComposite.hpp"
 #include "render/gi/raytracing/NrdDenoiser.hpp"
 #include "render/gi/raytracing/RayTracedDirectLighting.hpp"
-#include "render/gi/raytracing/RayTracedGi.hpp"
 #include "render/gi/raytracing/RtSurfaceSignals.hpp"
+#include "render/gi/raytracing/SharcIndirectLighting.hpp"
 #include "render/gi/raytracing/SharcRadianceCache.hpp"
 #include "render/gpu/GpuScene.hpp"
 #else
@@ -77,6 +77,8 @@ namespace lumin::render {
         FrameGraphResourceHandle tlas;
         /// 实例 buffer FrameGraph handle。
         FrameGraphResourceHandle instances;
+        /// 统一光源表 FrameGraph handle。
+        FrameGraphResourceHandle lights;
         /// 材质 buffer FrameGraph handle。
         FrameGraphResourceHandle materials;
         /// GPU Scene 完成构建的 pass。
@@ -91,8 +93,8 @@ namespace lumin::render {
         std::vector<FrameGraphResourceHandle> normalRoughnessTextures;
         /// SHARC 本帧图记录。
         std::optional<gi::SharcGraphRecord> sharcRecord;
-        /// 原始 RT GI 信号 handles。
-        std::optional<gi::RayTracedGiGraphSignals> rayTracedSignals;
+        /// SHARC 间接光输出图记录。
+        std::optional<gi::SharcIndirectLightingGraphOutput> indirectOutput;
         /// Primary RT surface graph resources。
         gi::RtSurfaceSignalGraphResources surface;
         /// Primary RT surface ready pass。

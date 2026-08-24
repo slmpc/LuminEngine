@@ -20,7 +20,7 @@ CMake 对每个 entry 启用 `-warnings-as-errors all`，并把 Slang `-depfile`
 capability 在 manifest 中逐项列出；不要使用 `-ignore-capabilities` 或全局关闭 capability 诊断。
 
 项目自有的可复用 `.slang` 模块优先使用 `import`，模块路径由 `shaders` 与 `shaders/include` 搜索目录解析。
-厂商 `NRD.hlsli`、SHARC C/HLSL 头，以及依赖调用方宏展开的 `RtGiSharc.slang`/`SharcRuntime.slang` 保留
+厂商 `NRD.hlsli`、SHARC C/HLSL 头，以及依赖调用方宏展开的 `SharcRuntime.slang` 保留
 `#include`。不要把需要调用方预处理状态的文本包装器强行改成模块。
 
 `include/PostProcessUniforms.slang` 是全屏通道共享的 GPU ABI 定义。其布局必须与 CPU

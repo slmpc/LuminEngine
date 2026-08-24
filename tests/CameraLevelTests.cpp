@@ -175,6 +175,79 @@ namespace {
                 "Atmosphere changes must advance only the atmosphere revision.");
     }
 
+    void testActorLocalLightsAndRevisions() {
+        lumin::scene::PointLight point;
+        lumin::scene::SpotLight spot;
+        require(lumin::scene::validatePointLight(point) && lumin::scene::validateSpotLight(spot),
+                "Default local-light parameters must be valid.");
+
+        point.range = 0.0f;
+        require(!lumin::scene::validatePointLight(point), "Point lights must reject a non-positive range.");
+        point = {};
+        point.luminousIntensityCandela = -1.0f;
+        require(!lumin::scene::validatePointLight(point), "Point lights must reject negative luminous intensity.");
+        spot.innerConeAngleDegrees = 45.0f;
+        spot.outerConeAngleDegrees = 30.0f;
+        require(!lumin::scene::validateSpotLight(spot), "Spot lights must reject inverted cone angles.");
+        spot = {};
+        spot.outerConeAngleDegrees = std::numeric_limits<float>::infinity();
+        require(!lumin::scene::validateSpotLight(spot), "Spot lights must reject non-finite cone angles.");
+
+        lumin::scene::Level level;
+        const auto actorHandle = level.spawnActor();
+        lumin::scene::Actor* actor = level.actor(actorHandle);
+        const std::uint64_t baseRevision = level.revision();
+        const std::uint64_t baseModelRevision = level.modelRevision();
+        const std::uint64_t baseLightingRevision = level.lightingRevision();
+        actor->setLocalLight(lumin::scene::PointLight{});
+        require(level.revision() == baseRevision + 1 && level.modelRevision() == baseModelRevision &&
+                    level.lightingRevision() == baseLightingRevision + 1,
+                "Attaching a local light must advance only the lighting sub-revision.");
+
+        lumin::scene::Transform moved = actor->transform();
+        moved.position = {1.0f, 2.0f, 3.0f};
+        const std::uint64_t lightMoveRevision = level.revision();
+        const std::uint64_t lightMoveModelRevision = level.modelRevision();
+        const std::uint64_t lightMoveLightingRevision = level.lightingRevision();
+        actor->setTransform(moved);
+        require(level.revision() == lightMoveRevision + 1 && level.modelRevision() == lightMoveModelRevision &&
+                    level.lightingRevision() == lightMoveLightingRevision + 1,
+                "A light-only transform must advance one overall revision and only Lighting.");
+
+        const auto mesh = level.addMesh(makeTriangle("lit-model"));
+        actor->attachModel(mesh);
+        moved.rotationDegrees.y = 90.0f;
+        moved.scale = {3.0f, 7.0f, 11.0f};
+        const std::uint64_t combinedRevision = level.revision();
+        const std::uint64_t combinedModelRevision = level.modelRevision();
+        const std::uint64_t combinedLightingRevision = level.lightingRevision();
+        actor->setTransform(moved);
+        require(level.revision() == combinedRevision + 1 && level.modelRevision() == combinedModelRevision + 1 &&
+                    level.lightingRevision() == combinedLightingRevision + 1,
+                "A combined model/light transform must update both sub-revisions in one transaction.");
+        const glm::vec3 direction = lumin::scene::localLightDirection(moved);
+        moved.scale = {100.0f, 0.01f, 5.0f};
+        require(glm::length(direction - lumin::scene::localLightDirection(moved)) < 0.0001f &&
+                    glm::length(direction - glm::vec3{-1.0f, 0.0f, 0.0f}) < 0.0001f,
+                "Spot direction must use Actor local -Z rotation and ignore scale.");
+
+        bool invalidRejected = false;
+        try {
+            lumin::scene::SpotLight invalid;
+            invalid.outerConeAngleDegrees = 91.0f;
+            actor->setLocalLight(invalid);
+        } catch (const std::invalid_argument&) {
+            invalidRejected = true;
+        }
+        require(invalidRejected && std::holds_alternative<lumin::scene::PointLight>(*actor->localLight()),
+                "Actor setters must reject invalid light values without replacing the current light.");
+
+        const std::uint64_t clearLightingRevision = level.lightingRevision();
+        actor->clearLocalLight();
+        require(!actor->localLight().has_value() && level.lightingRevision() == clearLightingRevision + 1,
+                "Clearing a local light must update Lighting exactly once.");
+    }
+
     void testLevelAndIndirectBatch() {
         lumin::scene::Level level;
         const auto triangle = level.addMesh(makeTriangle("triangle"));
@@ -251,27 +324,26 @@ namespace {
         require(unicodePathImage.width == 1 && unicodePathImage.height == 1 && unicodePathImage.pixels.size() == 4,
                 "Image loading must decode RGBA8 data from paths outside the active Windows code page.");
 
-        const lumin::assets::Mesh bunny =
-            lumin::assets::ObjLoader::load(assetDirectory / "models" / "stanford-bunny.obj");
-        glm::vec2 uvMinimum{std::numeric_limits<float>::max()};
-        glm::vec2 uvMaximum{std::numeric_limits<float>::lowest()};
-        const bool allBunnyUvsFinite =
-            std::all_of(bunny.vertices.begin(), bunny.vertices.end(), [&](const lumin::assets::Vertex& vertex) {
-                uvMinimum.x = std::min(uvMinimum.x, vertex.texCoord.x);
-                uvMinimum.y = std::min(uvMinimum.y, vertex.texCoord.y);
-                uvMaximum.x = std::max(uvMaximum.x, vertex.texCoord.x);
-                uvMaximum.y = std::max(uvMaximum.y, vertex.texCoord.y);
-                return std::isfinite(vertex.texCoord.x) && std::isfinite(vertex.texCoord.y);
-            });
-        require(allBunnyUvsFinite && uvMaximum.x - uvMinimum.x > 0.5f && uvMaximum.y - uvMinimum.y > 0.5f,
-                "OBJ meshes without vt records must receive finite, non-degenerate texture coordinates.");
-
 #if defined(LUMIN_TEST_SOURCE_DIR)
         const std::filesystem::path testSourceDirectory = LUMIN_TEST_SOURCE_DIR;
 #else
         const std::filesystem::path testSourceDirectory = ".";
 #endif
         const std::filesystem::path objFixtureDirectory = testSourceDirectory / "tests";
+        const lumin::assets::Mesh missingUvMesh =
+            lumin::assets::ObjLoader::load(objFixtureDirectory / "MissingUvSeam.obj.txt");
+        glm::vec2 uvMinimum{std::numeric_limits<float>::max()};
+        glm::vec2 uvMaximum{std::numeric_limits<float>::lowest()};
+        const bool allUvsFinite = std::all_of(
+            missingUvMesh.vertices.begin(), missingUvMesh.vertices.end(), [&](const lumin::assets::Vertex& vertex) {
+                uvMinimum.x = std::min(uvMinimum.x, vertex.texCoord.x);
+                uvMinimum.y = std::min(uvMinimum.y, vertex.texCoord.y);
+                uvMaximum.x = std::max(uvMaximum.x, vertex.texCoord.x);
+                uvMaximum.y = std::max(uvMaximum.y, vertex.texCoord.y);
+                return std::isfinite(vertex.texCoord.x) && std::isfinite(vertex.texCoord.y);
+            });
+        require(allUvsFinite && uvMaximum.x - uvMinimum.x > 0.5f && uvMaximum.y - uvMinimum.y > 0.5f,
+                "OBJ meshes without vt records must receive finite, non-degenerate texture coordinates.");
         const lumin::assets::Mesh seamMesh =
             lumin::assets::ObjLoader::load(objFixtureDirectory / "MissingUvSeam.obj.txt");
         float seamMinimum = std::numeric_limits<float>::max();
@@ -903,6 +975,7 @@ int main() {
         testCameraProjectionMatchesNvrhiLogicalY();
         testCameraRenderRevisionAndExplicitCut();
         testEnvironmentRevisionsAreSeparated();
+        testActorLocalLightsAndRevisions();
         testLevelAndIndirectBatch();
         testPbrAssetsAndMaterialBatch();
         testActorLifecycleAndDeferredChanges();

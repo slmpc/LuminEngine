@@ -34,6 +34,7 @@ namespace lumin::render::gi {
         constexpr std::uint32_t updateNormalRoughnessTexturesBinding = 15;
         constexpr std::uint32_t updateMaterialSamplerBinding = 16;
         constexpr std::uint32_t updateMaterialIdBinding = 17;
+        constexpr std::uint32_t updateLightsBinding = 18;
 
         constexpr std::uint32_t resolveHashEntriesBinding = 0;
         constexpr std::uint32_t resolveAccumulationBinding = 1;
@@ -60,7 +61,8 @@ namespace lumin::render::gi {
 
         [[nodiscard]] bool complete(const SharcUpdateSceneBindings& scene) noexcept {
             return scene.descriptors.rayTracingEnabled && scene.descriptors.tlas && scene.descriptors.instances &&
-                   scene.descriptors.materials && !scene.geometry.empty() && !scene.baseColorTextures.empty() &&
+                   scene.descriptors.materials && scene.descriptors.lights && scene.descriptors.lightCount > 0 &&
+                   !scene.geometry.empty() && !scene.baseColorTextures.empty() &&
                    scene.baseColorTextures.size() == scene.normalRoughnessTextures.size() && scene.materialSampler;
         }
 
@@ -105,6 +107,7 @@ namespace lumin::render::gi {
                     nvrhi::BindingSetItem::StructuredBuffer_SRV(updateInstancesBinding, scene.descriptors.instances))
                 .addItem(
                     nvrhi::BindingSetItem::StructuredBuffer_SRV(updateMaterialsBinding, scene.descriptors.materials))
+                .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(updateLightsBinding, scene.descriptors.lights))
                 .addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(updateHashEntriesBinding, resources.hashEntries))
                 .addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(updateAccumulationBinding, resources.accumulation))
                 .addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(updateResolvedBinding, resources.resolved))
@@ -268,6 +271,7 @@ namespace lumin::render::gi {
         result.cacheParameters = glm::uvec4(config.capacity, history.accumulationFrameCount, config.staleFrameCount,
                                             history.resolveFrameIndex);
         result.renderParameters = glm::uvec4(frame.renderWidth, frame.renderHeight, config.sparseTileSize, 0U);
+        result.samplingParameters = glm::uvec4(frame.lightCount, 0U, 0U, 0U);
         return result;
     }
 
@@ -364,7 +368,8 @@ namespace lumin::render::gi {
                 .addItem(nvrhi::BindingLayoutItem::Texture_SRV(updateNormalRoughnessTexturesBinding)
                              .setSize(maxMaterialTextureDescriptors))
                 .addItem(nvrhi::BindingLayoutItem::Sampler(updateMaterialSamplerBinding))
-                .addItem(nvrhi::BindingLayoutItem::Texture_SRV(updateMaterialIdBinding));
+                .addItem(nvrhi::BindingLayoutItem::Texture_SRV(updateMaterialIdBinding))
+                .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(updateLightsBinding));
             return desc;
         }
 
@@ -558,8 +563,9 @@ namespace lumin::render::gi {
         }
         if (!inputs.position.isValid() || !inputs.normalRoughness.isValid() || !inputs.albedoMetallic.isValid() ||
             !inputs.materialId.isValid() || !sceneResources.tlas.isValid() || !sceneResources.instances.isValid() ||
-            !sceneResources.materials.isValid() || !complete(scene) || !environment.isValid() ||
-            !environmentResources.isValid() || scene.geometry.size() > impl_->maxGeometryDescriptors ||
+            !sceneResources.materials.isValid() || !sceneResources.lights.isValid() || !complete(scene) ||
+            !environment.isValid() || !environmentResources.isValid() ||
+            scene.geometry.size() > impl_->maxGeometryDescriptors ||
             sceneResources.vertices.size() != scene.geometry.size() ||
             sceneResources.indices.size() != scene.geometry.size() ||
             sceneResources.baseColorTextures.size() != scene.baseColorTextures.size() ||
@@ -675,6 +681,7 @@ namespace lumin::render::gi {
                     builder.readAccelerationStructure(sceneResources.tlas);
                     builder.read(sceneResources.instances, nvrhi::ResourceStates::ShaderResource);
                     builder.read(sceneResources.materials, nvrhi::ResourceStates::ShaderResource);
+                    builder.read(sceneResources.lights, nvrhi::ResourceStates::ShaderResource);
                     for (const FrameGraphResourceHandle resource : vertexResources) {
                         builder.read(resource, nvrhi::ResourceStates::ShaderResource);
                     }

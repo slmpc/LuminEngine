@@ -86,7 +86,7 @@ namespace lumin::render::pipelines {
             std::unique_ptr<gpu::GpuSceneUpdatePlanner> scenePlanner;
             std::unique_ptr<gi::RayTracedDirectLightingPass> directLighting;
             std::unique_ptr<gi::SharcRadianceCache> sharc;
-            std::unique_ptr<gi::RayTracedGiPass> rayTracedGi;
+            std::unique_ptr<gi::SharcIndirectLightingPass> indirectLighting;
             std::unique_ptr<gi::NrdDenoiser> nrd;
             std::unique_ptr<gi::GiCompositePass> composite;
             std::unique_ptr<gi::HybridLightingCompositePass> lightingComposite;

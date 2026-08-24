@@ -17,7 +17,7 @@ namespace lumin::render::gpu {
      *
      * - `baseColorMetallic`: `rgb = base color`，`a = metallic`；Blinn-Phong 的 `a` 固定为 0。
      * - `specularColorShininess`: `rgb = Blinn-Phong specular color`，`a = shininess`。
-     * `surfaceParameters.x` 是 NRD/GI 等效粗糙度。
+     * `surfaceParameters.x` 是 GI 使用的等效粗糙度。
      *
      * `surfaceParameters.y` 是 UV scale。
      *
