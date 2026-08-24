@@ -66,7 +66,8 @@ cmake --build out/build/nrd-off --target lumin_editor lumin_shader_abi
 ## 完整验证门槛
 
 发布前至少执行 Debug 与 Release 全量测试。具备 RT 设备时，还必须运行 `hardware` 集合、启动 editor，
-并在 Vulkan validation layer 下分别覆盖 raster、raw RT GI、SHARC 与 NRD 路径。长时间历史稳定性可使用：
+并在 Vulkan validation layer 下分别覆盖 raster、raw SHARC indirect、NRD 与关闭 SHARC 的 RTDI-only 路径。
+长时间历史稳定性可使用：
 
 ```powershell
 ctest --test-dir out/build/debug -L hardware --repeat until-fail:20 --output-on-failure

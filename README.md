@@ -8,7 +8,7 @@ Lumin Engine 是一个使用 C++23、SDL3、Slang 和动态渲染构建的紧凑
 - 可生成法线并支持高度查询的程序化高度场地形。
 - 包含位置、法线与粗糙度、反照率与金属度、运动矢量的 G-buffer 延迟渲染器。
 - 支持 sRGB base color、切线空间 normal 和 roughness 贴图，以及 GGX/Cook-Torrance PBR 光照。
-- 可切换的 Legacy（四级联方向光阴影与 SSAO/HBAO/GTAO）和 Ray Tracing（可选 SHARC/NRD）渲染路径，以及程序化天空盒。
+- 可切换的 Legacy（四级联方向光阴影与 SSAO/HBAO/GTAO）和 Ray Tracing（RTDI + SHARC 间接光 + 可选 NRD）渲染路径，以及程序化天空盒。
 - 使用 Halton 抖动，并结合上一帧相机与模型运动矢量的 TAA；最终输出使用可调 FSR1 RCAS 恢复细节。
 - ACES 色调映射，以及用于编辑场景、渲染设置和 Lua 脚本的原生停靠式编辑器。
 
@@ -98,9 +98,13 @@ cmake -S . -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 按住中键会隐藏并捕获鼠标，通过相对移动旋转视角；同时使用 `WASD`、`Space` 和 `Left Ctrl` 移动相机。松开中键会恢复
 普通鼠标模式。Viewport Camera 在渲染主线程按实际渲染帧间隔更新，不受项目 `logicTickHz` 限制；Picking、Gizmo 和
 渲染帧使用同一份即时 Camera。左键可拾取场景物体并通过 Move/Rotate/Scale Gizmo 编辑变换，`W`、`E`、`R` 可切换模式；右键打开
-物体上下文菜单和 `Details`。编辑器面板可选择 Actor 或模型、修改变换与材质，并在 Render 面板通过下拉框选择
-`Legacy` 或 `Ray Tracing`。Legacy 提供 SSAO/HBAO/GTAO、AO 半径/强度/偏置、CSM、级联分割权重与最大阴影距离设置；Ray Tracing 提供 SHARC 与
-NRD 开关；TAA 与 FSR1 RCAS 锐度是两条路径共用的选项。面板还可调整相机、曝光和太阳方向，并在 Lua 控制台执行表达式
+物体上下文菜单和 `Details`。`Scene Hierarchy` 的创建菜单可直接添加 Point Light 或 Spot Light；模型和局部灯可挂在
+同一个 Actor 上，并可通过 `Details -> Add Light` 为已有模型 Actor 添加光源。`Details` 支持切换局部灯类型，以及编辑启用
+状态、线性颜色、坎德拉强度、作用范围、Spot 内外锥半角和逐灯阴影。编辑器面板还可选择模型、修改变换与材质，并在 Render
+面板通过下拉框选择 `Legacy` 或 `Ray Tracing`。
+Legacy 提供 SSAO/HBAO/GTAO、AO 半径/强度/偏置、CSM、级联分割权重与最大阴影距离设置；Ray Tracing 提供 SHARC 与
+NRD 开关，其中 NRD 对 SHARC 产生的 diffuse/specular 间接光信号执行 REBLUR 降噪。TAA 与 FSR1 RCAS 锐度是两条路径
+共用的选项。面板还可调整相机、曝光和太阳方向，并在 Lua 控制台执行表达式
 （例如 `return 6 * 7`）。当编辑器正在接收键盘、
 鼠标或文本输入时，应用会抑制 `Escape` 和相机控制，但不会暂停 `Game::tick`、`Level::tick` 或 Lua 生命周期。
 默认布局将 `Content Browser` 与 `Script Console` 合并为中央下方页签组；`Scene Hierarchy` 位于右上角，
@@ -123,7 +127,7 @@ NRD 开关；TAA 与 FSR1 RCAS 锐度是两条路径共用的选项。面板还�
 `Content Browser` 以目录树、面包屑和类型图标展示整个项目，可自动刷新或手动同步外部文件变化，并支持搜索、拖放
 创建模型 Actor、纹理拖放到材质槽，以及资源重命名和引用保护删除。项目清单、场景、`.lumin` 和普通文件只读。每个 Actor
 可以在 `Details` 中绑定多个 Lua 脚本，调整执行顺序、启用状态、热重载或移除。项目场景保存通用 Actor、资源引用、
-材质、脚本组件、环境、编辑器相机和项目设置。`Project Settings` 面板可在 `15-240 Hz` 范围内修改固定逻辑频率，
+材质、Point/Spot 局部灯、脚本组件、环境、编辑器相机和项目设置。`Project Settings` 面板可在 `15-240 Hz` 范围内修改固定逻辑频率，
 默认值为 `60 Hz`；修改后逻辑线程立即按新频率调度 `Game`、`Level` 与脚本，Viewport Camera 仍按渲染帧率更新。完整目录和生命周期约定见
 [`docs/project-editor.md`](docs/project-editor.md)。
 

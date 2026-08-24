@@ -71,8 +71,9 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 `ImGuiFrontend::finishFrame()` 返回当前 ImGui context 的 `ImDrawData`，并由 `Renderer::drawFrame()` 在下一次
 `beginFrame()` 前同步消费。Renderer 不访问活动场景、相机、SDL backend 或 Editor。场景变化相对最近成功提交的世界
 快照重新比较，即使逻辑快照在两次渲染间被替换，也不会漏掉拓扑变化或错误推进历史。
-模型变换和材质变化会递增
-`modelRevision`；网格或模型成员变化会递增 `topologyRevision`。PBR 纹理路径变化也会递增 `topologyRevision`，
+模型变换和材质变化会递增 `modelRevision`；局部灯的挂载、移除、参数或 Actor 变换变化会递增
+`lightingRevision`。同时挂载模型和局部灯的 Actor 在一次编辑事务中只推进一次整体 revision，但分别推进受影响的
+model/lighting 子 revision。网格或模型成员变化会递增 `topologyRevision`。PBR 纹理路径变化也会递增 `topologyRevision`，
 因为材质纹理数组和 descriptor 需要重建；纯标量材质变化只更新对象 buffer。默认 Raster Feature 每帧上传对象记录，
 仅在拓扑修订号发生变化时重新构建打包后的几何数据和材质资源。
 
@@ -85,7 +86,8 @@ Viewport 图像被悬停并按住鼠标中键时，应用启用 SDL relative mou
 
 1. Raster 路径执行四个 CSM 纯深度通道和 G-buffer；Hybrid 路径由 RT primary surface 直接生成表面信号。
 2. 更新当前路径所需的大气 LUT 和全局光照资源。
-3. 全局光照 Feature；支持设备执行 GPU Scene、SHARC、RT GI、NRD 与 composite，否则执行 SSAO fallback。
+3. 全局光照 Feature；支持设备依次执行 GPU Scene、RTDI、SHARC update/resolve、SHARC indirect、NRD 与 composite，
+   否则执行 SSAO fallback。
 4. 程序化天空盒全屏通道，写入 HDR 光照目标。
 5. 延迟光照通道，加载该目标，并结合全局光照输出和 CSM 对几何体进行着色。
 6. TAA 解析，读取 HDR 光照、运动矢量和上一帧历史。
@@ -181,7 +183,7 @@ base color、normal map 和 UV scale。OBJ 导入器保留 MTL 的 `Ni`；缺失
 slot 的 generation 被复用时，由逐 frame-slot 的物理 buffer 版本隔离仍在 flight 的旧数据。240-byte `ObjectData`
 仅在 `metadata.x` 保存该索引，完整表面模型参数不再塞入 normal/roughness 或其他浮点 G-buffer 通道。
 
-Hybrid primary RT、RT GI 与 SHARC update 复用 `ModelRenderer` 的逐帧 `GpuMaterialData` buffer、base-color/normal-
+Hybrid primary RT、SHARC indirect 与 SHARC update 复用 `ModelRenderer` 的逐帧 `GpuMaterialData` buffer、base-color/normal-
 roughness descriptor arrays 和 repeat sampler，不维护独立材质副本。GPU Scene 的 32-byte `GpuPackedVertex` 将 UV.x/UV.y
 分别存入 position/normal 的第四个分量；closest-hit 用重心坐标插值 UV，并以显式 LOD 0 采样 base color 与 roughness。
 材质纹理及 buffer 必须使用同一组已导入的 FrameGraph handle 声明 `ShaderResource` 读取，不能只绑定原生 handle 而绕过
@@ -201,7 +203,7 @@ material ID 与 `GpuMaterialData` buffer。`MetallicRoughness` 路径保持 GGX�
 `GlobalIlluminationMode::Legacy` 使用 raster G-buffer、CSM、延迟光照与可选的 SSAO、HBAO 或 GTAO；
 `GlobalIlluminationMode::RayTracing` 使用 primary/direct RT 和 RT 间接光，不创建或读取 G-buffer/CSM。运行时能力不足、
 场景尚无可追踪几何，或构建时使用 `LUMIN_RAY_TRACING=OFF` 时，Ray Tracing 请求会安全回退到 Legacy 拓扑。
-RTDI、RTGI、SHARC 与 atmosphere LUT 共用 EV100 15、饱和归一化系数 `q=1.2` 的固定物理预曝光
+RTDI、SHARC update/indirect 与 atmosphere LUT 共用 EV100 15、饱和归一化系数 `q=1.2` 的固定物理预曝光
 `1 / (q * 2^EV100)`。场景太阳的 `illuminanceLux` 因而始终作为入射照度线性参与计算，不再映射到 Raster 的任意
 `3.2` 常量；预曝光只负责让太阳、天空与反弹光安全落入 FP16 scene-linear 缓冲范围。天空太阳盘使用真实的
 `0.2679` 度角半径，并由入射照度除以太阳盘立体角得到辐亮度。
@@ -209,25 +211,32 @@ RTDI、RTGI、SHARC 与 atmosphere LUT 共用 EV100 15、饱和归一化系数 `
 Ray Tracing 的所有材质统一使用 Cook-Torrance BRDF：GGX 法线分布、Smith-GGX 几何遮蔽与 Schlick Fresnel。
 Metallic-Roughness 材质使用 `F0 = lerp(0.04, baseColor, metallic)`；旧 Blinn-Phong 材质在 RT 路径中使用
 `F0 = ((IOR - 1) / (IOR + 1))^2`，其 `specularColor` 只保留给 Raster Blinn-Phong，避免把 MTL 的任意 `Ks`
-误当作介质反射率。IOR 在上传时限制到 `[1, 3]`，默认 1.5 对应 `F0 = 0.04`。RTGI 漫反射采用 cosine-weighted sampling，镜面
+误当作介质反射率。IOR 在上传时限制到 `[1, 3]`，默认 1.5 对应 `F0 = 0.04`。SHARC indirect 漫反射采用 cosine-weighted
+sampling，镜面
 采用 GGX VNDF importance sampling，以避免普通 NDF 在掠射角产生高权重无效样本。两路路径估计都先应用完整
 `BRDF * cos(theta) / PDF`，随后用 `NRD_MaterialFactors` 解调主表面材质；Composite 在 REBLUR 后用同一因子恢复材质，
 因此空间去噪不会模糊 albedo、metallic 或 Fresnel 细节。
 Cook-Torrance 的低粗糙度掠射峰值在数学上可能超过 half 范围；BRDF 计算保持不截断，仅在 FP16 scene-radiance
 纹理写入边界限制到 `65504`，防止 `Inf/NaN` 污染后续 NRD、TAA 与 tone mapping。
 
-Ray Tracing 模式可分别关闭 SHARC 与 NRD。关闭 SHARC 后不录制 cache update/resolve/statistics pass，RT 间接光改用
-无辐射缓存的 fallback estimate；关闭 NRD 后，原始 diffuse/specular radiance-hit-distance 直接交给 GI composite。
+Ray Tracing 模式可分别关闭 SHARC 与 NRD。关闭 SHARC 后不录制 cache update/resolve/statistics 或 indirect pass，间接光
+清零，RTDI 与天空继续工作；关闭 NRD 后，原始 diffuse/specular radiance-hit-distance 直接交给 GI composite。
 Legacy 模式可分别关闭屏幕空间 AO 与 CSM。AO 后端共享 position/normal 输入与全分辨率输出：SSAO 使用旋转采样核，
 HBAO 对 8 个屏幕方向执行最大地平线搜索，GTAO 对 6 个切片执行双向地平线积分；三者均可调世界空间半径、强度和
 几何偏置。CSM 通过 `splitLambda` 和 `maxDistance` 控制四级联分割。TAA 是两条路径共用的
 后处理选项。任一模式、Feature 开关或 CSM 参数变化都会使相关时序历史失效；SHARC shader 变体变化还会在等待 GPU
-空闲后重建对应 RT GI 资源。
+空闲后重建对应 SHARC update/indirect 资源。
 
-Hybrid GI 的一帧顺序为：按需物化 GPU Scene 和 BLAS/TLAS、执行 SHARC clear/update/resolve、在 RT GI closest-hit
-中查询 SHARC、输出 diffuse/specular radiance-hit-distance 与 NRD auxiliary signals、执行 NRD dispatch，最后由
-GI composite 写入统一的 RGBA 间接光照目标。RT miss、SHARC update 和 raster sky 使用同一个 atmosphere descriptor
-set，避免环境输入在三条路径中漂移。
+Hybrid GI 的一帧顺序为：按需物化 GPU Scene 和 BLAS/TLAS、执行 RTDI、SHARC clear/update/resolve、在
+`SharcIndirectLightingPass` 的二次 closest-hit 中查询 SHARC、输出 diffuse/specular radiance-hit-distance 与 NRD
+auxiliary signals、执行 NRD REBLUR，再由 GI composite 写入统一的 RGBA 间接光照目标，随后和 RTDI 合成为 TAA 输入。
+RT miss、SHARC update 和 raster sky 使用同一个 atmosphere descriptor set，避免环境输入在三条路径中漂移。
+
+GPU Scene 的紧凑 `GpuLightData` 表把太阳固定在索引 0，随后按稳定 Actor 身份排列全部启用的 Point/Spot 灯。
+Point/Spot 使用坎德拉除以米制距离平方并乘平滑范围衰减，Spot 额外应用内外锥 smoothstep；world unit 到米的换算来自
+`AtmosphereTransform::kilometersPerWorldUnit`。RTDI、SHARC update 和 SHARC indirect fallback 均匀随机选择一盏灯，
+贡献乘 `lightCount` 校正采样 PDF。逐灯 `castsShadows=false` 时跳过 shadow ray；局部灯的 shadow `TMax` 截止到灯距，
+太阳使用全局追踪上限。光源表使用逐 frame-slot copy-on-write，灯光变化只替换当前槽的 buffer，不更新 BLAS/TLAS。
 
 场景 mesh 在 raster G-buffer 中按双面几何绘制，因此 TLAS instance 固定使用 `TriangleCullDisable`，primary、shadow、
 indirect 和 SHARC trace 都不得附加背面剔除 flag。closest-hit 对插值后的世界空间法线执行归一化，并在命中背面时将其
@@ -252,7 +261,8 @@ texture 和 AS；该回收是逐帧资源生命周期的一部分，不能仅依
 `legacyAmbient * globalIllumination.a + globalIllumination.rgb` 合成环境光。该图像同时支持颜色附件、采样和存储图像
 用途，以便后续后端使用光线追踪或计算通道写入相同契约。
 Ray Tracing composite 写入 `alpha=0`，RGB 为去噪后的 diffuse/specular 辐亮度乘各自主表面 NRD 材质因子之和。
-该调制与 RTGI 前端解调严格配对，不重复计算路径 BRDF，也不注入常量环境光或 Raster ambient floor；无能量路径保持
+该调制与 SHARC indirect 前端解调严格配对，不重复计算路径 BRDF，也不注入常量环境光或 Raster ambient floor；
+无能量路径保持
 为黑色，亮度只能来自太阳、atmosphere environment 或真实追踪到的反弹光。
 
 相机切换、场景拓扑变化、Legacy/Ray Tracing 模式、AO 算法或参数、Feature 开关变化以及交换链重建都会使后端历史失效。无时序历史的屏幕空间 AO 后端

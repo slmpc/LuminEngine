@@ -6,7 +6,7 @@ Feature 必须加入拥有其 GPU 资源的真实 target，而不是 `Lumin::Ren
 
 - G-buffer、阴影和 raster scene：`Lumin::RasterFeatures`。
 - GPU buffer、BLAS/TLAS 和 descriptor array：`Lumin::GpuScene`。
-- RTDI、RTGI、SHARC、NRD 和 GI composite：`Lumin::GiFeatures`。
+- RTDI、SHARC update/indirect、NRD 和 GI composite：`Lumin::GiFeatures`。
 - 大气 LUT：`Lumin::Atmosphere`。
 - TAA、tone mapping 等后处理：`Lumin::PostFxFeatures`。
 - Viewport、UI 和交换链输出：`Lumin::RenderPresentation`。

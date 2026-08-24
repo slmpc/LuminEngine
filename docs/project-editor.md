@@ -45,12 +45,18 @@ OBJ 加载会读取 MTL，并按 `usemtl` 材质名稳定聚合网格。单材�
 
 ## Actor 与脚本
 
-项目 Actor 拥有持久 ID、名称、Transform、Material、可选 Mesh 和有序组件列表。Lua 脚本作为 `ActorComponent`
+项目 Actor 拥有持久 ID、名称、Transform、Material、可选 Mesh、可选 Point/Spot 局部灯和有序组件列表。模型与光源
+可以挂在同一个 Actor 上；Spot 使用 Actor 本地 `-Z` 作为传播方向，位置取自 Transform，scale 不影响灯光。
+`Scene Hierarchy` 创建菜单可生成两类光源 Actor，`Details` 支持类型切换、启用、线性颜色、坎德拉强度、范围、Spot
+内外锥半角和逐灯阴影。复制、删除和编辑灯光与普通 Actor 一样更新项目 dirty 状态。
+
+Lua 脚本作为 `ActorComponent`
 附着：按列表顺序执行 `on_spawn` 和 `on_tick`，销毁时逆序执行 `on_destroy`，随后执行 Actor 自身的 `onDestroy`。
 禁用脚本只跳过 Tick，移除或销毁 Actor 时仍执行销毁回调。旧 `ScriptRuntime::spawn` 保留兼容，它会创建普通脚本宿主
 Actor 并调用同一附着接口。
 
-项目场景只保存带持久 ID 的通用 Actor。未注册的原生 C++ Actor、程序化网格和其他临时运行时对象不会写入项目文件。
+项目场景只保存带持久 ID 的通用 Actor。Actor JSON 的可选 `light` 对象以 `point` 或 `spot` 标记类型并保存全部灯光
+参数；旧场景缺少该对象时按无局部灯加载。未注册的原生 C++ Actor、程序化网格和其他临时运行时对象不会写入项目文件。
 新项目使用空场景，并重置相机、环境和完整项目设置。
 
 ## Project Settings

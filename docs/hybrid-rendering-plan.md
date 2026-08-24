@@ -22,7 +22,7 @@
   Feature。
 - [x] RTDI primary surface、RT shadow、miss atmosphere、surface signal ABI 和 UAV 资源契约已接入。
 - [x] GPU Scene 的 candidate upload/BLAS/TLAS 更新已移动到 `hybrid-surface` Feature，并遵守 submit commit/discard 事务。
-- [x] SHARC update/query、RT GI 和 NRD 已改为消费 primary RT surface signals。
+- [x] SHARC update/query、专用 SHARC indirect 和 NRD 已改为消费 primary RT surface signals。
 - [x] 新增 Hybrid compute composite，将 RT direct 与 NRD indirect 合成为 TAA 输入；GI 关闭时支持 direct-only，SSAO
   fallback 时支持 direct × packed ambient visibility。
 - [x] RT surface 命中距离统一使用 `position.w > 0` 作为有效几何判定，修复近距离命中被误判为 miss 的问题。
@@ -125,9 +125,9 @@ shaders/
     HybridComposite.slang
 ```
 
-迁移完成后删除或改名当前仍表达 G-buffer 输入的 `RayTracedGiFrameInputs`、`RayTracedGiFrameGraphInputs` 和
-`GiCompositeResources::position/normalRoughness/albedoMetallic`。当前未接入构建的
-`RayTracedDirectLightingPass` 原型不得直接成为公共 ABI，应在阶段 1 中由新资源契约替换。
+迁移后由 `SharcIndirectLightingFrameInputs`、`SharcIndirectLightingFrameGraphInputs` 和
+`GiCompositeResources::position/normalRoughness/albedoMetallic` 明确表达 primary RT surface 与 NRD 信号契约；
+`RayTracedDirectLightingPass` 只负责 primary visibility 和直接光，不承担间接光职责。
 
 ## 5. Capability tier 与运行时选择
 
@@ -509,7 +509,7 @@ LUMIN_ENABLE_VOLUMETRIC_CLOUDS=ON|OFF
 - [ ] 记录当前 Debug/Release build、CTest、shader ABI、Vulkan probe 和 sandbox validation 基线。
 - [ ] 为 Hybrid FrameGraph 增加可机器检查的 pass dump。
 - [ ] 冻结本文中的 motion、radiance、hit-distance、normal encoding 和 scene unit 约定。
-- [ ] 标记现有 G-buffer 驱动的 RT GI/SHARC 接口为迁移目标，不在其上继续叠加功能。
+- [x] 删除 G-buffer 驱动的通用间接光接口，SHARC update/indirect 只消费 primary RT surface signals。
 
 门槛：当前测试继续通过；新增 contract 测试能明确指出现有 Hybrid 路径仍依赖 G-buffer。
 
@@ -544,9 +544,9 @@ LUMIN_ENABLE_VOLUMETRIC_CLOUDS=ON|OFF
 
 ### 阶段 4：RT indirect 与 NRD
 
-- [ ] 拆除旧 `RayTracedGiPass` 的 G-buffer 输入，建立独立 RT indirect pass。
-- [ ] 输出 REBLUR diffuse/specular radiance-hit-distance。
-- [ ] 复用 `RtSurfaceSignals` 的 normal/viewZ/motion 接入 NRD。
+- [x] 删除旧通用间接光 pass，建立独立 `SharcIndirectLightingPass`。
+- [x] 输出 REBLUR diffuse/specular radiance-hit-distance。
+- [x] 复用 `RtSurfaceSignals` 的 normal/viewZ/motion 接入 NRD。
 - [ ] 完成所有 history reset、disocclusion 和长时间运行验证。
 
 门槛：raw/denoised 可切换对照，NRD history 稳定，SHARC query 确实来自本帧 resolved cache。

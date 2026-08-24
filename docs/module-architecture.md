@@ -70,7 +70,7 @@ Core 不链接 Vulkan、SDL、NvRHI、Dear ImGui 或任何 renderer target，因
 - `render/presentation/` 保存 `UiRenderer` 与 `PresentationRenderer`，以稳定逻辑纹理 ID 解析字体和 Viewport 物理资源，
   不保存 ImGui command、callback 或 NvRHI binding 指针形式的纹理 ID。
 - `render/level/`、`render/features/`、`render/gi/`、`render/atmosphere/` 和 `render/gpu/` 保存场景渲染功能；
-  `render/gi/legacy/` 保存 raster fallback，`render/gi/raytracing/` 保存 RTDI、RTGI、SHARC、NRD 与 composite，
+  `render/gi/legacy/` 保存 raster fallback，`render/gi/raytracing/` 保存 RTDI、SHARC update/indirect、NRD 与 composite，
   通过 `resources` 声明和使用资源，不直接操作原生 Vulkan 状态。
 
 `Lumin::Rendering` 已删除。`Lumin::RenderCore`、`Lumin::RenderRhi`、`Lumin::VulkanBackend`、各 Feature target、
